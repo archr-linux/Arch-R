@@ -353,6 +353,7 @@ fi
 cat > /etc/systemd/system/firstboot.service << 'FB_EOF'
 [Unit]
 Description=Arch R First Boot Setup
+After=local-fs.target
 Before=emulationstation.service
 ConditionPathExists=!/var/lib/archr/.first-boot-done
 
@@ -366,6 +367,25 @@ WantedBy=multi-user.target
 FB_EOF
 
 systemctl enable firstboot
+
+# Panel auto-detect wizard (first boot / X-button reset)
+cat > /etc/systemd/system/panel-detect.service << 'PANELDET_EOF'
+[Unit]
+Description=Arch R Panel Detection Wizard
+After=local-fs.target
+Before=emulationstation.service
+RequiresMountsFor=/boot
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/panel-detect.py
+TimeoutStartSec=600
+
+[Install]
+WantedBy=multi-user.target
+PANELDET_EOF
+
+systemctl enable panel-detect
 
 # EmulationStation launch — PRIMARY: systemd service (created by build-emulationstation.sh)
 # FALLBACK: autologin + .bash_profile (if ES service not installed)
@@ -403,9 +423,12 @@ fi
 PROFILE_EOF
 chown archr:archr /home/archr/.bash_profile
 
-# Disable old custom splash if it exists
+# Boot splash: handled by initramfs (archr-init with embedded BMP).
+# Initramfs displays splash at ~0.7s after kernel start, before systemd.
+# No systemd service needed — splash persists until ES takes DRM master.
 systemctl disable splash 2>/dev/null || true
-rm -f /etc/systemd/system/splash.service
+systemctl disable archr-splash 2>/dev/null || true
+rm -f /etc/systemd/system/splash.service /etc/systemd/system/archr-splash.service
 
 # Battery LED warning service
 cat > /etc/systemd/system/battery-led.service << 'BATT_EOF'
@@ -483,7 +506,8 @@ TIMING_EOF
 
 systemctl enable boot-timing
 
-# Delete initramfs (not used — extlinux.conf has no INITRD line)
+# Delete stock ALARM initramfs and kernel (we use our own kernel + initramfs)
+# Our initramfs.img is built by build-image.sh and placed on BOOT partition
 rm -f /boot/initramfs-linux.img /boot/Image /boot/Image.gz 2>/dev/null
 
 # Clean kernel modules: remove media tuners (154 modules, 13MB — useless for gaming)
@@ -967,6 +991,13 @@ log "  ✓ Distro version installed (text.plymouth)"
 # First boot script
 install -m 755 "$SCRIPT_DIR/scripts/first-boot.sh" "$ROOTFS_DIR/usr/local/bin/first-boot.sh"
 log "  ✓ First boot script installed"
+
+# Boot splash: no binary needed in rootfs — splash is embedded in initramfs /init
+# (built by build-image.sh: archr-init.c + embedded splash BMP → initramfs.img)
+
+# Panel detection wizard
+install -m 755 "$SCRIPT_DIR/scripts/panel-detect.py" "$ROOTFS_DIR/usr/local/bin/panel-detect.py"
+log "  ✓ Panel detection wizard installed"
 
 # RetroArch config (install to user's config dir where retroarch expects it)
 mkdir -p "$ROOTFS_DIR/home/archr/.config/retroarch"

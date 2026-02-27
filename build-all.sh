@@ -44,6 +44,7 @@ usage() {
     echo "Options:"
     echo "  --kernel     Build kernel only"
     echo "  --rootfs     Build rootfs only"
+    echo "  --uboot      Build U-Boot only"
     echo "  --image      Build image only"
     echo "  --all        Build everything (default)"
     echo "  --clean      Clean all build artifacts"
@@ -53,6 +54,7 @@ usage() {
 
 BUILD_KERNEL=false
 BUILD_ROOTFS=false
+BUILD_UBOOT=false
 BUILD_IMAGE=false
 CLEAN=false
 
@@ -60,14 +62,16 @@ CLEAN=false
 if [ $# -eq 0 ]; then
     BUILD_KERNEL=true
     BUILD_ROOTFS=true
+    BUILD_UBOOT=true
     BUILD_IMAGE=true
 else
     while [[ $# -gt 0 ]]; do
         case $1 in
             --kernel) BUILD_KERNEL=true; shift ;;
             --rootfs) BUILD_ROOTFS=true; shift ;;
+            --uboot)  BUILD_UBOOT=true; shift ;;
             --image)  BUILD_IMAGE=true; shift ;;
-            --all)    BUILD_KERNEL=true; BUILD_ROOTFS=true; BUILD_IMAGE=true; shift ;;
+            --all)    BUILD_KERNEL=true; BUILD_ROOTFS=true; BUILD_UBOOT=true; BUILD_IMAGE=true; shift ;;
             --clean)  CLEAN=true; shift ;;
             --help)   usage; exit 0 ;;
             *)        error "Unknown option: $1" ;;
@@ -180,13 +184,35 @@ log "═════════════════════════
 chmod +x "$SCRIPT_DIR/scripts/generate-panel-dtbos.sh"
 "$SCRIPT_DIR/scripts/generate-panel-dtbos.sh"
 
+# Build custom U-Boot (optional — requires arm-linux-gnueabihf toolchain)
+if [ "$BUILD_UBOOT" = true ] && [ -f "$SCRIPT_DIR/build-uboot.sh" ]; then
+    if command -v aarch64-linux-gnu-gcc &>/dev/null; then
+        log ""
+        log "═══════════════════════════════════════════════════════════════"
+        log "                    BUILDING U-BOOT"
+        log "═══════════════════════════════════════════════════════════════"
+        chmod +x "$SCRIPT_DIR/build-uboot.sh"
+        "$SCRIPT_DIR/build-uboot.sh"
+    else
+        warn "Skipping U-Boot build: aarch64-linux-gnu-gcc not found"
+        warn "Install: sudo apt install gcc-aarch64-linux-gnu"
+    fi
+fi
+
 if [ "$BUILD_IMAGE" = true ]; then
+    chmod +x "$SCRIPT_DIR/build-image.sh"
+
     log ""
     log "═══════════════════════════════════════════════════════════════"
-    log "                    BUILDING IMAGE"
+    log "                 BUILDING IMAGE (original)"
     log "═══════════════════════════════════════════════════════════════"
-    chmod +x "$SCRIPT_DIR/build-image.sh"
-    "$SCRIPT_DIR/build-image.sh"
+    "$SCRIPT_DIR/build-image.sh" --variant original
+
+    log ""
+    log "═══════════════════════════════════════════════════════════════"
+    log "                 BUILDING IMAGE (clone)"
+    log "═══════════════════════════════════════════════════════════════"
+    "$SCRIPT_DIR/build-image.sh" --variant clone
 fi
 
 #------------------------------------------------------------------------------

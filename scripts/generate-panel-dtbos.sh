@@ -8,7 +8,7 @@
 #   - R36S clones (Clone Panel 1-10, R36 Max, RX6S) from compiled DTBs
 #     in kernel/dts/R36S-Clones-DTB/
 #
-# These DTBOs are applied by U-Boot via PanCho panel selection system.
+# These DTBOs are applied by U-Boot via boot.ini (panel auto-detect system).
 # Base DTB has Panel 4-V22 hardcoded as default (works without overlay).
 #==============================================================================
 
@@ -475,7 +475,7 @@ for panel_name in "${CLONE_ORDER[@]}"; do
 done
 
 #------------------------------------------------------------------------------
-# Create ScreenFiles directory structure (for PanCho compatibility)
+# Create ScreenFiles directory structure (for boot.ini panel auto-detect)
 #------------------------------------------------------------------------------
 log ""
 log "Creating ScreenFiles directory structure..."

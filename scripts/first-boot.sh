@@ -11,12 +11,17 @@
 #==============================================================================
 
 FIRST_BOOT_FLAG="/var/lib/archr/.first-boot-done"
+LOG_FILE="/var/log/first-boot.log"
+
+# Log all output for debugging
+exec > >(tee -a "$LOG_FILE") 2>&1
 
 if [ -f "$FIRST_BOOT_FLAG" ]; then
+    echo "First boot already completed, skipping"
     exit 0
 fi
 
-echo "=== Arch R First Boot Setup ==="
+echo "=== Arch R First Boot Setup === ($(date))"
 
 #------------------------------------------------------------------------------
 # Detect SD card device
@@ -32,29 +37,49 @@ echo "SD card: $ROOT_DISK"
 # Create ROMS partition (partition 3) if it doesn't exist
 #------------------------------------------------------------------------------
 ROMS_PART="${ROOT_DISK}p3"
+ROMS_OK=false
 
 if ! lsblk "$ROMS_PART" &>/dev/null; then
     echo "Creating ROMS partition..."
 
-    # Get the end of the last partition (in sectors)
-    LAST_END=$(sfdisk -l "$ROOT_DISK" 2>/dev/null | awk '/^\/dev/ {end=$3} END {print end+1}')
-    DISK_SECTORS=$(sfdisk -l "$ROOT_DISK" 2>/dev/null | awk '/sectors$/ {print $7; exit}')
+    # Parse partition info using sfdisk dump format (reliable, no column alignment issues)
+    LAST_INFO=$(sfdisk -d "$ROOT_DISK" 2>/dev/null | grep '^/dev' | tail -1)
+    PART_START=$(echo "$LAST_INFO" | grep -o 'start=[[:space:]]*[0-9]*' | grep -o '[0-9]*')
+    PART_SIZE=$(echo "$LAST_INFO" | grep -o 'size=[[:space:]]*[0-9]*' | grep -o '[0-9]*')
 
-    if [ -n "$LAST_END" ] && [ -n "$DISK_SECTORS" ] && [ "$LAST_END" -lt "$DISK_SECTORS" ]; then
-        echo "${LAST_END},+,0c" | sfdisk --append "$ROOT_DISK" 2>/dev/null || \
-        echo ",,0c" | sfdisk --append "$ROOT_DISK" 2>/dev/null || true
+    if [ -n "$PART_START" ] && [ -n "$PART_SIZE" ]; then
+        LAST_END=$((PART_START + PART_SIZE))
+        DISK_SECTORS=$(blockdev --getsz "$ROOT_DISK" 2>/dev/null)
+
+        echo "  Last partition ends at sector $LAST_END, disk has $DISK_SECTORS sectors"
+
+        if [ -n "$DISK_SECTORS" ] && [ "$LAST_END" -lt "$DISK_SECTORS" ]; then
+            echo "${LAST_END},+,0c" | sfdisk --force --append "$ROOT_DISK" 2>&1 || \
+            echo ",,0c" | sfdisk --force --append "$ROOT_DISK" 2>&1 || \
+            echo "  ERROR: sfdisk --append failed"
+        else
+            echo "  ERROR: No free space on disk (last=$LAST_END, total=$DISK_SECTORS)"
+        fi
     else
-        echo ",,0c" | sfdisk --append "$ROOT_DISK" 2>/dev/null || true
+        echo "  WARNING: Could not parse partition table, trying generic append"
+        echo ",,0c" | sfdisk --force --append "$ROOT_DISK" 2>&1 || \
+        echo "  ERROR: sfdisk --append failed"
     fi
 
-    partprobe "$ROOT_DISK"
-    sleep 3
+    # Tell kernel about the new partition (try multiple methods)
+    partprobe "$ROOT_DISK" 2>/dev/null
+    sleep 2
 
-    # Retry partprobe if device not yet visible
     if ! lsblk "$ROMS_PART" &>/dev/null; then
+        # partprobe failed — try partx (more reliable for adding single partitions)
+        partx -a "$ROOT_DISK" 2>/dev/null
         sleep 2
-        partprobe "$ROOT_DISK"
-        sleep 2
+    fi
+
+    if ! lsblk "$ROMS_PART" &>/dev/null; then
+        # Last resort: blockdev re-read
+        blockdev --rereadpt "$ROOT_DISK" 2>/dev/null
+        sleep 3
     fi
 
     if lsblk "$ROMS_PART" &>/dev/null; then
@@ -62,15 +87,18 @@ if ! lsblk "$ROMS_PART" &>/dev/null; then
         mkfs.vfat -F 32 -n ROMS "$ROMS_PART"
         echo "  ROMS partition created!"
     else
-        echo "  WARNING: Failed to create ROMS partition"
-        echo "  You can create it manually: echo ',,0c' | sudo sfdisk --append $ROOT_DISK"
+        echo "  WARNING: Partition created in table but kernel can't see it yet"
+        echo "  ROMS will be available after reboot"
     fi
 else
     echo "  ROMS partition already exists"
-    # Ensure it has a filesystem
-    if ! blkid "$ROMS_PART" | grep -q vfat; then
+    # Ensure it has a FAT32 filesystem with the ROMS label
+    if ! blkid "$ROMS_PART" | grep -q 'TYPE="vfat"'; then
         echo "  Formatting existing partition as FAT32..."
         mkfs.vfat -F 32 -n ROMS "$ROMS_PART"
+    elif ! blkid "$ROMS_PART" | grep -q 'LABEL="ROMS"'; then
+        echo "  Setting label to ROMS..."
+        fatlabel "$ROMS_PART" ROMS 2>/dev/null || true
     fi
 fi
 
@@ -82,30 +110,39 @@ echo "Setting up ROM directories..."
 mkdir -p /roms
 
 if lsblk "$ROMS_PART" &>/dev/null; then
-    mount "$ROMS_PART" /roms 2>/dev/null || true
+    if ! mountpoint -q /roms; then
+        mount "$ROMS_PART" /roms 2>&1 || echo "  WARNING: Could not mount $ROMS_PART"
+    fi
 fi
 
-SYSTEMS=(
-    "nes" "snes" "gb" "gbc" "gba" "nds"
-    "megadrive" "mastersystem" "gamegear" "genesis" "segacd" "sega32x"
-    "n64" "psx" "psp"
-    "dreamcast" "saturn"
-    "arcade" "mame" "fbneo" "neogeo"
-    "atari2600" "atari7800" "atarilynx"
-    "pcengine" "pcenginecd" "supergrafx"
-    "wonderswan" "wonderswancolor"
-    "ngp" "ngpc"
-    "virtualboy"
-    "scummvm" "dos"
-    "ports"
-    "bios"
-)
+if mountpoint -q /roms; then
+    ROMS_OK=true
 
-for sys in "${SYSTEMS[@]}"; do
-    mkdir -p "/roms/$sys"
-done
+    SYSTEMS=(
+        "nes" "snes" "gb" "gbc" "gba" "nds"
+        "megadrive" "mastersystem" "gamegear" "genesis" "segacd" "sega32x"
+        "n64" "psx" "psp"
+        "dreamcast" "saturn"
+        "arcade" "mame" "fbneo" "neogeo"
+        "atari2600" "atari7800" "atarilynx"
+        "pcengine" "pcenginecd" "supergrafx"
+        "wonderswan" "wonderswancolor"
+        "ngp" "ngpc"
+        "virtualboy"
+        "scummvm" "dos"
+        "ports"
+        "bios"
+    )
 
-echo "  ROM directories created"
+    for sys in "${SYSTEMS[@]}"; do
+        mkdir -p "/roms/$sys"
+    done
+
+    mkdir -p /roms/saves /roms/states
+    echo "  ROM directories created"
+else
+    echo "  WARNING: /roms not mounted — directories will be created on next boot"
+fi
 
 #------------------------------------------------------------------------------
 # Generate SSH host keys
@@ -141,10 +178,9 @@ if [ ! -f "$RA_DIR/retroarch.cfg" ] && [ -f /etc/archr/retroarch.cfg ]; then
     cp /etc/archr/retroarch.cfg "$RA_DIR/retroarch.cfg"
 fi
 
-# Set savefile/savestate directories to per-system on ROMS partition
+# Set savefile/savestate directories to ROMS partition
 sed -i "s|^savefile_directory =.*|savefile_directory = \"/roms/saves\"|" "$RA_DIR/retroarch.cfg" 2>/dev/null || true
 sed -i "s|^savestate_directory =.*|savestate_directory = \"/roms/states\"|" "$RA_DIR/retroarch.cfg" 2>/dev/null || true
-mkdir -p /roms/saves /roms/states
 
 #------------------------------------------------------------------------------
 # Configure EmulationStation
@@ -162,9 +198,12 @@ fi
 chown -R archr:archr /home/archr
 
 #------------------------------------------------------------------------------
-# Mark first boot complete
+# Mark first boot complete (only if ROMS partition is working)
 #------------------------------------------------------------------------------
-mkdir -p "$(dirname "$FIRST_BOOT_FLAG")"
-touch "$FIRST_BOOT_FLAG"
-
-echo "=== First Boot Setup Complete ==="
+if [ "$ROMS_OK" = true ]; then
+    mkdir -p "$(dirname "$FIRST_BOOT_FLAG")"
+    touch "$FIRST_BOOT_FLAG"
+    echo "=== First Boot Setup Complete ==="
+else
+    echo "=== First Boot Setup Partial — ROMS partition will retry on next boot ==="
+fi

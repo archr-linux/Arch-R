@@ -50,8 +50,8 @@ _bt "after_amixer"
 
 # === BACKGROUND: Everything else runs parallel with ES SDL init (~2s window) ===
 (
-    # Framebuffer blank (hides login text, ES takes over via KMSDRM anyway)
-    dd if=/dev/zero of=/dev/fb0 bs=614400 count=1 2>/dev/null
+    # NOTE: fb0 blank removed — archr-splash.service writes splash to fb0,
+    # which persists until ES takes DRM master via KMSDRM.
 
     # Permissions + governors (single sudo)
     sudo sh -c '/usr/local/bin/perfmax; chmod 666 /dev/tty1 /dev/dri/* /sys/class/backlight/backlight/brightness' 2>/dev/null

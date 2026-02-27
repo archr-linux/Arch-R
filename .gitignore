@@ -71,3 +71,20 @@ restore-mesa26-gbm.sh
 
 # Website (separate project)
 website/
+
+# Environment secrets
+.env
+
+# Bootloader source trees (cloned/downloaded during build)
+bootloader/rkbin/
+bootloader/u-boot-mainline/
+bootloader/u-boot-rk3326-clone/
+
+# Pre-built U-Boot backups (working binaries, not part of build pipeline)
+bootloader/u-boot-clone-working/
+
+# Extracted DTBs (debugging artifacts)
+bootloader/u-boot-r36s-working/extracted_dtb_*.dtb
+
+# Clone U-Boot build output
+bootloader/u-boot-clone-build/

@@ -1,0 +1,778 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * Arch R - R36S Clone Type5 (G80CA-MB) device tree for kernel 6.6
+ *
+ * Board profile for R36S clone variant "Type5" (G80CA-MB board).
+ * Based on rk3326-odroid-go.dtsi (proven kernel 6.6 base).
+ *
+ * KEY DIFFERENCES from original R36S:
+ *   - PMIC: 3.0V rails (vs 3.3V), extra LDO_REG1/LDO_REG9
+ *   - Panel: different reset/enable GPIOs, 30MHz pixel clock, enable-gpios
+ *   - Buttons: ALL on GPIO3 (B/C/D), thumbsticks on GPIO2 (B)
+ *   - Volume: ADC-based (saradc ch2) instead of GPIO
+ *   - USB OTG: disabled, vcc_host on GPIO2 PA4
+ *   - Audio: no external amplifier (no spk-ctl-gpios, no use-ext-amplifier)
+ *   - HP detect: GPIO2 PC6 (same as original, verified from BSP DTB)
+ *   - Battery: 2775mAh (vs 3200mAh), lower charge current
+ *   - SD: 100MHz max, different cd-gpios
+ *   - No eMMC → SD = mmcblk0 (original has eMMC → SD = mmcblk1)
+ *
+ * Copyright (C) 2024-2026 Arch R Project
+ */
+
+/dts-v1/;
+#include "rk3326-odroid-go.dtsi"
+
+/ {
+	model = "Game Console R36S Clone Type5";
+	compatible = "gameconsole,r36s-clone-type5", "gameconsole,r36s",
+		     "rockchip,rk3326";
+
+	/* Clone has no eMMC — only SD via SDMMC controller */
+	aliases {
+		mmc0 = &sdmmc;  /* Primary SD slot (mmcblk0) */
+	};
+
+	/*
+	 * ADC mux for dual analog sticks
+	 * Clone mux GPIOs: A=GPIO2_PC0, B=GPIO2_PB7, EN=GPIO2_PB4
+	 * (Verified from BSP DTB: phandle 0xbd = GPIO2 = ff260000)
+	 * Channel mapping (from BSP): [2,3,1,0]
+	 *   mux ch0 = Right Y, ch1 = Right X, ch2 = Left X, ch3 = Left Y
+	 */
+	joystick_mux_controller: mux-controller {
+		compatible = "gpio-mux";
+		pinctrl = <&mux_en_pins>;
+		#mux-control-cells = <0>;
+		mux-gpios = <&gpio2 RK_PC0 GPIO_ACTIVE_LOW>,
+			    <&gpio2 RK_PB7 GPIO_ACTIVE_LOW>;
+	};
+
+	joystick_mux: adc-mux {
+		compatible = "io-channel-mux";
+		io-channels = <&saradc 1>;
+		io-channel-names = "parent";
+		#io-channel-cells = <1>;
+		mux-controls = <&joystick_mux_controller>;
+		channels = "0", "1", "2", "3";
+	};
+
+	analog_sticks: adc-joystick {
+		compatible = "adc-joystick";
+		io-channels = <&joystick_mux 0>,
+			      <&joystick_mux 1>,
+			      <&joystick_mux 2>,
+			      <&joystick_mux 3>;
+		poll-interval = <60>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		/* Clone channel mapping: ch0=RY, ch1=RX, ch2=LX, ch3=LY */
+		/* All axes inverted on clone (abs-range max < min) */
+		axis@0 {
+			reg = <0>;
+			abs-flat = <32>;
+			abs-fuzz = <32>;
+			abs-range = <800 180>;
+			linux,code = <ABS_RY>;
+		};
+
+		axis@1 {
+			reg = <1>;
+			abs-flat = <32>;
+			abs-fuzz = <32>;
+			abs-range = <800 180>;
+			linux,code = <ABS_RX>;
+		};
+
+		axis@2 {
+			reg = <2>;
+			abs-flat = <32>;
+			abs-fuzz = <32>;
+			abs-range = <800 180>;
+			linux,code = <ABS_X>;
+		};
+
+		axis@3 {
+			reg = <3>;
+			abs-flat = <32>;
+			abs-fuzz = <32>;
+			abs-range = <800 180>;
+			linux,code = <ABS_Y>;
+		};
+	};
+
+	/*
+	 * Volume buttons: ADC-based on clone (saradc channel 2)
+	 * Clone uses resistor ladder, not individual GPIO pins.
+	 * Measured: Vol-up ADC ~9 (~16mV), Vol-down ADC ~166 (~292mV)
+	 * Thresholds: closest-match algorithm, values near measured voltages.
+	 * Reference: ROCKNIX rk3326-gameconsole-eeclone.dts
+	 */
+	adc-keys {
+		compatible = "adc-keys";
+		io-channels = <&saradc 2>;
+		io-channel-names = "buttons";
+		autorepeat;
+		poll-interval = <100>;
+		keyup-threshold-microvolt = <1800000>;
+
+		button-vol-up {
+			label = "VOLUMEUP";
+			linux,code = <KEY_VOLUMEUP>;
+			press-threshold-microvolt = <15000>;
+		};
+
+		button-vol-down {
+			label = "VOLUMEDOWN";
+			linux,code = <KEY_VOLUMEDOWN>;
+			press-threshold-microvolt = <300000>;
+		};
+	};
+
+	/* Battery: Clone has 2775mAh (vs 3200mAh on original) */
+	battery: battery {
+		compatible = "simple-battery";
+		charge-full-design-microamp-hours = <2775000>;
+		charge-term-current-microamp = <300000>;
+		constant-charge-current-max-microamp = <800000>;
+		constant-charge-voltage-max-microvolt = <4200000>;
+		factory-internal-resistance-micro-ohms = <180000>;
+		voltage-max-design-microvolt = <4100000>;
+		voltage-min-design-microvolt = <3500000>;
+
+		ocv-capacity-celsius = <20>;
+		ocv-capacity-table-0 =  <4046950 100>, <4001920 95>, <3967900 90>, <3919950 85>,
+					<3888450 80>, <3861850 75>, <3831540 70>, <3799130 65>,
+					<3768190 60>, <3745650 55>, <3726610 50>, <3711630 45>,
+					<3696720 40>, <3685660 35>, <3674950 30>, <3663050 25>,
+					<3649470 20>, <3635260 15>, <3616920 10>, <3592440 5>,
+					<3300000 0>;
+	};
+
+	/* Sound card: HP detect on GPIO2 PC6 (same as original, verified from BSP DTB) */
+	rk817-sound {
+		/delete-property/ simple-audio-card,routing;
+		simple-audio-card,widgets = "Headphone", "Headphones";
+		simple-audio-card,hp-det-gpio = <&gpio2 RK_PC6 GPIO_ACTIVE_LOW>;
+		simple-audio-card,codec {
+			sound-dai = <&rk817_codec>;
+		};
+	};
+
+};
+
+/* Override vcc_host: clone uses GPIO2 PA4 (vs GPIO0 PB7 on original) */
+&vcc_host {
+	gpio = <&gpio2 RK_PA4 GPIO_ACTIVE_HIGH>;
+	pinctrl-0 = <&host_drv>;
+	pinctrl-names = "default";
+	/delete-property/ regulator-boot-on;
+	/delete-property/ vin-supply;
+};
+
+/* ============================================================
+ * Remove ODROID-specific nodes not present on clone
+ * ============================================================ */
+/delete-node/ &gpio_led;
+/delete-node/ &pwm_led;
+
+/* Delete ALL ODROID F-buttons (clone has different GPIOs) */
+/delete-node/ &btn_f1;
+/delete-node/ &btn_f2;
+/delete-node/ &btn_f3;
+/delete-node/ &btn_f4;
+/delete-node/ &btn_f5;
+/delete-node/ &btn_f6;
+
+/* ============================================================
+ * Clone gamepad buttons — ALL game buttons on GPIO3
+ *
+ * CRITICAL: BSP DTB phandle mapping (verified from register addresses):
+ *   phandle 0x68 = ff270000 = GPIO3
+ *   phandle 0xbd = ff260000 = GPIO2
+ *
+ * Clone Type5:    DPAD on GPIO3 C4-C7, ABXY on GPIO3 C0-C3,
+ *                 shoulders on GPIO3 B2-B6, extras on GPIO3 D0-D1
+ *                 thumbsticks on GPIO2 B5-B6
+ *
+ * Keycodes use standard BTN_* (same as original) for ES compatibility.
+ * ============================================================ */
+&builtin_gamepad {
+	pinctrl-0 = <&btn_pins>;
+
+	/* DPAD: clone uses GPIO3 */
+	button-sw1 {
+		gpios = <&gpio3 RK_PC6 GPIO_ACTIVE_LOW>;
+		label = "DPAD-UP";
+		linux,code = <BTN_DPAD_UP>;
+	};
+
+	button-sw2 {
+		gpios = <&gpio3 RK_PC7 GPIO_ACTIVE_LOW>;
+		label = "DPAD-DOWN";
+		linux,code = <BTN_DPAD_DOWN>;
+	};
+
+	button-sw3 {
+		gpios = <&gpio3 RK_PC4 GPIO_ACTIVE_LOW>;
+		label = "DPAD-LEFT";
+		linux,code = <BTN_DPAD_LEFT>;
+	};
+
+	button-sw4 {
+		gpios = <&gpio3 RK_PC5 GPIO_ACTIVE_LOW>;
+		label = "DPAD-RIGHT";
+		linux,code = <BTN_DPAD_RIGHT>;
+	};
+
+	/* ABXY: clone has them on GPIO3 C0-C3 */
+	button-sw5 {
+		gpios = <&gpio3 RK_PC0 GPIO_ACTIVE_LOW>;
+		label = "BTN_A";
+		linux,code = <BTN_EAST>;
+	};
+
+	button-sw6 {
+		gpios = <&gpio3 RK_PC1 GPIO_ACTIVE_LOW>;
+		label = "BTN_B";
+		linux,code = <BTN_SOUTH>;
+	};
+
+	button-sw7 {
+		gpios = <&gpio3 RK_PC2 GPIO_ACTIVE_LOW>;
+		label = "BTN_X";
+		linux,code = <BTN_NORTH>;
+	};
+
+	button-sw8 {
+		gpios = <&gpio3 RK_PC3 GPIO_ACTIVE_LOW>;
+		label = "BTN_Y";
+		linux,code = <BTN_WEST>;
+	};
+
+	/*
+	 * Shoulders: override button-sw15/sw16 from base DTSI.
+	 * Must use same node names to properly override base nodes.
+	 */
+	button-sw15 {
+		gpios = <&gpio3 RK_PB5 GPIO_ACTIVE_LOW>;
+		label = "TOP-LEFT";
+		linux,code = <BTN_TL>;
+	};
+
+	button-sw16 {
+		gpios = <&gpio3 RK_PB3 GPIO_ACTIVE_LOW>;
+		label = "TOP-RIGHT";
+		linux,code = <BTN_TR>;
+	};
+
+	/* Thumbstick buttons: on GPIO2 (verified from BSP DTB) */
+	button-thumbl {
+		gpios = <&gpio2 RK_PB5 GPIO_ACTIVE_LOW>;
+		label = "BTN_THUMBL";
+		linux,code = <BTN_THUMBL>;
+	};
+
+	button-thumbr {
+		gpios = <&gpio2 RK_PB6 GPIO_ACTIVE_LOW>;
+		label = "BTN_THUMBR";
+		linux,code = <BTN_THUMBR>;
+	};
+
+	button-mode {
+		gpios = <&gpio3 RK_PB2 GPIO_ACTIVE_LOW>;
+		label = "BTN_MODE";
+		linux,code = <BTN_MODE>;
+	};
+
+	button-select {
+		gpios = <&gpio3 RK_PD0 GPIO_ACTIVE_LOW>;
+		label = "SELECT";
+		linux,code = <BTN_SELECT>;
+	};
+
+	button-start {
+		gpios = <&gpio3 RK_PD1 GPIO_ACTIVE_LOW>;
+		label = "START";
+		linux,code = <BTN_START>;
+	};
+
+	button-tl2 {
+		gpios = <&gpio3 RK_PB6 GPIO_ACTIVE_LOW>;
+		label = "TOP-LEFT 2";
+		linux,code = <BTN_TL2>;
+	};
+
+	button-tr2 {
+		gpios = <&gpio3 RK_PB4 GPIO_ACTIVE_LOW>;
+		label = "TOP-RIGHT 2";
+		linux,code = <BTN_TR2>;
+	};
+};
+
+/* ============================================================
+ * Panel: Clone Type5 NV3052C 640x480 MIPI-DSI
+ * Different GPIOs, timing, and init from original R36S
+ * ============================================================ */
+&internal_display {
+	compatible = "simple-panel-dsi";
+	reset-gpios = <&gpio3 RK_PD3 GPIO_ACTIVE_LOW>;
+	enable-gpios = <&gpio3 RK_PA3 GPIO_ACTIVE_HIGH>;
+	power-supply = <&vcc_lcd>;
+	backlight = <&backlight>;
+
+	prepare-delay-ms = <20>;
+	reset-delay-ms = <20>;
+	init-delay-ms = <20>;
+	enable-delay-ms = <120>;
+	disable-delay-ms = <20>;
+	unprepare-delay-ms = <20>;
+
+	width-mm = <153>;
+	height-mm = <85>;
+
+	dsi,flags = <0xa03>;
+	dsi,format = <0>;
+	dsi,lanes = <4>;
+
+	/* Clone Type5 panel init sequence (NV3052C) */
+	panel-init-sequence = [
+		15 00 02 ff 30
+		15 00 02 ff 52
+		15 00 02 ff 01
+		15 00 02 e3 00
+		15 00 02 25 10
+		15 00 02 28 6f
+		15 00 02 29 01
+		15 00 02 2a df
+		15 00 02 2c 22
+		15 00 02 c3 0f
+		15 00 02 37 9c
+		15 00 02 38 a7
+		15 00 02 39 41
+		15 00 02 80 20
+		15 00 02 91 67
+		15 00 02 92 67
+		15 00 02 a0 55
+		15 00 02 a1 50
+		15 00 02 a3 58
+		15 00 02 a4 9c
+		15 00 02 a7 02
+		15 00 02 a8 01
+		15 00 02 a9 21
+		15 00 02 aa fc
+		15 00 02 ab 28
+		15 00 02 ac 06
+		15 00 02 ad 06
+		15 00 02 ae 06
+		15 00 02 af 03
+		15 00 02 b0 08
+		15 00 02 b1 26
+		15 00 02 b2 28
+		15 00 02 b3 28
+		15 00 02 b4 03
+		15 00 02 b5 08
+		15 00 02 b6 26
+		15 00 02 b7 08
+		15 00 02 b8 26
+		15 00 02 c0 00
+		15 00 02 c1 00
+		15 00 02 c2 00
+		15 00 02 ff 30
+		15 00 02 ff 52
+		15 00 02 ff 02
+		15 00 02 b0 02
+		15 00 02 d0 02
+		15 00 02 b1 0f
+		15 00 02 d1 10
+		15 00 02 b2 11
+		15 00 02 d2 12
+		15 00 02 b3 32
+		15 00 02 d3 33
+		15 00 02 b4 36
+		15 00 02 d4 36
+		15 00 02 b5 3c
+		15 00 02 d5 3c
+		15 00 02 b6 20
+		15 00 02 d6 20
+		15 00 02 b7 3e
+		15 00 02 d7 3e
+		15 00 02 b8 0e
+		15 00 02 d8 0d
+		15 00 02 b9 05
+		15 00 02 d9 05
+		15 00 02 ba 11
+		15 00 02 da 12
+		15 00 02 bb 11
+		15 00 02 db 11
+		15 00 02 bc 13
+		15 00 02 dc 14
+		15 00 02 bd 14
+		15 00 02 dd 14
+		15 00 02 be 16
+		15 00 02 de 18
+		15 00 02 bf 0e
+		15 00 02 df 0f
+		15 00 02 c0 17
+		15 00 02 e0 17
+		15 00 02 c1 07
+		15 00 02 e1 08
+		15 00 02 ff 30
+		15 00 02 ff 52
+		15 00 02 ff 03
+		15 00 02 08 8a
+		15 00 02 09 8b
+		15 00 02 30 00
+		15 00 02 31 00
+		15 00 02 32 00
+		15 00 02 33 00
+		15 00 02 34 61
+		15 00 02 35 d4
+		15 00 02 36 24
+		15 00 02 37 03
+		15 00 02 40 86
+		15 00 02 41 87
+		15 00 02 42 84
+		15 00 02 43 85
+		15 00 02 44 11
+		15 00 02 45 de
+		15 00 02 46 dd
+		15 00 02 47 11
+		15 00 02 48 e0
+		15 00 02 49 df
+		15 00 02 50 82
+		15 00 02 51 83
+		15 00 02 52 80
+		15 00 02 53 81
+		15 00 02 54 11
+		15 00 02 55 e2
+		15 00 02 56 e1
+		15 00 02 57 11
+		15 00 02 58 e4
+		15 00 02 59 e3
+		15 00 02 82 0f
+		15 00 02 83 0f
+		15 00 02 84 00
+		15 00 02 85 0f
+		15 00 02 86 0f
+		15 00 02 87 0e
+		15 00 02 88 0e
+		15 00 02 89 06
+		15 00 02 8a 06
+		15 00 02 8b 07
+		15 00 02 8c 07
+		15 00 02 8d 04
+		15 00 02 8e 04
+		15 00 02 8f 05
+		15 00 02 90 05
+		15 00 02 98 0f
+		15 00 02 99 0f
+		15 00 02 9a 00
+		15 00 02 9b 0f
+		15 00 02 9c 0f
+		15 00 02 9d 0e
+		15 00 02 9e 0e
+		15 00 02 9f 06
+		15 00 02 a0 06
+		15 00 02 a1 07
+		15 00 02 a2 07
+		15 00 02 a3 04
+		15 00 02 a4 04
+		15 00 02 a5 05
+		15 00 02 a6 05
+		15 00 02 e0 02
+		15 00 02 e1 52
+		15 00 02 ff 30
+		15 00 02 ff 52
+		15 00 02 ff 00
+		15 00 02 36 02
+		05 c8 01 11
+		05 64 01 29
+	];
+
+	panel-exit-sequence = [
+		05 00 01 28
+		05 00 01 10
+	];
+
+	display-timings {
+		native-mode = <&timing0>;
+
+		timing0: 60Hz {
+			clock-frequency = <30000000>;
+			hactive = <640>;
+			vactive = <480>;
+			hfront-porch = <168>;
+			hsync-len = <8>;
+			hback-porch = <161>;
+			vfront-porch = <16>;
+			vsync-len = <2>;
+			vback-porch = <14>;
+			hsync-active = <0>;
+			vsync-active = <0>;
+			de-active = <0>;
+			pixelclk-active = <1>;
+		};
+	};
+};
+
+/* ============================================================
+ * PMIC: system-power-controller for shutdown/reboot
+ * Clone has different voltage rails (3.0V vs 3.3V on many)
+ * NOTE: No pinctrl_rk8xx — causes kernel panic on kernel 6.6
+ * ============================================================ */
+&rk817 {
+	rockchip,system-power-controller;
+
+	battery {
+		compatible = "rk817,battery";
+		ocv_table = <3300 3592 3617 3635 3649 3663 3675
+			     3686 3697 3712 3727 3746 3768 3799
+			     3832 3862 3888 3920 3968 4002 4047>;
+		design_capacity = <2775>;
+		design_qmax = <3052>;
+		bat_res = <101>;
+		sleep_enter_current = <300>;
+		sleep_exit_current = <300>;
+		sleep_filter_current = <100>;
+		power_off_thresd = <3500>;
+		monitor_sec = <5>;
+		sample_res = <10>;
+		virtual_power = <1>;
+		charge_stay_awake = <0>;
+		fake_full_soc = <100>;
+		nominal_voltage = <3800>;
+	};
+};
+
+/* Clone USB: OTG port DISABLED (no OTG on clone hardware) */
+&u2phy_otg {
+	status = "disabled";
+};
+
+/*
+ * UART2: MUST disable on clone — M1 pins (GPIO2 PB4/PB6) conflict
+ * with button-tr2 and button-tl2. Console uses ttyFIQ0 (separate).
+ * Without this, pinctrl fails for gpio-keys → ALL buttons dead.
+ */
+&uart2 {
+	status = "disabled";
+};
+
+/* ============================================================
+ * SDIO (second SD slot): different cd-gpio on clone
+ * NOTE: Clone shares SDIO power supplies with panel/backlight
+ * regulators. Keep it but adjust cd-gpio.
+ * ============================================================ */
+&sdio {
+	bus-width = <4>;
+	cap-sd-highspeed;
+	card-detect-delay = <800>;
+	cd-gpios = <&gpio0 RK_PA2 GPIO_ACTIVE_LOW>;
+	disable-wp;
+	vmmc-supply = <&vcc_lcd>;
+	vqmmc-supply = <&vcc_bl>;
+	status = "okay";
+};
+
+/* Primary SD slot: different cd-gpio on clone */
+&sdmmc {
+	cd-gpios = <&gpio0 RK_PA3 GPIO_ACTIVE_LOW>;
+};
+
+&pwm0 {
+	status = "okay";
+};
+
+/* Backlight: same as original (PWM, 0-255 range) */
+&backlight {
+	brightness-levels = <
+		  0   1   2   3   4   5   6   7
+		  8   9  10  11  12  13  14  15
+		 16  17  18  19  20  21  22  23
+		 24  25  26  27  28  29  30  31
+		 32  33  34  35  36  37  38  39
+		 40  41  42  43  44  45  46  47
+		 48  49  50  51  52  53  54  55
+		 56  57  58  59  60  61  62  63
+		 64  65  66  67  68  69  70  71
+		 72  73  74  75  76  77  78  79
+		 80  81  82  83  84  85  86  87
+		 88  89  90  91  92  93  94  95
+		 96  97  98  99 100 101 102 103
+		104 105 106 107 108 109 110 111
+		112 113 114 115 116 117 118 119
+		120 121 122 123 124 125 126 127
+		128 129 130 131 132 133 134 135
+		136 137 138 139 140 141 142 143
+		144 145 146 147 148 149 150 151
+		152 153 154 155 156 157 158 159
+		160 161 162 163 164 165 166 167
+		168 169 170 171 172 173 174 175
+		176 177 178 179 180 181 182 183
+		184 185 186 187 188 189 190 191
+		192 193 194 195 196 197 198 199
+		200 201 202 203 204 205 206 207
+		208 209 210 211 212 213 214 215
+		216 217 218 219 220 221 222 223
+		224 225 226 227 228 229 230 231
+		232 233 234 235 236 237 238 239
+		240 241 242 243 244 245 246 247
+		248 249 250 251 252 253 254 255>;
+	default-brightness-level = <200>;
+};
+
+/* ============================================================
+ * Pinctrl: Clone button GPIO assignments
+ * Game buttons on bank 3, thumbsticks on bank 2, mux on bank 2
+ * ============================================================ */
+&pinctrl {
+	btns {
+		btn_pins: btn-pins {
+			rockchip,pins = /* GPIO3: all game buttons */
+					<3 RK_PB2 RK_FUNC_GPIO &pcfg_pull_up>,
+					<3 RK_PB3 RK_FUNC_GPIO &pcfg_pull_up>,
+					<3 RK_PB4 RK_FUNC_GPIO &pcfg_pull_up>,
+					<3 RK_PB5 RK_FUNC_GPIO &pcfg_pull_up>,
+					<3 RK_PB6 RK_FUNC_GPIO &pcfg_pull_up>,
+					<3 RK_PC0 RK_FUNC_GPIO &pcfg_pull_up>,
+					<3 RK_PC1 RK_FUNC_GPIO &pcfg_pull_up>,
+					<3 RK_PC2 RK_FUNC_GPIO &pcfg_pull_up>,
+					<3 RK_PC3 RK_FUNC_GPIO &pcfg_pull_up>,
+					<3 RK_PC4 RK_FUNC_GPIO &pcfg_pull_up>,
+					<3 RK_PC5 RK_FUNC_GPIO &pcfg_pull_up>,
+					<3 RK_PC6 RK_FUNC_GPIO &pcfg_pull_up>,
+					<3 RK_PC7 RK_FUNC_GPIO &pcfg_pull_up>,
+					<3 RK_PD0 RK_FUNC_GPIO &pcfg_pull_up>,
+					<3 RK_PD1 RK_FUNC_GPIO &pcfg_pull_up>,
+					/* GPIO2: thumbstick buttons */
+					<2 RK_PB5 RK_FUNC_GPIO &pcfg_pull_up>,
+					<2 RK_PB6 RK_FUNC_GPIO &pcfg_pull_up>;
+		};
+	};
+
+	joystick {
+		mux_en_pins: mux-pins {
+			rockchip,pins = <2 RK_PB4 RK_FUNC_GPIO &pcfg_output_low>;
+		};
+	};
+
+	usb {
+		host_drv: host-drv {
+			rockchip,pins = <2 RK_PA4 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+	};
+};
+
+&sfc {
+	status = "disabled";
+};
+
+/* ============================================================
+ * PMIC Regulator overrides for clone voltages
+ * Clone runs at 3.0V on several rails (vs 3.3V on original)
+ * ============================================================ */
+
+/* DCDC_REG1 (vdd_logic): clone max is 1150mV (vs 1168mV original) */
+&vdd_logic {
+	regulator-max-microvolt = <1150000>;
+};
+
+/* DCDC_REG4: clone is vcc_3v0 (3.0V), original is vcc_3v3 (3.3V) */
+&vcc_3v3 {
+	regulator-name = "vcc_3v0";
+	regulator-min-microvolt = <3000000>;
+	regulator-max-microvolt = <3000000>;
+};
+
+/* LDO_REG4: clone is 3.0V (vs 3.3V on original) */
+&vcc3v3_pmu {
+	regulator-name = "vcc3v0_pmu";
+	regulator-min-microvolt = <3000000>;
+	regulator-max-microvolt = <3000000>;
+};
+
+/* LDO_REG5 (vccio_sd): clone is fixed 1.8V (original 1.8-3.3V) */
+&vccio_sd {
+	regulator-min-microvolt = <1800000>;
+	regulator-max-microvolt = <1800000>;
+};
+
+/* LDO_REG6 (vcc_sd): clone 1.8-3.0V range (original 3.3V fixed) */
+&vcc_sd {
+	regulator-min-microvolt = <1800000>;
+	regulator-max-microvolt = <3000000>;
+	regulator-always-on;
+};
+
+/* LDO_REG7 (vcc_bl): clone allows wider range */
+&vcc_bl {
+	regulator-min-microvolt = <1800000>;
+	regulator-max-microvolt = <3300000>;
+	regulator-always-on;
+	regulator-boot-on;
+};
+
+/* LDO_REG8 (vcc_lcd): clone is 3.3V (original 2.8V) */
+&vcc_lcd {
+	regulator-name = "vcc3v0_dvp";
+	regulator-min-microvolt = <3300000>;
+	regulator-max-microvolt = <3300000>;
+	regulator-always-on;
+	regulator-boot-on;
+};
+
+/* ============================================================
+ * RK817 charger: clone has lower charge currents (800mA)
+ * ============================================================ */
+&rk817_charger {
+	compatible = "rk817,charger";
+	monitored-battery = <&battery>;
+	extcon = <&u2phy>;
+	min_input_voltage = <4500>;
+	max_input_current = <800>;
+	max_chrg_current = <800>;
+	max_chrg_voltage = <4200>;
+	chrg_term_mode = <0>;
+	chrg_finish_cur = <300>;
+	virtual_power = <0>;
+	power_dc2otg = <0>;
+	sample_res = <10>;
+	otg5v_suspend_enable = <1>;
+	gate_function_disable = <0>;
+	dc_det_adc = <0>;
+};
+
+/* ============================================================
+ * RK817 codec: Clone has NO external speaker amplifier
+ * Unlike original R36S which needs spk-ctl-gpios and
+ * use-ext-amplifier, the clone drives the speaker directly
+ * from the codec's internal class-D output (or has an
+ * always-on amplifier that doesn't need GPIO control).
+ * ============================================================ */
+&rk817_codec {
+	compatible = "rockchip,rk817-codec";
+	clocks = <&cru SCLK_I2S1_OUT>;
+	clock-names = "mclk";
+	#sound-dai-cells = <0>;
+	spk-volume = <3>;
+	hp-volume = <20>;
+	/* No spk-ctl-gpios or use-ext-amplifier on clone */
+};
+
+/* CPU: full 1512MHz (same as original) */
+&cpu0_opp_table {
+	rockchip,avs = <1>;
+};
+
+/* DRAM: keep 786MHz disabled (clone hardware may not support it) */
+/* &dmc_opp_table left at default: 786MHz disabled */
+
+/* GPU: 520MHz max (no overclock — clone PMIC max is 1150mV not 1175mV) */
+/* &gpu_opp_table left at default from rk3326.dtsi */
+
+/* Fix GPU interrupt-names for Panfrost (same fix needed on clone) */
+&gpu {
+	interrupt-names = "gpu", "mmu", "job";
+};

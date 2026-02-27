@@ -31,8 +31,9 @@ KERNEL_REPO="https://github.com/rockchip-linux/kernel.git"
 DEFCONFIG="rockchip_linux_defconfig"
 CONFIG_FRAGMENT="$SCRIPT_DIR/config/archr-6.6-r36s.config"
 
-# DTS target
+# DTS targets
 R36S_DTB="rk3326-gameconsole-r36s"
+CLONE_DTB="rk3326-gameconsole-r36s-clone-type5"
 
 # Paths
 KERNEL_SRC="${KERNEL_SRC:-/home/dgateles/Documentos/Projetos/kernel}"
@@ -91,6 +92,14 @@ else
     else
         error "DTS not found! Expected at: $DTS_SRC"
     fi
+fi
+
+# Copy clone DTS (if available)
+CLONE_DTS_SRC="$SCRIPT_DIR/kernel/dts/${CLONE_DTB}.dts"
+CLONE_DTS_DEST="$KERNEL_SRC/arch/arm64/boot/dts/rockchip/${CLONE_DTB}.dts"
+if [ -f "$CLONE_DTS_SRC" ]; then
+    cp "$CLONE_DTS_SRC" "$CLONE_DTS_DEST"
+    log "  DTS (clone): copied from repo"
 fi
 
 #------------------------------------------------------------------------------
@@ -164,6 +173,17 @@ fi
 
 log "  DTB built: ${R36S_DTB}.dtb"
 
+# Build clone DTB (if DTS was copied)
+if [ -f "$CLONE_DTS_DEST" ]; then
+    make -C "$KERNEL_SRC" -j$JOBS ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE \
+        "rockchip/${CLONE_DTB}.dtb" 2>&1 | tail -5
+    if [ -f "$KERNEL_SRC/arch/arm64/boot/dts/rockchip/${CLONE_DTB}.dtb" ]; then
+        log "  DTB built (clone): ${CLONE_DTB}.dtb"
+    else
+        warn "Clone DTB build failed: ${CLONE_DTB}.dtb"
+    fi
+fi
+
 #------------------------------------------------------------------------------
 # Step 5: Build Kernel Modules
 #------------------------------------------------------------------------------
@@ -191,6 +211,12 @@ log "  Copied: Image"
 # Copy R36S DTB
 cp "$KERNEL_SRC/arch/arm64/boot/dts/rockchip/${R36S_DTB}.dtb" "$BOOT_DIR/"
 log "  Copied: ${R36S_DTB}.dtb"
+
+# Copy clone DTB (if built)
+if [ -f "$KERNEL_SRC/arch/arm64/boot/dts/rockchip/${CLONE_DTB}.dtb" ]; then
+    cp "$KERNEL_SRC/arch/arm64/boot/dts/rockchip/${CLONE_DTB}.dtb" "$BOOT_DIR/"
+    log "  Copied: ${CLONE_DTB}.dtb"
+fi
 
 # Install modules (use pipefail to catch errors masked by tail)
 set -o pipefail
@@ -231,9 +257,13 @@ MODULES_SIZE=$(du -sh "$MODULES_DIR" 2>/dev/null | cut -f1 || echo "N/A")
 
 log "Kernel: $KERNEL_FULL"
 log ""
+CLONE_DTB_SIZE="N/A"
+[ -f "$BOOT_DIR/${CLONE_DTB}.dtb" ] && CLONE_DTB_SIZE=$(du -h "$BOOT_DIR/${CLONE_DTB}.dtb" | cut -f1)
+
 log "Artifacts:"
-log "  Image:   $BOOT_DIR/Image ($IMAGE_SIZE)"
-log "  DTB:     $BOOT_DIR/${R36S_DTB}.dtb ($DTB_SIZE)"
-log "  Modules: $MODULES_DIR/ ($MODULES_SIZE)"
+log "  Image:     $BOOT_DIR/Image ($IMAGE_SIZE)"
+log "  DTB:       $BOOT_DIR/${R36S_DTB}.dtb ($DTB_SIZE)"
+log "  DTB clone: $BOOT_DIR/${CLONE_DTB}.dtb ($CLONE_DTB_SIZE)"
+log "  Modules:   $MODULES_DIR/ ($MODULES_SIZE)"
 log ""
-log "Kernel 6.6 ready for R36S!"
+log "Kernel 6.6 ready for R36S (original + clone)!"

@@ -25,9 +25,12 @@ except ImportError:
     sys.exit(1)
 
 # Volume step (percentage per key press)
-VOL_STEP = 2
+VOL_STEP = 5
 # Brightness step (percentage per key press)
-BRIGHT_STEP = 3
+BRIGHT_STEP = 5
+# Minimum interval between volume/brightness actions (seconds)
+# adc-keys autorepeat fires at ~30Hz — throttle to ~3 events/sec
+VOL_THROTTLE = 0.3
 # Minimum brightness percentage (prevent black screen)
 BRIGHT_MIN = 5
 # Brightness persistence file
@@ -177,6 +180,7 @@ def brightness_up():
 def brightness_down():
     if get_brightness_pct() <= BRIGHT_MIN:
         return
+    log(f"BRIGHT- brightnessctl s {BRIGHT_STEP}%-")
     run_cmd(f"brightnessctl -q s {BRIGHT_STEP}%-")
     # Clamp: if we went below minimum, set to minimum
     if get_brightness_pct() < BRIGHT_MIN:
@@ -203,7 +207,7 @@ def find_devices():
             name = dev.name.lower()
             caps = dev.capabilities()
 
-            if 'gpio-keys' in name:
+            if 'gpio-keys' in name or 'adc-keys' in name:
                 # Distinguish vol device from gamepad by checking for KEY_VOLUMEUP
                 key_caps = caps.get(ecodes.EV_KEY, [])
                 if ecodes.KEY_VOLUMEUP in key_caps:
@@ -253,6 +257,8 @@ def main():
 
     # Track MODE button state for brightness hotkey combo
     mode_held = False
+    # Throttle: last time a volume/brightness action was executed
+    last_vol_action = 0.0
 
     print("Hotkey daemon ready.")
     # Clear previous log on fresh start
@@ -298,18 +304,26 @@ def main():
                                 elif val == 0:
                                     mode_held = False
 
-                            # Volume keys from gpio-keys-vol (grabbed)
+                            # Volume keys (grabbed): accept press + repeat,
+                            # but throttle to max ~3 events/sec (300ms interval).
+                            # adc-keys autorepeat fires at ~30Hz natively.
                             elif key == ecodes.KEY_VOLUMEUP and val in (1, 2):
-                                if mode_held:
-                                    brightness_up()
-                                else:
-                                    volume_up()
+                                now = time.monotonic()
+                                if now - last_vol_action >= VOL_THROTTLE:
+                                    last_vol_action = now
+                                    if mode_held:
+                                        brightness_up()
+                                    else:
+                                        volume_up()
 
                             elif key == ecodes.KEY_VOLUMEDOWN and val in (1, 2):
-                                if mode_held:
-                                    brightness_down()
-                                else:
-                                    volume_down()
+                                now = time.monotonic()
+                                if now - last_vol_action >= VOL_THROTTLE:
+                                    last_vol_action = now
+                                    if mode_held:
+                                        brightness_down()
+                                    else:
+                                        volume_down()
 
                         # Headphone jack switch
                         elif event.type == ecodes.EV_SW:
