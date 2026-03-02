@@ -1961,10 +1961,35 @@ The Flasher lives at `archr-linux/archr-flasher` on GitHub. Still ironing out th
 (first build caught a Tauri 2 schema issue with `app.title` and 16-bit icon PNGs), but the
 code is feature-complete.
 
-**beta1.2 image changes:**
+**beta1.2 system changes — a lot more than "just polish":**
 
-Published new images with accumulated fixes since beta1.1. Nothing dramatic — mostly polish
-and small fixes that came out of Flasher development and continued testing.
+The biggest under-the-hood change was the **input merger daemon**. RetroArch sees multiple input
+devices (gpio-keys for buttons, adc-joystick for analog sticks) as separate controllers. With
+`max_users=1`, it would bind to gpio-keys and ignore the joystick entirely. The fix: a small
+C daemon (`input-merge`) that reads both evdev devices and outputs a single virtual "Arch R
+Gamepad" via uinput. Now RetroArch sees one unified controller with buttons + analog sticks.
+`retroarch-launch.sh` starts the merger before RA and kills it after.
+
+RetroArch itself got a proper config tuning pass, borrowed heavily from ROCKNIX's RK3326
+profiles. Audio at 48kHz (native DAC rate), triple buffer, late input polling for reduced
+latency, per-core options for mupen64plus, pcsx_rearmed, flycast, mame2003-plus, melonds,
+and others. Auto-save enabled, core options path set.
+
+**Panel wizard rework:** Panels now show in numerical order — the beep count matches the panel
+position in the list (Panel 1 = 1 beep, Panel 2 = 2 beeps, etc.). Default panel detection
+uses `dtb_name` matching instead of always falling back to `panels[0]`.
+
+**Third image variant: no-panel.** For the Flasher app — includes all 18 pre-merged panel DTBs
+for both original and clone hardware. The Flasher picks the right DTB at write time. Also added
+`variant-sync` systemd service that copies `/boot/variant` to `/etc/archr/variant` on first
+boot (necessary because the Flasher writes the variant marker to the FAT32 BOOT partition,
+not directly into ext4).
+
+**Mirror list updated:** The old EU mirror was returning 403 errors. Reshuffled to Americas-first
+ordering (better for Brazil) and added new mirrors (de4, gr, tw, tw2, ca.us).
+
+**boot.ini fix:** Root device now auto-detected from `mmcdev` variable instead of the hardcoded
+`__ROOTDEV__` placeholder — one less thing that could break on different boot configurations.
 
 ---
 
@@ -2077,4 +2102,4 @@ and small fixes that came out of Flasher development and continued testing.
 
 ---
 
-*Last updated: 2026-02-25 (build pipeline fixes, boot.scr mystery solved, splash positioning)*
+*Last updated: 2026-03-01 (beta1.2 release — Flasher app, input merger, RetroArch tuning, no-panel variant)*
