@@ -88,3 +88,6 @@ bootloader/u-boot-r36s-working/extracted_dtb_*.dtb
 
 # Clone U-Boot build output
 bootloader/u-boot-clone-build/
+
+# Others
+feedback/

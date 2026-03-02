@@ -521,7 +521,7 @@ dd if=/dev/urandom of=/var/lib/systemd/random-seed bs=512 count=1 2>/dev/null
 chmod 600 /var/lib/systemd/random-seed
 
 # Sudoers for perfmax/perfnorm/pmic-poweroff (allow archr to run without password)
-echo "archr ALL=(ALL) NOPASSWD: /usr/local/bin/perfmax, /usr/local/bin/perfnorm, /usr/local/bin/pmic-poweroff, /usr/bin/ln, /usr/bin/dmesg, /usr/bin/chvt, /usr/bin/cp, /usr/bin/chmod, /bin/bash" > /etc/sudoers.d/archr-perf
+echo "archr ALL=(ALL) NOPASSWD: /usr/local/bin/perfmax, /usr/local/bin/perfnorm, /usr/local/bin/pmic-poweroff, /usr/local/bin/input-merge, /usr/bin/kill, /usr/bin/ln, /usr/bin/dmesg, /usr/bin/chvt, /usr/bin/cp, /usr/bin/chmod, /bin/bash" > /etc/sudoers.d/archr-perf
 chmod 440 /etc/sudoers.d/archr-perf
 
 # Allow archr to use negative nice values (needed for nice -n -19 in ES launch commands)
@@ -952,8 +952,22 @@ install -m 755 "$SCRIPT_DIR/scripts/perfmax" "$ROOTFS_DIR/usr/local/bin/perfmax"
 install -m 755 "$SCRIPT_DIR/scripts/perfnorm" "$ROOTFS_DIR/usr/local/bin/perfnorm"
 install -m 755 "$SCRIPT_DIR/scripts/pmic-poweroff" "$ROOTFS_DIR/usr/local/bin/pmic-poweroff"
 install -m 755 "$SCRIPT_DIR/scripts/retroarch-launch.sh" "$ROOTFS_DIR/usr/local/bin/retroarch-launch"
-# RetroArch joypad autoconfig (gpio-keys buttons + adc-joystick analog sticks)
+# RetroArch core options (per-core tuning for RK3326, from ROCKNIX)
+install -m 644 "$SCRIPT_DIR/config/retroarch-core-options.cfg" "$ROOTFS_DIR/home/archr/.config/retroarch/retroarch-core-options.cfg"
+log "  ✓ RetroArch core options installed"
+# Input merger daemon: combines gpio-keys + adc-joystick into single virtual device
+# RetroArch needs all inputs on one device (udev driver assigns each to separate port)
+if command -v aarch64-linux-gnu-gcc &>/dev/null; then
+    aarch64-linux-gnu-gcc -static -O2 -o "$ROOTFS_DIR/usr/local/bin/input-merge" \
+        "$SCRIPT_DIR/scripts/input-merge.c"
+    chmod 755 "$ROOTFS_DIR/usr/local/bin/input-merge"
+    log "  ✓ input-merge compiled and installed"
+else
+    warn "aarch64-linux-gnu-gcc not found — input-merge not compiled"
+fi
+# RetroArch joypad autoconfig (merged device + individual fallbacks)
 mkdir -p "$ROOTFS_DIR/usr/share/retroarch/autoconfig/udev"
+install -m 644 "$SCRIPT_DIR/config/autoconfig/udev/archr-gamepad.cfg" "$ROOTFS_DIR/usr/share/retroarch/autoconfig/udev/"
 install -m 644 "$SCRIPT_DIR/config/autoconfig/udev/gpio-keys.cfg" "$ROOTFS_DIR/usr/share/retroarch/autoconfig/udev/"
 install -m 644 "$SCRIPT_DIR/config/autoconfig/udev/adc-joystick.cfg" "$ROOTFS_DIR/usr/share/retroarch/autoconfig/udev/"
 # systemd shutdown hook — runs pmic-poweroff at the very end of shutdown sequence

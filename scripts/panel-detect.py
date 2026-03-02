@@ -12,7 +12,7 @@ Flow:
   3. Initialize audio (speaker, 60% volume)
   4. Cycle through panels (most common first):
      - Show panel name on tty1
-     - Play N beeps (N = position in list, capped at 5)
+     - Play N beeps (N = position in list: Panel 0=1 beep, Panel 1=2 beeps, etc.)
      - Wait 15s for input: A=confirm, B/DPAD_DOWN=next
   5. On confirm: write panel.txt + panel-confirmed → sync → reboot
   6. After 2 full cycles without confirm: auto-confirm default
@@ -65,30 +65,32 @@ MAX_CYCLES = 2         # auto-confirm default after this many full cycles
 # (panel_num, dtb_name, friendly_name)
 # Empty dtb_name = default panel (hardcoded in base DTB kernel.dtb, no overlay)
 # Non-empty dtb_name = pre-merged DTB with overlay applied at build-time
-# Order: most common first
+# Order: numerical (beep count = position in list, Panel 0 = 1 beep, etc.)
 
 # R36S Original — 6 panels, default is Panel 4-V22 (~60% of units)
+# Beeps: Panel 0=1, Panel 1=2, Panel 2=3, Panel 3=4, Panel 4=5, Panel 5=6
 PANELS_ORIGINAL = [
-    ("4",    "",                    "Panel 4-V22 (Default)"),
-    ("3",    "kernel-panel3.dtb",   "Panel 3-V20"),
-    ("5",    "kernel-panel5.dtb",   "Panel 5-V22 Q8"),
     ("0",    "kernel-panel0.dtb",   "Panel 0"),
     ("1",    "kernel-panel1.dtb",   "Panel 1-V10"),
     ("2",    "kernel-panel2.dtb",   "Panel 2-V12"),
+    ("3",    "kernel-panel3.dtb",   "Panel 3-V20"),
+    ("4",    "",                    "Panel 4-V22 (Default)"),
+    ("5",    "kernel-panel5.dtb",   "Panel 5-V22 Q8"),
 ]
 
 # R36S Clone — 12 panels, default is Clone 8 ST7703 (G80CA-MB)
+# Beeps: Clone 1=1, Clone 2=2, ..., Clone 10=10, R36 Max=11, RX6S=12
 PANELS_CLONE = [
-    ("C8",   "",                      "Clone 8 ST7703 G80CA (Default)"),
     ("C1",   "kernel-clone1.dtb",     "Clone 1 (ST7703)"),
-    ("C3",   "kernel-clone3.dtb",     "Clone 3 (NV3051D)"),
-    ("C7",   "kernel-clone7.dtb",     "Clone 7 (JD9365DA)"),
-    ("C9",   "kernel-clone9.dtb",     "Clone 9 (NV3051D)"),
-    ("C10",  "kernel-clone10.dtb",    "Clone 10 (ST7703)"),
     ("C2",   "kernel-clone2.dtb",     "Clone 2 (ST7703)"),
+    ("C3",   "kernel-clone3.dtb",     "Clone 3 (NV3051D)"),
     ("C4",   "kernel-clone4.dtb",     "Clone 4 (NV3051D)"),
     ("C5",   "kernel-clone5.dtb",     "Clone 5 (ST7703)"),
     ("C6",   "kernel-clone6.dtb",     "Clone 6 (NV3051D)"),
+    ("C7",   "kernel-clone7.dtb",     "Clone 7 (JD9365DA)"),
+    ("C8",   "",                      "Clone 8 ST7703 G80CA (Default)"),
+    ("C9",   "kernel-clone9.dtb",     "Clone 9 (NV3051D)"),
+    ("C10",  "kernel-clone10.dtb",    "Clone 10 (ST7703)"),
     ("MAX",  "kernel-r36max.dtb",     "R36 Max (720x720)"),
     ("RX6S", "kernel-rx6s.dtb",       "RX6S (NV3051D)"),
 ]
@@ -350,7 +352,7 @@ def main():
     # Determine variant and panel list
     variant = get_variant()
     panels = get_panels(variant)
-    default_panel = panels[0]  # First in list is always the default
+    default_panel = next((p for p in panels if not p[1]), panels[0])  # Default = empty dtb_name
 
     print(f"Arch R Panel Detection Wizard starting (variant: {variant})...")
     print(f"  {len(panels)} panels available, default: {default_panel[2]}")
@@ -388,8 +390,8 @@ def main():
                 position += f" (cycle {cycle + 1})"
             write_tty(f"{position} {name}")
 
-            # Audio feedback: N beeps (capped at 5)
-            beep_count = min(idx + 1, 5)
+            # Audio feedback: N beeps (panel number + 1)
+            beep_count = idx + 1
             play_beeps(beep_count, beep)
 
             print(f"  {position} {name} — waiting...")

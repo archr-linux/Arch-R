@@ -33,6 +33,21 @@ amixer -q sset 'DAC' 80% 2>/dev/null
 # Performance governor (archr has NOPASSWD sudo for perfmax/perfnorm)
 sudo /usr/local/bin/perfmax 2>/dev/null
 
+# Merge gamepad inputs: gpio-keys (buttons) + adc-joystick (analog sticks)
+# into a single virtual "Arch R Gamepad" so RetroArch sees one device.
+# Without this, RetroArch assigns each to a different player port and
+# analog sticks end up ignored (max_users=1).
+INPUT_MERGE=/usr/local/bin/input-merge
+if [ -x "$INPUT_MERGE" ]; then
+    sudo "$INPUT_MERGE" &
+    MERGE_PID=$!
+    # Wait for virtual device to appear
+    for i in 1 2 3 4 5 6 7 8 9 10; do
+        [ -f /run/input-merge.pid ] && break
+        sleep 0.1
+    done
+fi
+
 # Log file — write to HOME dir (archr can write here), copy to /boot after
 # CRITICAL: /boot is FAT32 mounted as root — archr CANNOT write there directly!
 LOGFILE="$HOME/retroarch.log"
@@ -65,6 +80,12 @@ fi
 # - DRM access: /dev/dri/* already chmod 666 by emulationstation.sh
 retroarch -L "$@" >> "$LOGFILE" 2>&1
 ret=$?
+
+# Stop input merger (ungrab devices so ES can use them again)
+if [ -n "$MERGE_PID" ]; then
+    sudo kill "$MERGE_PID" 2>/dev/null
+    wait "$MERGE_PID" 2>/dev/null
+fi
 
 # Restore ALSA mixer state after RetroArch exits (like dArkOS verifyaudio.sh)
 # RetroArch may modify mixer controls on exit — restore to known good state
