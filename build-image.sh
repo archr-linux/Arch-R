@@ -3,11 +3,12 @@
 #==============================================================================
 # Arch R - SD Card Image Builder
 #==============================================================================
-# Creates a flashable SD card image for R36S (original or clone)
+# Creates a flashable SD card image for R36S
 #
 # Usage:
 #   sudo ./build-image.sh --variant original   # R36S original
 #   sudo ./build-image.sh --variant clone       # R36S clone (G80CA-MB etc)
+#   sudo ./build-image.sh --variant no-panel    # Universal (all panels, for Flasher)
 #   sudo ./build-image.sh                       # defaults to original
 #==============================================================================
 
@@ -37,13 +38,13 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         *)
-            error "Unknown option: $1\nUsage: $0 --variant original|clone"
+            error "Unknown option: $1\nUsage: $0 --variant original|clone|no-panel"
             ;;
     esac
 done
 
-if [ "$VARIANT" != "original" ] && [ "$VARIANT" != "clone" ]; then
-    error "Invalid variant: $VARIANT (must be 'original' or 'clone')"
+if [ "$VARIANT" != "original" ] && [ "$VARIANT" != "clone" ] && [ "$VARIANT" != "no-panel" ]; then
+    error "Invalid variant: $VARIANT (must be 'original', 'clone', or 'no-panel')"
 fi
 
 #------------------------------------------------------------------------------
@@ -52,11 +53,12 @@ fi
 if [ "$VARIANT" = "original" ]; then
     IMAGE_SUFFIX="R36S"
     KERNEL_DTB_NAME="rk3326-gameconsole-r36s.dtb"
-    ROOT_DEV="/dev/mmcblk1p2"
-else
+elif [ "$VARIANT" = "clone" ]; then
     IMAGE_SUFFIX="R36S-clone"
     KERNEL_DTB_NAME="rk3326-gameconsole-r36s-clone-type5.dtb"
-    ROOT_DEV="/dev/mmcblk0p2"
+elif [ "$VARIANT" = "no-panel" ]; then
+    IMAGE_SUFFIX="R36S-no-panel"
+    KERNEL_DTB_NAME="rk3326-gameconsole-r36s.dtb"  # placeholder (Flasher replaces)
 fi
 
 # U-Boot binaries per variant:
@@ -66,7 +68,12 @@ UBOOT_TYPE=""
 UBOOT_BSP_DIR="$SCRIPT_DIR/bootloader/u-boot-rk3326/sd_fuse"
 UBOOT_MAINLINE_DIR="$SCRIPT_DIR/bootloader/u-boot-clone-build"
 
-if [ "$VARIANT" = "clone" ] && [ -f "$UBOOT_MAINLINE_DIR/uboot.img" ]; then
+if [ "$VARIANT" = "no-panel" ] && [ -f "$UBOOT_MAINLINE_DIR/uboot.img" ]; then
+    # no-panel: mainline U-Boot works on both original and clone
+    UBOOT_BIN_DIR="$UBOOT_MAINLINE_DIR"
+    UBOOT_TYPE="mainline"
+    log "  U-Boot: mainline v2025.10 (no-panel universal)"
+elif [ "$VARIANT" = "clone" ] && [ -f "$UBOOT_MAINLINE_DIR/uboot.img" ]; then
     UBOOT_BIN_DIR="$UBOOT_MAINLINE_DIR"
     UBOOT_TYPE="mainline"
     log "  U-Boot: mainline v2025.10 (clone)"
@@ -278,7 +285,18 @@ MERGED_DIR="$OUTPUT_DIR/panels/merged"
 if [ -d "$MERGED_DIR" ]; then
     panel_count=0
 
-    if [ "$VARIANT" = "original" ]; then
+    if [ "$VARIANT" = "no-panel" ]; then
+        # Universal: include ALL panel DTBs (original + clone)
+        for dtb in "$MERGED_DIR"/kernel-panel*.dtb "$MERGED_DIR"/kernel-clone*.dtb \
+                   "$MERGED_DIR"/kernel-r36max.dtb "$MERGED_DIR"/kernel-rx6s.dtb; do
+            [ -f "$dtb" ] && cp "$dtb" "$MOUNT_BOOT/" && panel_count=$((panel_count + 1))
+        done
+        # Also copy named base DTBs (for Flasher to use as defaults)
+        [ -f "$ROOTFS_DIR/boot/rk3326-gameconsole-r36s.dtb" ] && \
+            cp "$ROOTFS_DIR/boot/rk3326-gameconsole-r36s.dtb" "$MOUNT_BOOT/kernel-original.dtb"
+        [ -f "$ROOTFS_DIR/boot/rk3326-gameconsole-r36s-clone-type5.dtb" ] && \
+            cp "$ROOTFS_DIR/boot/rk3326-gameconsole-r36s-clone-type5.dtb" "$MOUNT_BOOT/kernel-clone.dtb"
+    elif [ "$VARIANT" = "original" ]; then
         # R36S original: kernel-panel0.dtb through kernel-panel5.dtb
         for dtb in "$MERGED_DIR"/kernel-panel*.dtb; do
             [ -f "$dtb" ] && cp "$dtb" "$MOUNT_BOOT/" && panel_count=$((panel_count + 1))
@@ -338,10 +356,11 @@ else
     fi
 fi
 
-# --- Boot partition: boot script (with root device substituted) ---
+# --- Boot partition: boot script ---
+# Root device is auto-detected in boot.ini based on mmcdev (no substitution needed).
 if [ -f "$SCRIPT_DIR/config/boot.ini" ]; then
-    sed "s|__ROOTDEV__|$ROOT_DEV|" "$SCRIPT_DIR/config/boot.ini" > "$MOUNT_BOOT/boot.ini"
-    log "  boot.ini installed (root=$ROOT_DEV)"
+    cp "$SCRIPT_DIR/config/boot.ini" "$MOUNT_BOOT/boot.ini"
+    log "  boot.ini installed (root auto-detect)"
 
     # Mainline U-Boot: also create boot.scr (compiled boot script)
     # Mainline uses distro boot flow → scans for boot.scr, not boot.ini
@@ -483,7 +502,6 @@ IMAGE_SIZE_ACTUAL=$(du -h "$IMAGE_FILE" | cut -f1)
 log "Image: $IMAGE_FILE"
 log "Size: $IMAGE_SIZE_ACTUAL"
 log "Variant: $VARIANT"
-log "Root: $ROOT_DEV"
 log ""
 log "To flash to SD card:"
 log "  sudo dd if=$IMAGE_FILE of=/dev/sdX bs=4M status=progress"

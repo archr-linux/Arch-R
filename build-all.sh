@@ -213,6 +213,12 @@ if [ "$BUILD_IMAGE" = true ]; then
     log "                 BUILDING IMAGE (clone)"
     log "═══════════════════════════════════════════════════════════════"
     "$SCRIPT_DIR/build-image.sh" --variant clone
+
+    log ""
+    log "═══════════════════════════════════════════════════════════════"
+    log "                 BUILDING IMAGE (no-panel)"
+    log "═══════════════════════════════════════════════════════════════"
+    "$SCRIPT_DIR/build-image.sh" --variant no-panel
 fi
 
 #------------------------------------------------------------------------------

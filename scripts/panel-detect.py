@@ -351,6 +351,12 @@ def main():
 
     # Determine variant and panel list
     variant = get_variant()
+
+    # no-panel variant: panel is configured by Flasher app, not wizard
+    if variant == "no-panel":
+        log_boot("no-panel variant — wizard disabled (use Flasher app)")
+        sys.exit(0)
+
     panels = get_panels(variant)
     default_panel = next((p for p in panels if not p[1]), panels[0])  # Default = empty dtb_name
 
