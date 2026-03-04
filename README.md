@@ -8,22 +8,32 @@
 >
 > Leve como uma pluma.
 
-Arch R is a custom Linux distribution built from scratch for the R36S handheld gaming console (RK3326 SoC, Mali-G31 GPU, 640x480 MIPI DSI display). It supports all R36S variants and clones with 18 different display panels.
+Arch R is a custom Linux distribution built from scratch for the R36S handheld gaming console (RK3326 SoC, Mali-G31 GPU, 640x480 MIPI DSI display). It supports all R36S variants and clones — 16 board profiles and 20 display panels.
 
 ## Features
 
-- **Kernel 6.6.89** (Rockchip BSP) — custom DTS with joypad, panel init sequences, audio, USB OTG
+- **Kernel 6.12.61** (Mainline LTS) — board auto-detection via SARADC, 16 board DTBs, panel overlays
 - **Mesa 26 Panfrost** — open-source GPU driver, GLES 1.0/2.0/3.1, no proprietary blobs
 - **EmulationStation** (fcamod fork) — 78fps stable, GLES 1.0 native rendering
 - **RetroArch 1.22.2** — KMS/DRM + EGL, 18+ cores pre-installed
-- **19-second boot** — U-Boot logo → kernel → systemd → EmulationStation
-- **Full audio** — ALSA, speaker + headphone auto-switch, volume hotkeys
-- **Battery monitoring** — LED warning, capacity/voltage/temp reporting
-- **Multi-panel support** — 18 panel DTBOs (6 original R36S + 12 clones)
+- **19-second boot** — initramfs splash at 0.7s, systemd to EmulationStation
+- **Full audio** — ALSA, speaker + headphone auto-switch, volume/brightness hotkeys
+- **Battery monitoring** — capacity/voltage reporting, LED warning
+- **Multi-panel support** — 20 panel overlays (7 original + 13 clone variants)
+- **Two images** — Original R36S and Clone boards, both auto-detect hardware
 
-## Quick Start — Flash a Pre-built Image
+## Quick Start
 
-Download the latest image from [Releases](../../releases), then:
+Download the latest images from [Releases](../../releases):
+
+- **`ArchR-R36S-*.img.xz`** — for genuine R36S, OGA, OGS, RG351V/M, Chi, R33S
+- **`ArchR-R36S-clone-*.img.xz`** — for K36 clones, RGB20S, RGB10X, XU-Mini-M, R36Max
+
+### Using Arch R Flasher (recommended)
+
+Download the [Arch R Flasher](https://github.com/archr-linux/archr-flasher) app, select your console type and display panel, and flash directly. The Flasher handles image download, panel overlay selection, and SD card writing.
+
+### Manual Flash
 
 ```bash
 xz -d ArchR-R36S-*.img.xz
@@ -31,7 +41,16 @@ sudo dd if=ArchR-R36S-*.img of=/dev/sdX bs=4M status=progress
 sync
 ```
 
-Insert the SD card into your R36S and power on. First boot creates a ROMS partition automatically.
+After flashing, mount the BOOT partition and copy your panel overlay:
+
+```bash
+sudo mount /dev/sdX1 /mnt
+sudo cp /mnt/overlays/panel4-v22.dtbo /mnt/overlays/mipi-panel.dtbo
+sudo umount /mnt
+sync
+```
+
+Insert the SD card and power on. The correct board DTB is selected automatically.
 
 ## Building from Source
 
@@ -40,7 +59,6 @@ Insert the SD card into your R36S and power on. First boot creates a ROMS partit
 - **OS:** Ubuntu 22.04+ (or any Linux with QEMU user-static support)
 - **Disk:** 30GB+ free space
 - **RAM:** 4GB+ recommended
-- **Time:** ~3-4 hours (first build), ~1 hour (incremental)
 
 ### Install Dependencies
 
@@ -66,21 +84,22 @@ sudo apt install -y \
 ### Build Everything
 
 ```bash
-git clone --recurse-submodules https://github.com/user/Arch-R.git
+git clone --recurse-submodules https://github.com/archr-linux/Arch-R.git
 cd Arch-R
 
-# Full build (kernel + rootfs + mesa + ES + retroarch + panels + image)
+# Full build: kernel + rootfs + mesa + ES + retroarch + panels + both images
 sudo ./build-all.sh
 ```
 
-The flashable image will be at `output/images/ArchR-R36S-YYYYMMDD.img.xz` (~860MB compressed).
+Output: `output/images/ArchR-R36S-YYYYMMDD.img.xz` and `ArchR-R36S-clone-YYYYMMDD.img.xz`
 
 ### Build Individual Components
 
 ```bash
-sudo ./build-all.sh --kernel     # Kernel only (~10 min)
-sudo ./build-all.sh --rootfs     # Rootfs + Mesa + ES + RetroArch (~3 hours)
-sudo ./build-all.sh --image      # Image assembly only (~2 min)
+sudo ./build-all.sh --kernel     # Kernel + initramfs (~10 min, cross-compile)
+sudo ./build-all.sh --rootfs     # Rootfs + Mesa + ES + RetroArch (~3 hours, QEMU chroot)
+sudo ./build-all.sh --uboot      # U-Boot (~2 min)
+sudo ./build-all.sh --image      # Image assembly only (~2 min per variant)
 sudo ./build-all.sh --clean      # Remove all build artifacts
 ```
 
@@ -88,53 +107,63 @@ sudo ./build-all.sh --clean      # Remove all build artifacts
 
 ```
 build-all.sh
-  ├── build-kernel.sh          # Cross-compile kernel 6.6.89 (~10 min)
-  ├── build-rootfs.sh          # Arch Linux ARM rootfs in QEMU chroot (~45 min)
-  ├── build-mesa.sh            # Mesa 26 with Panfrost + GLES 1.0 (~30 min)
-  ├── build-emulationstation.sh # ES-fcamod with 21 patches (~20 min)
-  ├── build-retroarch.sh       # RetroArch + cores (~40 min)
-  ├── generate-panel-dtbos.sh  # 18 panel DTBO overlays (~10 sec)
-  └── build-image.sh           # Assemble SD card image (~2 min)
+  ├── build-initramfs.sh           # Boot splash (SVG rendering, ~648KB)
+  ├── build-kernel.sh              # Cross-compile kernel 6.12.61 (~10 min)
+  ├── build-rootfs.sh              # Arch Linux ARM in QEMU chroot (~45 min)
+  ├── build-mesa.sh                # Mesa 26 Panfrost + GLES 1.0 (~30 min)
+  ├── build-emulationstation.sh    # ES-fcamod with patches (~20 min)
+  ├── build-retroarch.sh           # RetroArch + cores (~40 min)
+  ├── generate-panel-dtbos.sh      # 20 panel overlays (~10 sec)
+  ├── build-uboot.sh               # BSP U-Boot for original boards
+  ├── build-uboot-clone.sh         # Mainline U-Boot for clone boards
+  └── build-image.sh               # SD card image (×2 variants)
 ```
-
-All builds happen inside a QEMU aarch64 chroot — no cross-compilation issues.
 
 ## Project Structure
 
 ```
 Arch-R/
-├── build-all.sh                  # Master build orchestrator
-├── build-kernel.sh               # Kernel compilation
-├── build-rootfs.sh               # Root filesystem (Arch Linux ARM + services)
-├── build-mesa.sh                 # Mesa 26 GPU driver
-├── build-emulationstation.sh     # EmulationStation frontend
-├── build-retroarch.sh            # RetroArch + cores
-├── build-image.sh                # SD card image assembly
+├── build-all.sh                     # Master build orchestrator
+├── build-kernel.sh                  # Kernel 6.12.61 cross-compilation
+├── build-initramfs.sh               # Initramfs with boot splash
+├── build-rootfs.sh                  # Root filesystem (Arch Linux ARM)
+├── build-mesa.sh                    # Mesa 26 GPU driver
+├── build-emulationstation.sh        # EmulationStation frontend
+├── build-retroarch.sh               # RetroArch + cores
+├── build-uboot.sh                   # BSP U-Boot (original boards)
+├── build-uboot-clone.sh             # Mainline U-Boot (clone boards)
+├── build-image.sh                   # SD card image assembly
 ├── config/
-│   ├── archr-6.6-r36s.config     # Kernel config fragment (393 options)
-│   ├── boot.ini                  # U-Boot fallback boot script
-│   ├── es_systems.cfg            # EmulationStation system definitions
-│   ├── retroarch.cfg             # RetroArch base configuration
-│   ├── asound.conf               # ALSA audio configuration
-│   └── autoconfig/               # RetroArch controller autoconfig
+│   ├── linux-archr-base.config      # Kernel config (mainline 6.12)
+│   ├── a_boot.ini                   # Boot script — original variant
+│   ├── b_boot.ini                   # Boot script — clone variant
+│   ├── es_systems.cfg               # EmulationStation systems
+│   ├── retroarch.cfg                # RetroArch base config
+│   ├── asound.conf                  # ALSA audio config
+│   ├── gptokeyb/                    # Gamepad-to-keyboard mappings
+│   ├── udev/                        # udev rules (automount, USB gadget)
+│   └── autoconfig/                  # RetroArch controller autoconfig
 ├── kernel/
-│   └── dts/
-│       ├── rk3326-gameconsole-r36s.dts  # Custom R36S device tree
-│       └── R36S-DTB/                     # Reference panel DTBs
+│   ├── dts/archr/                   # Board device trees (16 boards)
+│   └── drivers/                     # Out-of-tree joypad driver
+├── patches/                         # Kernel patches (mainline + device)
 ├── scripts/
-│   ├── emulationstation.sh       # ES launch wrapper
-│   ├── retroarch-launch.sh       # RetroArch launch wrapper
-│   ├── archr-hotkeys.py          # Volume/brightness hotkey daemon
-│   ├── first-boot.sh             # First boot setup (ROMS partition)
-│   ├── generate-panel-dtbos.sh   # Panel overlay generator
-│   ├── pmic-poweroff             # PMIC shutdown handler
-│   └── vlc-stub.c                # VLC stub library for ES build
+│   ├── emulationstation.sh          # ES launch wrapper
+│   ├── retroarch-launch.sh          # RetroArch launch wrapper
+│   ├── archr-hotkeys.py             # Volume/brightness hotkey daemon
+│   ├── archr-init.c                 # Initramfs splash (static binary)
+│   ├── archr-gptokeyb.c             # Gamepad-to-keyboard mapper
+│   ├── panel-detect.py              # Panel detection
+│   ├── generate-panel-dtbos.sh      # Panel overlay generator
+│   ├── pmic-poweroff                # PMIC shutdown handler
+│   └── opt-system/                  # ES Tools menu scripts
 ├── bootloader/
-│   └── u-boot-r36s-working/      # Pre-built U-Boot binaries
+│   └── u-boot-rk3326/              # U-Boot source (submodule)
 ├── prebuilt/
-│   └── cores/                    # Pre-built RetroArch cores (FBNeo, MAME, N64, PSP)
-├── ArchR.png                     # Boot logo source
-└── ROADMAP.md                    # Development diary
+│   └── cores/                       # Pre-built RetroArch cores
+├── ArchR.png                        # Boot logo
+├── ROADMAP.md                       # Development diary
+└── FLASHER.md                       # Flasher app specification
 ```
 
 ## Hardware
@@ -144,122 +173,104 @@ Arch-R/
 | SoC | Rockchip RK3326 (4x Cortex-A35 @ 1.5GHz) |
 | GPU | Mali-G31 Bifrost (Mesa Panfrost, 600MHz) |
 | RAM | 1GB DDR3L (786MHz) |
-| Display | 640x480 MIPI DSI (18 panel variants) |
+| Display | 640x480 MIPI DSI (20 panel variants) |
 | Audio | RK817 codec, speaker + headphone jack |
-| Storage | MicroSD (boot + rootfs + ROMS) |
+| Storage | MicroSD (BOOT + rootfs + ROMS) |
 | Controls | D-pad, ABXY, L1/L2/R1/R2, dual analog sticks |
 | Battery | 3200mAh Li-Po (RK817 charger) |
-| USB | OTG with host mode (VBUS power on GPIO0_B7) |
+| USB | OTG with host/gadget mode switching |
 
-## Supported Panels
+## Architecture
 
-Arch R supports 18 display panels via pre-merged DTBs. Each panel variant has its own DTB file with the correct init sequence and timings applied at build-time.
+Arch R separates **board configuration** from **panel configuration**:
 
-There are two separate images: **Original** (for genuine R36S) and **Clone** (for R36S clones like G80CA, K36, etc.). Each image has its own panel list.
+- **Board DTB** = hardware profile (GPIOs, PMIC, joypad, audio codec). One per board variant. Selected automatically by U-Boot via SARADC ADC reading.
+- **Panel overlay** = display init sequence and timings. One per panel type. Applied on top of the board DTB at boot time.
 
-> **Note:** The numerical panel ordering below is available starting from **beta1.2**. Earlier versions may have a different order.
+This means the same image works on all boards of a variant — only the panel overlay needs to match your specific display.
 
-### Panel Auto-Detection
+### Supported Boards
 
-On first boot, Arch R runs a **panel detection wizard** that guides you through selecting your display panel:
+| Board | DTB | Image |
+|-------|-----|-------|
+| R36S (original) | rk3326-gameconsole-r36s | Original |
+| Odroid Go Advance | rk3326-odroid-go2 | Original |
+| Odroid Go Advance v1.1 | rk3326-odroid-go2-v11 | Original |
+| Odroid Go Super | rk3326-odroid-go3 | Original |
+| Anbernic RG351V | rk3326-anbernic-rg351v | Original |
+| Anbernic RG351M | rk3326-anbernic-rg351m | Original |
+| GameForce Chi | rk3326-gameforce-chi | Original |
+| R33S | rk3326-gameconsole-r33s | Original |
+| MagicX XU10 | rk3326-magicx-xu10 | Original |
+| K36 / R36S clone | rk3326-gameconsole-r36max | Clone |
+| EE clone | rk3326-gameconsole-eeclone | Clone |
+| Powkiddy RGB10 | rk3326-powkiddy-rgb10 | Clone |
+| Powkiddy RGB10X | rk3326-powkiddy-rgb10x | Clone |
+| Powkiddy RGB20S | rk3326-powkiddy-rgb20s | Clone |
+| MagicX XU-Mini-M | rk3326-magicx-xu-mini-m | Clone |
+| BatLexp G350 | rk3326-batlexp-g350 | Clone |
 
-1. **If your screen works** (you see text on screen): press **A** to confirm the current panel
-2. **If your screen is black** (wrong panel): listen for audio beeps and use buttons to navigate:
-   - Each panel plays a different number of beeps (Panel 0 = 1 beep, Panel 1 = 2 beeps, etc.)
-   - Press **B** to skip to the next panel
-   - Press **A** to confirm (you'll hear 3 rapid beeps)
-   - The system reboots with the correct panel applied
+### Supported Panels
 
-Your selection is saved permanently. To reset it later, **hold X during boot**.
+#### Original R36S (7 panels)
 
-### R36S Original (6 panels)
+| Panel | Overlay file | Controller | Notes |
+|-------|-------------|------------|-------|
+| Panel 0 | panel0.dtbo | ST7703 | Early R36S units |
+| Panel 1 | panel1.dtbo | ST7703 | V10 board |
+| Panel 2 | panel2.dtbo | ST7703 | V12 board |
+| Panel 3 | panel3.dtbo | ST7703 | V20 board |
+| Panel 4 | panel4.dtbo | ST7703 | V22 board |
+| Panel 4-V22 | panel4-v22.dtbo | ST7703 | Most common (~60%) |
+| Panel 5 | panel5.dtbo | ST7703 | V22 Q8 variant |
 
-Default: **Panel 4-V22** (~60% of units)
+R46H (1024x768): `r46h.dtbo`
 
-| Beeps | Panel | DTB | Notes |
-|-------|-------|-----|-------|
-| 1 | Panel 0 | kernel-panel0.dtb | Early R36S units |
-| 2 | Panel 1-V10 | kernel-panel1.dtb | V10 board marking |
-| 3 | Panel 2-V12 | kernel-panel2.dtb | V12 board marking |
-| 4 | Panel 3-V20 | kernel-panel3.dtb | V20 board marking |
-| 5 | **Panel 4-V22** *(default)* | kernel.dtb | Most common |
-| 6 | Panel 5-V22 Q8 | kernel-panel5.dtb | V22 Q8 variant |
+#### Clone R36S (13 panels)
 
-### R36S Clone (12 panels)
-
-Default: **Clone 8 ST7703 G80CA**
-
-| Beeps | Panel | DTB | Notes |
-|-------|-------|-----|-------|
-| 1 | Clone 1 | kernel-clone1.dtb | ST7703 |
-| 2 | Clone 2 | kernel-clone2.dtb | ST7703 |
-| 3 | Clone 3 | kernel-clone3.dtb | NV3051D |
-| 4 | Clone 4 | kernel-clone4.dtb | NV3051D |
-| 5 | Clone 5 | kernel-clone5.dtb | ST7703 |
-| 6 | Clone 6 | kernel-clone6.dtb | NV3051D |
-| 7 | Clone 7 | kernel-clone7.dtb | JD9365DA |
-| 8 | **Clone 8** *(default)* | kernel.dtb | ST7703 (G80CA-MB) |
-| 9 | Clone 9 | kernel-clone9.dtb | NV3051D |
-| 10 | Clone 10 | kernel-clone10.dtb | ST7703 variant |
-| 11 | R36 Max | kernel-r36max.dtb | 720x720 ST7703 |
-| 12 | RX6S | kernel-rx6s.dtb | NV3051D variant |
+| Panel | Overlay file | Controller | Notes |
+|-------|-------------|------------|-------|
+| Clone 1 | clone_panel_1.dtbo | ST7703 | |
+| Clone 2 | clone_panel_2.dtbo | ST7703 | |
+| Clone 3 | clone_panel_3.dtbo | NV3051D | |
+| Clone 4 | clone_panel_4.dtbo | NV3051D | |
+| Clone 5 | clone_panel_5.dtbo | ST7703 | |
+| Clone 6 | clone_panel_6.dtbo | NV3051D | |
+| Clone 7 | clone_panel_7.dtbo | JD9365DA | |
+| Clone 8 | clone_panel_8.dtbo | ST7703 | G80CA — most common |
+| Clone 9 | clone_panel_9.dtbo | NV3051D | |
+| Clone 10 | clone_panel_10.dtbo | ST7703 | |
+| R36 Max | r36_max.dtbo | ST7703 | 720x720 |
+| RX6S | rx6s.dtbo | NV3051D | |
 
 ### Manual Panel Selection
 
-If you prefer to set the panel manually (e.g., you know which panel you have from ArkOS/dArkOS):
-
-**Step 1 -- Mount the BOOT partition on your PC**
+Mount the BOOT partition and copy the correct overlay as `mipi-panel.dtbo`:
 
 ```bash
-lsblk
 sudo mount /dev/sdX1 /mnt
-```
 
-**Step 2 -- Create panel.txt**
+# Example: set Panel 4-V22 (most common original R36S panel)
+sudo cp /mnt/overlays/panel4-v22.dtbo /mnt/overlays/mipi-panel.dtbo
 
-```bash
-# Example: Panel 3-V20 (original R36S)
-echo 'PanelNum=3
-PanelDTB=kernel-panel3.dtb' | sudo tee /mnt/panel.txt
+# Example: set Clone 8 (most common clone panel)
+sudo cp /mnt/overlays/clone_panel_8.dtbo /mnt/overlays/mipi-panel.dtbo
 
-# Mark as confirmed (skip wizard on next boot)
-echo 'confirmed' | sudo tee /mnt/panel-confirmed
-```
-
-For default panels (no custom DTB needed):
-```bash
-# Original R36S: Panel 4-V22 (default)
-echo 'PanelNum=4
-PanelDTB=' | sudo tee /mnt/panel.txt
-
-# Clone R36S: Clone 8 G80CA (default)
-echo 'PanelNum=C8
-PanelDTB=' | sudo tee /mnt/panel.txt
-
-echo 'confirmed' | sudo tee /mnt/panel-confirmed
-```
-
-**Step 3 -- Unmount and boot**
-
-```bash
 sudo umount /mnt
 sync
 ```
-
-**To reset panel selection:** hold **X** during boot, or delete `panel-confirmed` from the BOOT partition.
 
 ## Boot Flow
 
 ```
 Power On
-  → U-Boot (idbloader → trust → uboot.img)
-  → logo.bmp displayed on screen
-  → boot.ini: load panel.txt → load pre-merged DTB (kernel-panelN.dtb)
-  → Kernel 6.6.89 + initramfs splash (0.7s)
-  → systemd → panel-detect.service (first boot only)
-  → archr-boot-setup (GPU + governors)
+  → U-Boot loads (idbloader → trust → uboot.img)
+  → boot.ini: read SARADC hwrev → select board DTB
+  → boot.ini: apply overlays/mipi-panel.dtbo (panel init sequence)
+  → Kernel 6.12.61 + initramfs splash (0.7s)
+  → systemd → archr-boot-setup (GPU + governors)
   → emulationstation.service → EmulationStation UI
-  ≈ 19 seconds total (+ wizard on first boot)
+  ≈ 19 seconds total
 ```
 
 ## Contributing
