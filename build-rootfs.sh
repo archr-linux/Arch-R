@@ -111,9 +111,6 @@ mount --bind /proc "$ROOTFS_DIR/proc"
 mount --bind /sys "$ROOTFS_DIR/sys"
 mount --bind /run "$ROOTFS_DIR/run"
 
-# DNS resolution
-cp /etc/resolv.conf "$ROOTFS_DIR/etc/resolv.conf"
-
 log "  ✓ Chroot environment ready"
 
 # Fix pacman for QEMU chroot environment
