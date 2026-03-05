@@ -15,6 +15,15 @@
 		this = "r36s";
 	};
 
+	/* R36S has an external speaker amplifier on GPIO3_PC4 */
+	spk_amp: audio-amplifier {
+		compatible = "simple-audio-amplifier";
+		enable-gpios = <&gpio3 RK_PC4 GPIO_ACTIVE_HIGH>;
+		pinctrl-0 = <&spk_amp_enable_h>;
+		pinctrl-names = "default";
+		sound-name-prefix = "Speaker Amp";
+	};
+
 	joypad: odroidgo3-joypad {
                 compatible = "odroidgo3-joypad";
                 pwms = <&pwm0 0 200000000 0>;		 
@@ -179,6 +188,18 @@
         };
 };
 
+/* Override sound card from r3xs.dtsi: add speaker amplifier */
+/ {
+	rk817-sound {
+		simple-audio-card,aux-devs = <&spk_amp>;
+		simple-audio-card,routing =
+			"MICL", "Mic Jack",
+			"Headphones", "HPOL",
+			"Headphones", "HPOR",
+			"Speaker Amp INL", "SPKO";
+	};
+};
+
 &pinctrl {
 	btns {
 		btn_pins: btn-pins {
@@ -202,6 +223,12 @@
 					<3 RK_PB7 RK_FUNC_GPIO &pcfg_pull_up>;
 
 		};
-		
+
+	};
+
+	speaker {
+		spk_amp_enable_h: spk-amp-enable-h {
+			rockchip,pins = <3 RK_PC4 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
 	};
 };
