@@ -1128,7 +1128,7 @@ log "  ✓ ES info bar scripts installed (current_volume, current_brightness)"
 
 # ES-fcamod dArkOS compatibility scripts (timezones, auto-suspend)
 install -m 755 "$SCRIPT_DIR/scripts/timezones" "$ROOTFS_DIR/usr/local/bin/timezones"
-install -m 755 "$SCRIPT_DIR/scripts/auto_suspend_update.sh" "$ROOTFS_DIR/usr/local/bin/auto_suspend_update.sh"
+#install -m 755 "$SCRIPT_DIR/scripts/auto_suspend_update.sh" "$ROOTFS_DIR/usr/local/bin/auto_suspend_update.sh"
 log "  ✓ ES compatibility scripts installed (timezones, auto_suspend_update.sh)"
 
 # System management scripts
