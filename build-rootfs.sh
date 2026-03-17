@@ -233,6 +233,7 @@ for core in \
     libretro-gambatte \
     libretro-mgba \
     libretro-genesis-plus-gx \
+    libretro-picodrive \
     libretro-pcsx-rearmed \
     libretro-flycast \
     libretro-beetle-pce-fast \
