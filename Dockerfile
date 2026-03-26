@@ -2,13 +2,8 @@ FROM archlinux:latest
 
 SHELL ["/usr/bin/bash", "-c"]
 
-# Update system and install base packages
-# Fix: archlinux:latest has corrupt pacman local db (missing desc files in overlay)
-# Step 1: upgrade base system (creates new layer, fixes stale db entries)
-RUN pacman-db-upgrade 2>/dev/null; \
-    for pkg in /var/lib/pacman/local/*/; do \
-      [ ! -f "${pkg}desc" ] && rm -rf "$pkg" 2>/dev/null; \
-    done; true
+# Step 1: disable sandbox
+RUN echo "DisableSandbox" >> /etc/pacman.conf
 RUN pacman -Syu --noconfirm
 # Step 2: clean stale entries from previous layer, then install build deps
 RUN for pkg in /var/lib/pacman/local/*/; do \
