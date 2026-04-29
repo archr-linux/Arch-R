@@ -1,0 +1,14 @@
+[Unit]
+Description=ArchR Pacman Initialization
+ConditionPathExists=!/storage/.pacman/.initialized
+After=storage.mount
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/pacman-init
+RemainAfterExit=yes
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target

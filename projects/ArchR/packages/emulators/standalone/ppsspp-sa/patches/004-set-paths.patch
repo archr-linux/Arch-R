@@ -1,0 +1,125 @@
+diff --git a/Core/Config.cpp b/Core/Config.cpp
+index 4f6ee43dce..188bbca207 100644
+--- a/Core/Config.cpp
++++ b/Core/Config.cpp
+@@ -1271,7 +1271,7 @@ void Config::UpdateIniLocation(const char *iniFileName, const char *controllerIn
+ 	const bool useIniFilename = iniFileName != nullptr && strlen(iniFileName) > 0;
+ 	const char *ppssppIniFilename = IsVREnabled() ? "ppssppvr.ini" : "ppsspp.ini";
+ 	bool exists;
+-	iniFilename_ = FindConfigFile(searchPath_, useIniFilename ? iniFileName : ppssppIniFilename, &exists);
++	iniFilename_ = Path("/storage/.config/ppsspp/PSP/SYSTEM") / ppssppIniFilename;
+ 	const bool useControllerIniFilename = controllerIniFilename != nullptr && strlen(controllerIniFilename) > 0;
+ 	const char *controlsIniFilename = IsVREnabled() ? "controlsvr.ini" : "controls.ini";
+ 	controllerIniFilename_ = FindConfigFile(searchPath_, useControllerIniFilename ? controllerIniFilename : controlsIniFilename, &exists);
+diff --git a/Core/Util/PathUtil.cpp b/Core/Util/PathUtil.cpp
+index a82bc95fe6..4c1a926cd8 100644
+--- a/Core/Util/PathUtil.cpp
++++ b/Core/Util/PathUtil.cpp
+@@ -42,14 +42,8 @@ Path FindConfigFile(const Path &searchPath, std::string_view baseFilename, bool
+ }
+ 
+ Path GetSysDirectory(PSPDirectories directoryType) {
+-	const Path &memStickDirectory = g_Config.memStickDirectory;
+-	Path pspDirectory;
+-	if (!strcasecmp(memStickDirectory.GetFilename().c_str(), "PSP")) {
+-		// Let's strip this off, to easily allow choosing a root directory named "PSP" on Android.
+-		pspDirectory = memStickDirectory;
+-	} else {
+-		pspDirectory = memStickDirectory / "PSP";
+-	}
++	Path memStickDirectory = Path("/storage/roms/psp/");
++	Path pspDirectory = Path("/storage/.config/ppsspp/PSP/");
+ 
+ 	switch (directoryType) {
+ 	case DIRECTORY_PSP:
+@@ -59,9 +53,9 @@ Path GetSysDirectory(PSPDirectories directoryType) {
+ 	case DIRECTORY_GAME:
+ 		return pspDirectory / "GAME";
+ 	case DIRECTORY_SAVEDATA:
+-		return pspDirectory / "SAVEDATA";
++		return Path("/storage/roms/psp/");
+ 	case DIRECTORY_SCREENSHOT:
+-		return pspDirectory / "SCREENSHOT";
++		return Path("/storage/roms/screenshots/");
+ 	case DIRECTORY_SYSTEM:
+ 		return pspDirectory / "SYSTEM";
+ 	case DIRECTORY_PAUTH:
+@@ -71,7 +65,7 @@ Path GetSysDirectory(PSPDirectories directoryType) {
+ 	case DIRECTORY_DUMP:
+ 		return pspDirectory / "SYSTEM/DUMP";
+ 	case DIRECTORY_SAVESTATE:
+-		return pspDirectory / "PPSSPP_STATE";
++		return Path("/storage/roms/savestates/psp/ppsspp-sa");
+ 	case DIRECTORY_CACHE:
+ 		return pspDirectory / "SYSTEM/CACHE";
+ 	case DIRECTORY_TEXTURES:
+@@ -93,11 +87,11 @@ Path GetSysDirectory(PSPDirectories directoryType) {
+ 		return pspDirectory / "themes";
+ 
+ 	case DIRECTORY_MEMSTICK_ROOT:
+-		return g_Config.memStickDirectory;
++		return memStickDirectory;
+ 		// Just return the memory stick root if we run into some sort of problem.
+ 	default:
+ 		ERROR_LOG(Log::FileSystem, "Unknown directory type.");
+-		return g_Config.memStickDirectory;
++		return pspDirectory;
+ 	}
+ }
+ 
+diff --git a/SDL/SDLJoystick.cpp b/SDL/SDLJoystick.cpp
+index 290cf57ce1..5d2e13da4d 100644
+--- a/SDL/SDLJoystick.cpp
++++ b/SDL/SDLJoystick.cpp
+@@ -24,7 +24,7 @@ SDLJoystick::SDLJoystick(bool init_SDL ) : registeredAsEventHandler(false) {
+ 		SDL_Init(SDL_INIT_JOYSTICK | SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER);
+ 	}
+ 
+-	const char *dbPath = "gamecontrollerdb.txt";
++	const char *dbPath = "/storage/.config/SDL-GameControllerDB/gamecontrollerdb.txt";
+ 	INFO_LOG(Log::System, "loading control pad mappings from %s:", dbPath);
+ 
+ 	size_t size;
+@@ -33,7 +33,7 @@ SDLJoystick::SDLJoystick(bool init_SDL ) : registeredAsEventHandler(false) {
+ 		SDL_RWops *rw = SDL_RWFromConstMem(mappingData, size);
+ 		// 1 to free the rw after use
+ 		if (SDL_GameControllerAddMappingsFromRW(rw, 1) == -1) {
+-			ERROR_LOG(Log::System, "Failed to read mapping data - corrupt?");
++			ERROR_LOG(Log::System, "/storage/.config/SDL-GameControllerDB/gamecontrollerdb.txt missing");
+ 		}
+ 		delete[] mappingData;
+ 	} else {
+diff --git a/UI/NativeApp.cpp b/UI/NativeApp.cpp
+index 84596b04ec..8e89a7bb13 100644
+--- a/UI/NativeApp.cpp
++++ b/UI/NativeApp.cpp
+@@ -367,7 +367,7 @@ void NativeInit(int argc, const char *argv[], const char *savegame_dir, const ch
+ #if !defined(MOBILE_DEVICE) && !defined(_WIN32) && !PPSSPP_PLATFORM(SWITCH)
+ 	g_VFS.Register("", new DirectoryReader(File::GetExeDirectory() / "assets"));
+ 	g_VFS.Register("", new DirectoryReader(File::GetExeDirectory()));
+-	g_VFS.Register("", new DirectoryReader(Path("/usr/local/share/ppsspp/assets")));
++	g_VFS.Register("", new DirectoryReader(Path("/storage/.config/ppsspp/assets")));
+ 	g_VFS.Register("", new DirectoryReader(Path("/usr/local/share/games/ppsspp/assets")));
+ 	g_VFS.Register("", new DirectoryReader(Path("/usr/share/ppsspp/assets")));
+ 	g_VFS.Register("", new DirectoryReader(Path("/usr/share/games/ppsspp/assets")));
+@@ -474,7 +474,7 @@ void NativeInit(int argc, const char *argv[], const char *savegame_dir, const ch
+ 	else // Just in case
+ 		config = "./config";
+ 
+-	g_Config.memStickDirectory = Path(config) / "ppsspp";
++	g_Config.memStickDirectory = Path("/storage/roms/psp/");
+ 	g_Config.flash0Directory = File::GetExeDirectory() / "assets/flash0";
+ 	if (getenv("HOME") != nullptr) {
+ 		g_Config.defaultCurrentDirectory = Path(getenv("HOME"));
+index a8300543d..37c12caa4 100644
+--- a/Core/SaveState.cpp
++++ b/Core/SaveState.cpp
+@@ -333,7 +333,7 @@ int g_screenshotFailures;
+ 	}
+ 
+ 	std::string GetGamePrefix(const ParamSFOData &paramSFO) {
+-		return GenerateFullDiscId(paramSFO);
++		return PSP_CoreParameter().fileToStart.WithReplacedExtension("").GetFilename();
+ 	}
+ 
+ 	// The prefix is always based on GenerateFullDiscId. So we can find these by scanning, too.

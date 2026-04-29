@@ -1,0 +1,20 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+
+# Minimal OS variable loading for performance
+. /etc/profile.d/001-functions
+
+tocon "Configuring logging..."
+
+if [ ! -d "/var/log/retroarch" ]
+then
+  mkdir /var/log/retroarch
+fi
+
+if [ -d "/storage/.config/retroarch/logs" ]
+then
+  rm -rf /storage/.config/retroarch/logs
+fi
+
+ln -s /var/log/retroarch /storage/.config/retroarch/logs

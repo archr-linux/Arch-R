@@ -1,0 +1,13 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+
+# Minimal OS variable loading for performance
+. /etc/profile.d/001-functions
+
+if [ ! -L "/storage/.emulationstation" ] && \
+   [ -d /storage/.config/emulationstation ]
+then
+  ln -sf /storage/.config/emulationstation /storage/.emulationstation
+fi
+

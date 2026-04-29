@@ -1,0 +1,12 @@
+[Unit]
+Description=Persistent Log Storage
+RequiresMountsFor=/var /storage
+Requires=storage-log.service
+After=storage-log.service storage.mount
+ConditionKernelCommandLine=!installer
+
+[Mount]
+What=/storage/.cache/log
+Where=/var/log
+Options=bind
+LazyUnmount=yes

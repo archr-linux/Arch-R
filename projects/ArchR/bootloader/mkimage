@@ -1,0 +1,133 @@
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2024-present ArchR (https://github.com/archr-linux/Arch-R)
+
+. config/functions
+
+mkimage_uboot() {
+  if [ -f "${RELEASE_DIR}/3rdparty/bootloader/${SUBDEVICE}_uboot.bin" ]; then
+    # RK3566-Generic and RK3566-Powkiddy_x55
+    echo "image: writing ${SUBDEVICE}_uboot.bin to $(basename "${DISK}")..."
+    dd if="${RELEASE_DIR}/3rdparty/bootloader/${SUBDEVICE}_uboot.bin" of="${DISK}" bs=512 seek=64 conv=sync,noerror,notrunc >"${SAVE_ERROR}" 2>&1 || show_error
+  elif [ -f "${RELEASE_DIR}/3rdparty/bootloader/uboot.bin" ]; then
+    echo "image: writing uboot.bin to $(basename "${DISK}")..."
+    dd if="${RELEASE_DIR}/3rdparty/bootloader/uboot.bin" of="${DISK}" bs=512 seek=64 conv=sync,noerror,notrunc >"${SAVE_ERROR}" 2>&1 || show_error
+  elif [ -f "${RELEASE_DIR}/3rdparty/bootloader/u-boot.bin" ]; then
+    # S922X
+    echo "image: writing u-boot.bin to $(basename "${DISK}")..."
+    dd if="${RELEASE_DIR}/3rdparty/bootloader/u-boot.bin" of="${DISK}" bs=512 seek=1 conv=sync,noerror,notrunc >"${SAVE_ERROR}" 2>&1 || show_error
+  elif [ -f "${RELEASE_DIR}/3rdparty/bootloader/u-boot-sunxi-with-spl.bin" ]; then
+    # H700
+    echo "image: writing u-boot-sunxi-with-spl.bin to $(basename "${DISK}")..."
+    dd if="${RELEASE_DIR}/3rdparty/bootloader/u-boot-sunxi-with-spl.bin" of="${DISK}" bs=1K seek=8 conv=fsync,notrunc >"${SAVE_ERROR}" 2>&1 || show_error
+  elif [ -f "${RELEASE_DIR}/3rdparty/bootloader/archr-u-boot.img" ]; then
+    # SM8650 & SM8550
+    echo "image: copying archr u-boot files..."
+    mcopy -o "${RELEASE_DIR}/3rdparty/bootloader/archr-u-boot.img" ::
+    mcopy -s -o "${RELEASE_DIR}/3rdparty/bootloader/device_trees" ::
+  else
+    echo "ERROR no u-boot file found for ${SUBDEVICE}"
+  fi
+}
+
+mkimage_extlinux() {
+  if [ -d "${RELEASE_DIR}/3rdparty/bootloader/extlinux" ]; then
+    echo "image: copying custom extlinux.conf..."
+    mcopy -s -o "${RELEASE_DIR}/3rdparty/bootloader/extlinux" ::
+  else
+    local fdt_type
+    fdt_type=$(get_fdt_type)
+
+    echo "image: set extlinux.conf to $fdt_type /$(get_fdt)..."
+    mkdir -p "${IMG_TMP}/extlinux"
+
+    cat << EOF > "${IMG_TMP}/extlinux/extlinux.conf"
+LABEL ${DISTRO}
+  LINUX /${KERNEL_NAME}
+  ${fdt_type} /$(get_fdt)
+  APPEND boot=LABEL=${DISTRO_BOOTLABEL} root=LABEL=${DISTRO_ROOTLABEL} disk=LABEL=${DISTRO_DISKLABEL} ${EXTRA_CMDLINE}
+EOF
+
+    echo "image: copying extlinux.conf..."
+    mcopy -s -o "${IMG_TMP}/extlinux" ::
+  fi
+}
+
+mkimage_bootscr() {
+  if [ -f "${RELEASE_DIR}/3rdparty/bootloader/${SUBDEVICE}_boot.scr" ]; then
+    echo "image: copying ${SUBDEVICE}_boot.scr..."
+    mcopy "${RELEASE_DIR}/3rdparty/bootloader/${SUBDEVICE}_boot.scr" ::/boot.scr
+  else
+    echo "cannot find ${RELEASE_DIR}/3rdparty/bootloader/${SUBDEVICE}_boot.scr"
+    exit 2
+  fi
+}
+
+mkimage_dtb() {
+  echo "image: copying device trees..."
+  case "$DEVICE" in
+    RK3326)
+      mmd ::dtbs 2>/dev/null || true
+      # Copy only DTBs listed in config.xml for this SUBDEVICE
+      DTB_LIST=$(xmlstarlet sel -t -v "//archr/RK3326/${SUBDEVICE}/file" "${PROJECT_DIR}/${PROJECT}/config.xml" 2>/dev/null)
+      if [ -n "${DTB_LIST}" ]; then
+        for dtb_name in ${DTB_LIST}; do
+          DTB_FILE="${RELEASE_DIR}/3rdparty/bootloader/device_trees/rockchip/${dtb_name}.dtb"
+          [ ! -f "${DTB_FILE}" ] && DTB_FILE="${RELEASE_DIR}/3rdparty/bootloader/device_trees/${dtb_name}.dtb"
+          if [ -f "${DTB_FILE}" ]; then
+            mcopy "${DTB_FILE}" ::dtbs/
+          else
+            echo "WARNING: DTB not found: ${dtb_name}.dtb"
+          fi
+        done
+      else
+        # Fallback: copy all DTBs if config.xml parsing fails
+        mcopy "${RELEASE_DIR}/3rdparty/bootloader/device_trees/"*.dtb ::dtbs/
+      fi
+      mcopy "${RELEASE_DIR}/3rdparty/bootloader/stock" ::
+      # Copy SUBDEVICE-specific panel overlays, fallback to generic
+      if [ -d "${RELEASE_DIR}/3rdparty/bootloader/overlays_${SUBDEVICE}" ]; then
+        echo "image: copying ${SUBDEVICE} panel overlays..."
+        mmd ::overlays 2>/dev/null || true
+        mcopy "${RELEASE_DIR}/3rdparty/bootloader/overlays_${SUBDEVICE}/"*.dtbo ::overlays/
+      fi
+      # Copy soysauce overlays into original image (soysauce shares ADC with original)
+      if [ "${SUBDEVICE}" = "original" ] && [ -d "${RELEASE_DIR}/3rdparty/bootloader/overlays_soysauce" ]; then
+        echo "image: copying soysauce panel overlays..."
+        mmd ::overlays/soysauce 2>/dev/null || true
+        mcopy "${RELEASE_DIR}/3rdparty/bootloader/overlays_soysauce/"*.dtbo ::overlays/soysauce/
+      fi
+      ;;
+    SM8550|SM8650|SM8250|SDM845)
+      mcopy -s -o "${RELEASE_DIR}/3rdparty/bootloader/boot" ::
+      ;;
+    S922X)
+      mcopy "${RELEASE_DIR}/3rdparty/bootloader/"*.dtb ::
+      ;;
+    *)
+      mcopy -s "${RELEASE_DIR}/3rdparty/bootloader/device_trees" ::
+      ;;
+  esac
+
+  # For devices not handled above (RK3326 handles overlays in its own case)
+  if [ "$DEVICE" != "RK3326" ] && [ -d "${RELEASE_DIR}/3rdparty/bootloader/overlays" ]; then
+    echo "image: copying device tree overlays..."
+    mcopy -s "${RELEASE_DIR}/3rdparty/bootloader/overlays" ::
+  fi
+}
+
+mkimage_gou_extras() {
+  echo "image: copying res..."
+  mcopy "${RELEASE_DIR}/3rdparty/bootloader/res" ::
+}
+
+mkimage_grub() {
+  echo "image: copying grub files and dtb..."
+  mcopy -s -o "${RELEASE_DIR}/3rdparty/bootloader/EFI" ::
+}
+
+mkimage_abl() {
+  echo "image: copying ArchR ABL..."
+  mcopy "${RELEASE_DIR}/3rdparty/bootloader/archr_abl" ::
+}
+
+mkimage_all

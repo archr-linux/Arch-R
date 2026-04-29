@@ -1,0 +1,47 @@
+#!/bin/bash
+
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2016 Team LibreELEC (https://libreelec.tv)
+
+if [ -z "$PROJECT" -a -z "$ARCH" ]; then
+  echo "Usage: PROJECT=<project> ARCH=<arch> $0"
+  exit 0
+fi
+
+help() {
+  echo "Usage: PROJECT=<project> ARCH=<arch> $0 [-a|--all]"
+  echo "Options:"
+  echo "  -a, --all: download all packages including addons"
+}
+
+case $1 in
+  -a | --all)
+    ALL_PACKAGES="true"
+    ;;
+  -h | --help)
+    help
+    exit 0
+    ;;
+esac
+
+declare -A fetched_packages
+
+for package in $(find projects/ArchR/packages/ -name package.mk); do
+  if [[ "$package" == *addons* && -z "$ALL_PACKAGES" ]]; then
+    continue
+  fi
+  name=$(basename "$(dirname "$package")")
+  ./scripts/get "$name"
+  fetched_packages["$name"]=1
+done
+
+for package in $(find packages/ -name package.mk); do
+  if [[ "$package" == *addons* && -z "$ALL_PACKAGES" ]]; then
+    continue
+  fi
+  name=$(basename "$(dirname "$package")")
+  if [[ -n "${fetched_packages[$name]}" ]]; then
+    continue
+  fi
+  ./scripts/get "$name"
+done

@@ -1,0 +1,48 @@
+#!/bin/sh
+# This script reports non personally identifiable information to ArchR so that we can
+# see active user statistics.
+
+. /etc/profile
+
+MACHINEIDFILE=/storage/.cache/systemd-machine-id
+USERID=$(cat ${MACHINEIDFILE})
+
+ENDPOINT_URL="https://stats.arch-r.io"
+MAX_RETRIES=5
+RETRY_DELAY=60
+
+send_stats() {
+    curl -s -S -X POST \
+        -F "ArchR_UID=${USERID:(-12)}" \
+        -F "ArchR_VERSION=${OS_VERSION}" \
+        -F "ArchR_BUILD=${OS_BUILD}" \
+        -F "ArchR_SOC=${HW_DEVICE}" \
+        -F "ArchR_DEV=${QUIRK_DEVICE}" \
+        $ENDPOINT_URL
+    return $?
+}
+
+# Try to send stats with retries
+retry_count=0
+while [ $retry_count -lt $MAX_RETRIES ]; do
+    # Check network connectivity first (ping DNS server)
+    if ping -c 1 8.8.8.8 >/dev/null 2>&1; then
+        send_stats
+        exit_code=$?
+
+        if [ $exit_code -eq 0 ]; then
+            echo "Statistics reported successfully."
+            exit 0
+        else
+            echo "Failed to send statistics (HTTP error). Retrying in $RETRY_DELAY seconds..."
+        fi
+    else
+        echo "Network connection unavailable. Retrying in $RETRY_DELAY seconds..."
+    fi
+
+    sleep $RETRY_DELAY
+    retry_count=$((retry_count + 1))
+done
+
+echo "Maximum retry attempts reached. Failed to report statistics."
+exit 1

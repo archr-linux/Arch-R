@@ -1,0 +1,22 @@
+[Unit]
+Description=EmulationStation emulator frontend
+ConditionPathExists=/var/lock/start.games
+After=archr-automount.service
+RequiresMountsFor=/storage
+
+[Service]
+Environment=XDG_RUNTIME_DIR=/var/run/0-runtime-dir
+Environment=HOME=/storage
+Environment=SDL_AUDIODRIVER=pulseaudio
+EnvironmentFile=/etc/profile
+ExecStartPre=/usr/bin/es_settings
+ExecStart=/usr/bin/emulationstation --log-path /var/log --no-splash
+KillMode=process
+TimeoutStopSec=3
+Restart=always
+RestartSec=2
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Install]
+WantedBy=archr.target

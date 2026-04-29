@@ -1,0 +1,8 @@
+[Unit]
+Description=Monitor HDMI status
+
+[Path]
+PathModified=/run/hdmi-status.last
+
+[Install]
+WantedBy=multi-user.target

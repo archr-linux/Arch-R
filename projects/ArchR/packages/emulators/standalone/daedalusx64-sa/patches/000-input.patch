@@ -1,0 +1,151 @@
+diff --git a/Source/Input/SDL/InputManagerSDL.cpp b/Source/Input/SDL/InputManagerSDL.cpp
+index 1ffd1741..358f2e49 100644
+--- a/Source/Input/SDL/InputManagerSDL.cpp
++++ b/Source/Input/SDL/InputManagerSDL.cpp
+@@ -131,66 +131,96 @@ void IInputManager::GetJoyPad(OSContPad *pPad)
+ 
+ 	//ToDo: Different gamepads will need different configuration, this is for PS3/PS2 controller
+ 	if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_START))					pPad->button |= START_BUTTON;
+-	if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_A))						pPad->button |= A_BUTTON;
+-	if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_B))						pPad->button |= B_BUTTON;
+-	if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_LEFTSHOULDER))				pPad->button |= Z_TRIG;
+-	if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_RIGHTSHOULDER))			pPad->button |= Z_TRIG;
+-	if (SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_TRIGGERLEFT) > 16383)		pPad->button |= L_TRIG;
+-	if (SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) > 16383)		pPad->button |= R_TRIG;
++	if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_B))						pPad->button |= A_BUTTON;
++	if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_Y))						pPad->button |= B_BUTTON;
++	if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_LEFTSHOULDER))				pPad->button |= L_TRIG;
++	if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_RIGHTSHOULDER))			pPad->button |= R_TRIG;
++	if (SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_TRIGGERLEFT) > 16383)		pPad->button |= Z_TRIG;
++	if (SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) > 16383)		pPad->button |= Z_TRIG;
+ 
+ 	if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_DPAD_UP))		pPad->button |= U_JPAD;
+ 	if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_DPAD_DOWN))	pPad->button |= D_JPAD;
+ 	if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_DPAD_LEFT))	pPad->button |= L_JPAD;
+ 	if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_DPAD_RIGHT))	pPad->button |= R_JPAD;
+ 
+-	// Hold O button and use hat buttons for N64 c buttons (same as the PSP)
+-	// We could use the second analog stick to map them, but will require to translate asix >=2
+-	if(SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_X))
+-	{
+-		if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_DPAD_UP))		pPad->button |= U_CBUTTONS;
+-		if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_DPAD_DOWN))	pPad->button |= D_CBUTTONS;
+-		if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_DPAD_LEFT))	pPad->button |= L_CBUTTONS;
+-		if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_DPAD_RIGHT))	pPad->button |= R_CBUTTONS;
+-	}
+-
+-	// Used to see key presses, useful to add a different button configuration
+-	//for(int i = 0; i < num_buttons; i++)
+-	//{
+-	//	if(buttons[i])
+-	//		printf("%d\n",i);
+-	//}
++	if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_X))             pPad->button |= U_CBUTTONS;
++	if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_A))  pPad->button |= R_CBUTTONS;
+ 
++    // Axis values for the first joystick (Left Stick - Joystick 1)
+     const s32 SDL_AXIS_MIN = -32768;
+     const s32 SDL_AXIS_MAX = 32767;
+ 
+-    // Get the raw axis values
+-    s32 raw_x = SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_LEFTX);
+-    s32 raw_y = SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_LEFTY);
++    // Get the raw axis values for Left Stick (Joystick 1)
++    s32 raw_x_joystick1 = SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_LEFTX);
++    s32 raw_y_joystick1 = SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_LEFTY);
+ 
+     // Normalize the axis values to the range [-1, 1]
+-    float normalized_x = raw_x / 32767.0f;
+-    float normalized_y = raw_y / 32767.0f;
+-
+-    // Scale the normalized values to the N64 range
+-    s8 scaled_x = static_cast<s8>(normalized_x * N64_ANALOGUE_STICK_RANGE);
+-    s8 scaled_y = static_cast<s8>(normalized_y * N64_ANALOGUE_STICK_RANGE);
+-
+-    // Manually clamp the values to ensure they are within the valid range
+-    if (scaled_x > N64_ANALOGUE_STICK_RANGE) {
+-        scaled_x = N64_ANALOGUE_STICK_RANGE;
+-    } else if (scaled_x < -N64_ANALOGUE_STICK_RANGE) {
+-        scaled_x = -N64_ANALOGUE_STICK_RANGE;
++    float normalized_x_joystick1 = raw_x_joystick1 / 32767.0f;
++    float normalized_y_joystick1 = raw_y_joystick1 / 32767.0f;
++
++    // Scale the normalized values to the N64 range for Joystick 1
++    s8 scaled_x_joystick1 = static_cast<s8>(normalized_x_joystick1 * N64_ANALOGUE_STICK_RANGE);
++    s8 scaled_y_joystick1 = static_cast<s8>(normalized_y_joystick1 * N64_ANALOGUE_STICK_RANGE);
++
++    // Manually clamp the values to ensure they are within the valid range for N64 Joystick 1
++    if (scaled_x_joystick1 > N64_ANALOGUE_STICK_RANGE) {
++        scaled_x_joystick1 = N64_ANALOGUE_STICK_RANGE;
++    } else if (scaled_x_joystick1 < -N64_ANALOGUE_STICK_RANGE) {
++        scaled_x_joystick1 = -N64_ANALOGUE_STICK_RANGE;
+     }
+ 
+-    if (scaled_y > N64_ANALOGUE_STICK_RANGE) {
+-        scaled_y = N64_ANALOGUE_STICK_RANGE;
+-    } else if (scaled_y < -N64_ANALOGUE_STICK_RANGE) {
+-        scaled_y = -N64_ANALOGUE_STICK_RANGE;
++    if (scaled_y_joystick1 > N64_ANALOGUE_STICK_RANGE) {
++        scaled_y_joystick1 = N64_ANALOGUE_STICK_RANGE;
++    } else if (scaled_y_joystick1 < -N64_ANALOGUE_STICK_RANGE) {
++        scaled_y_joystick1 = -N64_ANALOGUE_STICK_RANGE;
++    }
++
++    // Assign the left joystick values to N64 joystick analog stick
++    pPad->stick_x = scaled_x_joystick1;
++    pPad->stick_y = -1 * scaled_y_joystick1;
++
++    // C buttons are controlled by the Right Stick (Joystick 2)
++    s32 raw_x_joystick2 = SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_RIGHTX);
++    s32 raw_y_joystick2 = SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_RIGHTY);
++
++    // Normalize the axis values for Joystick 2 to the range [-1, 1] (Right Stick for C Buttons)
++    float normalized_x_joystick2 = raw_x_joystick2 / 32767.0f;
++    float normalized_y_joystick2 = raw_y_joystick2 / 32767.0f;
++
++    // Scale the normalized values for C button range
++    s8 scaled_x_joystick2 = static_cast<s8>(normalized_x_joystick2 * N64_ANALOGUE_STICK_RANGE);
++    s8 scaled_y_joystick2 = static_cast<s8>(normalized_y_joystick2 * N64_ANALOGUE_STICK_RANGE);
++
++    // Manually clamp the values for C buttons
++    if (scaled_x_joystick2 > N64_ANALOGUE_STICK_RANGE) {
++        scaled_x_joystick2 = N64_ANALOGUE_STICK_RANGE;
++    } else if (scaled_x_joystick2 < -N64_ANALOGUE_STICK_RANGE) {
++        scaled_x_joystick2 = -N64_ANALOGUE_STICK_RANGE;
+     }
+ 
+-    pPad->stick_x = scaled_x;
+-    pPad->stick_y = -1 * scaled_y;
++    if (scaled_y_joystick2 > N64_ANALOGUE_STICK_RANGE) {
++        scaled_y_joystick2 = N64_ANALOGUE_STICK_RANGE;
++    } else if (scaled_y_joystick2 < -N64_ANALOGUE_STICK_RANGE) {
++        scaled_y_joystick2 = -N64_ANALOGUE_STICK_RANGE;
++    }
+ 
++    // Use the values from the second joystick for C buttons
++    // Check for the dominant axis to avoid diagonal triggering both buttons
++    if (abs(scaled_x_joystick2) > abs(scaled_y_joystick2)) {
++        // Horizontal C buttons (left/right)
++        if (scaled_x_joystick2 > 20) {  // Right movement
++            pPad->button |= R_CBUTTONS;
++        } else if (scaled_x_joystick2 < -20) {  // Left movement
++            pPad->button |= L_CBUTTONS;
++        }
++    } else {
++        // Vertical C buttons (up/down)
++        if (scaled_y_joystick2 > 20) {  // Up movement
++            pPad->button |= U_CBUTTONS;
++        } else if (scaled_y_joystick2 < -20) {  // Down movement
++            pPad->button |= D_CBUTTONS;
++        }
++    }
+ }
+ 
+ void IInputManager::GetState( OSContPad pPad[4] )
+@@ -449,4 +479,4 @@ glm::vec2	ApplyDeadzone( const glm::vec2 & in, f32 min_deadzone, f32 max_deadzon
+ 	scale = std::clamp( scale, 0.0f, 1.0f );
+ 
+ 	return ProjectToUnitSquare( in * (scale / length) );
+-}
+\ No newline at end of file
++}

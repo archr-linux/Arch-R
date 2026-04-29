@@ -1,0 +1,25 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+
+# Minimal OS variable loading for performance
+. /etc/profile.d/001-functions
+
+(
+
+  if [ -d "/usr/lib/autostart/quirks/platforms/${HW_DEVICE}/config" ] && \
+     [ ! -f ".quirk-platform-configs" ]
+  then
+    tocon "Applying ${HW_DEVICE} specific configuration..."
+    rsync -a --exclude={es_features.cfg,es_systems.cfg} /usr/lib/autostart/quirks/platforms/"${HW_DEVICE}"/config/* /storage/.config/ 2>/dev/null
+    touch /storage/.quirk-platform-configs
+  fi
+
+  if [ -d "/usr/lib/autostart/quirks/devices/${QUIRK_DEVICE}/config" ] && \
+     [ ! -f ".quirk-device-configs" ]
+  then
+    tocon "Applying ${QUIRK_DEVICE} specific configuration..."
+    rsync -a --exclude={es_features.cfg,es_systems.cfg} /usr/lib/autostart/quirks/devices/"${QUIRK_DEVICE}"/config/* /storage/.config/ 2>/dev/null
+    touch /storage/.quirk-device-configs
+  fi
+) &

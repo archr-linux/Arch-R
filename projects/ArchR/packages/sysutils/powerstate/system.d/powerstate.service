@@ -1,0 +1,15 @@
+[Unit]
+Description=AC/Battery Performance Service
+RequiresMountsFor=/storage
+Before=archr.target
+StartLimitIntervalSec=0
+
+[Service]
+Environment=HOME=/storage
+EnvironmentFile=/etc/profile
+ExecStart=/usr/bin/powerstate
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

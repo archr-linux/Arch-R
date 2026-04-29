@@ -1,0 +1,85 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2025-present ArchR (https://github.com/archr-linux/Arch-R)
+
+. /etc/profile
+
+MHUD_SET=${1}
+
+### Enable logging
+case $(get_setting system.loglevel) in
+  verbose)
+    DEBUG=true
+  ;;
+  *)
+    DEBUG=false
+  ;;
+esac
+
+### Confirm MangoHud dir exists
+if [ ! -d "/storage/.config/MangoHud" ]; then
+     cp -r "/usr/config/MangoHud" "/storage/.config/"
+fi
+
+### Confirm MangoHud conf exists
+if [ ! -f "/storage/.config/MangoHud/MangoHud.conf" ]; then
+     cp -r "/usr/config/MangoHud/MangoHud.conf" "/storage/.config/MangoHud"
+fi
+
+# Enable MangoHud support
+MANGOHUD_INIT_STATE=$(get_setting "archr.mangohud.state")
+if [ ! -n "${MANGOHUD_INIT_STATE}" ]; then
+  MANGOHUD_INIT_STATE="off"
+  set_setting "archr.mangohud.state" "${MANGOHUD_INIT_STATE}"
+fi
+
+### Check if a value was sent to mangohud_set
+if [ ! -n "${MHUD_SET}" ]; then
+ MHUD_SET="NULL"
+fi
+
+### Check that the value sent to manghud_set is a valid selection
+if [[ "${MHUD_SET}" != "on" && "$MHUD_SET" != "off" && "${MHUD_SET}" != "toggle" && "$MHUD_SET" != "enable" && "$MHUD_SET" != "disable" ]]; then
+    ${DEBUG} && log $0 "$MHUD_SET is not a valid choice, valid options are on | off | toggle, setting MangoHud to off."
+    set_setting "archr.mangohud.state" "off"
+    MHUD_SET="off"
+fi
+
+CONF_DIR="/storage/.config/MangoHud"
+MANGOHUD_CONF="MangoHud.conf"
+
+case $MHUD_SET  in
+  "disable")
+    set_setting "archr.mangohud.enabled" "0"
+    ${DEBUG} && log $0 "Disabling MangoHud."
+  ;;
+  "enable")
+    set_setting "archr.mangohud.enabled" "1"
+    ${DEBUG} && log $0 "Enabling MangoHud."
+  ;;
+  "off")
+    sed -i '/no_display/c\no_display' ${CONF_DIR}/${MANGOHUD_CONF}
+    set_setting "archr.mangohud.state" "off"
+    ${DEBUG} && log $0 "Turning MangoHud off."
+  ;;
+  "on")
+    sed -i '/no_display/c\# no_display' ${CONF_DIR}/${MANGOHUD_CONF}
+    set_setting "archr.mangohud.state" "on"
+    ${DEBUG} && log $0 "Turning MangoHud on."
+  ;;
+  "toggle")
+    MHUD_STATE=$(get_setting "archr.mangohud.state")
+    case ${MHUD_STATE} in
+      "on")
+        sed -i '/no_display/c\no_display' ${CONF_DIR}/${MANGOHUD_CONF}
+        set_setting "archr.mangohud.state" "off"
+        ${DEBUG} && log $0 "Toggle MangoHud, turning MangoHud off."
+      ;;
+      "off")
+        sed -i '/no_display/c\# no_display' ${CONF_DIR}/${MANGOHUD_CONF}
+        set_setting "archr.mangohud.state" "on"
+        ${DEBUG} && log $0 "Toggle MangoHud, turning MangoHud on."
+      ;;
+    esac
+  ;;
+esac

@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="128" viewBox="0 0 512 128">
+  <text x="256" y="100" font-family="Quantico, sans-serif" font-weight="700" font-size="96" text-anchor="middle" letter-spacing="2">
+    <tspan fill="#0088FF">ARCH</tspan><tspan fill="#FFFFFF" dx="8">R</tspan>
+  </text>
+</svg>

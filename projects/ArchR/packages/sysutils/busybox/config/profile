@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2009-2014 Stephan Raue (stephan@openelec.tv)
+# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+
+# Read config files
+for CONFIG in /etc/profile.d/*; do
+  if [ -f "${CONFIG}" ] ; then
+    . ${CONFIG}
+  fi
+done
+
+# Create user profile directory if it does not exist.
+if [ ! -d "/storage/.config/profile.d" ]
+then
+  mkdir -p /storage/.config/profile.d
+fi
+
+# Read user config files
+for CONFIG in /storage/.config/profile.d/*; do
+  if [ -f "${CONFIG}" ] ; then
+    . ${CONFIG}
+  fi
+done

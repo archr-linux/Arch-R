@@ -1,0 +1,11 @@
+#!/bin/bash
+
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2019-present Team LibreELEC (https://libreelec.tv)
+
+unset _CACHE_PACKAGE_LOCAL _CACHE_PACKAGE_GLOBAL _DEBUG_DEPENDS_LIST _DEBUG_PACKAGE_LIST
+
+. config/options ""
+
+${SCRIPTS}/pkgjson | ${SCRIPTS}/genbuildplan.py --show-wants --build ${@:-image} --warn-invalid ${GENFLAGS} ||
+  die "FAILURE: Unable to generate plan"

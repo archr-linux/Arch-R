@@ -1,0 +1,14 @@
+diff --git a/Source/Core/Core/GeckoCode.cpp b/Source/Core/Core/GeckoCode.cpp
+index 62d2dc5481..411b1c6204 100644
+--- a/Source/Core/Core/GeckoCode.cpp
++++ b/Source/Core/Core/GeckoCode.cpp
+@@ -109,7 +109,8 @@ std::vector<GeckoCode> SetAndReturnActiveCodes(std::span<const GeckoCode> gcodes
+ static Installation InstallCodeHandlerLocked(const Core::CPUThreadGuard& guard)
+ {
+   std::string data;
+-  if (!File::ReadFileToString(File::GetSysDirectory() + GECKO_CODE_HANDLER, data))
++  const std::string custom_handler_path = "/storage/.config/dolphin-emu/" GECKO_CODE_HANDLER;
++  if (!File::ReadFileToString(custom_handler_path, data))
+   {
+     ERROR_LOG_FMT(ACTIONREPLAY,
+                   "Could not enable cheats because " GECKO_CODE_HANDLER " was missing.");

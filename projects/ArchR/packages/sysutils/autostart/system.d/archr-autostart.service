@@ -1,0 +1,18 @@
+[Unit]
+Description=ArchR user autostart script
+Before=emustation.service weston.service
+After=network.target graphical.target userconfig.service
+
+[Service]
+Type=oneshot
+Environment=HOME=/storage
+ExecStart=/bin/bash -a -c 'source /etc/profile && exec /usr/bin/autostart'
+RemainAfterExit=yes
+# Cap the autostart at 60s so that a misbehaving script (drm_tool with
+# DRM not ready, a daemon source hanging, etc.) doesn't lock the boot
+# indefinitely — emustation will still come up. Without this the
+# Before=emustation.service ordering blocks the UI forever.
+TimeoutStartSec=60s
+
+[Install]
+WantedBy=archr.target

@@ -1,0 +1,371 @@
+#!/bin/sh
+
+# Source system-wide profile
+. /etc/profile
+
+# Global variables
+STORAGE_PATH="/storage"
+CACHE_PATH="${STORAGE_PATH}/.cache"
+BACKUP_DIR="${STORAGE_PATH}/roms/backups"
+BACKUP_FILE="${BACKUP_DIR}/bluetooth.tar"
+BT_DEVICE_FILE="/run/bt_device"
+BT_LISTING_FILE="/run/bt_listing"
+BT_LISTING_PID_FILE="/run/bt_listing.pid"
+BT_CONTROL_FILE="/run/bt_discovery_control"
+BT_AGENT_STATUS_FILE="/run/bt_agent_status"
+BT_STATUS_FILE="/run/bt_status"
+
+# Action from command line
+ACTION=$1
+
+# Logging functions
+log_error() {
+    echo "ERROR: $1" >&2
+}
+
+log_info() {
+    echo "INFO: $1"
+}
+
+# Helper function to check MAC address format
+validate_mac_address() {
+    echo "$1" | grep -qE "^([0-9A-F]{2}:){5}[0-9A-F]{2}$"
+    return $?
+}
+
+# Display help information
+do_help() {
+    cat >&2 <<EOF
+Usage: ${1} <command> [options]
+
+Commands:
+    list                        - List trusted bluetooth devices
+    trust <device address>      - Trust a specific device
+    trust input                 - Enter trust input mode
+    remove <device address>     - Remove a device
+    save                        - Backup bluetooth configuration
+    restore                     - Restore bluetooth configuration
+    start_live_devices          - Start monitoring devices
+    stop_live_devices           - Stop monitoring devices
+    enable                      - Enable bluetooth
+    disable                     - Disable bluetooth
+    connect <device address>    - Connect to a device
+    disconnect <device address> - Disconnect from a device
+EOF
+}
+
+# Check if bluetooth agent is running
+check_agent_status() {
+    if [ ! -f "${BT_AGENT_STATUS_FILE}" ]; then
+        return 1
+    fi
+
+    local pid
+    pid=$(cat "${BT_AGENT_STATUS_FILE}")
+    if ! kill -0 "${pid}" 2>/dev/null; then
+        return 1
+    fi
+
+    return 0
+}
+
+# Backup bluetooth configuration
+do_save() {
+    mkdir -p "${BACKUP_DIR}"
+    if (cd "${CACHE_PATH}" && tar cf "${BACKUP_FILE}" bluetooth); then
+        log_info "Bluetooth configuration backed up to ${BACKUP_FILE}"
+        return 0
+    else
+        log_error "Failed to backup bluetooth configuration"
+        return 1
+    fi
+}
+
+# Restore bluetooth configuration
+do_restore() {
+    if [ ! -f "${BACKUP_FILE}" ]; then
+        log_error "Backup file ${BACKUP_FILE} not found"
+        return 1
+    fi
+
+    if (cd "${CACHE_PATH}" && tar xf "${BACKUP_FILE}"); then
+        log_info "Bluetooth configuration restored from ${BACKUP_FILE}"
+        return 0
+    else
+        log_error "Failed to restore bluetooth configuration"
+        return 1
+    fi
+}
+
+# List paired devices
+do_list() {
+    find "${CACHE_PATH}/bluetooth" -type f -name info | while read -r FILE; do
+        if grep -qE '^Trusted=true$' "${FILE}"; then
+            DEVNAME=$(grep -E '^Name=' "${FILE}" | sed -e s+"^Name="++)
+            DEVCLASS=$(grep -E '^Class=' "${FILE}" | sed -e s+"^Class="++)
+            DEVADDR=$(basename "$(dirname "${FILE}")")
+
+            DEVTYPE=""
+            case "${DEVCLASS}" in
+                "0x002508"|"0x000508") DEVTYPE="joystick" ;;
+            esac
+
+            # Check connection status
+            if bluetoothctl -- info "${DEVADDR}" | grep -q "Connected: yes"; then
+                CONNECTED="yes"
+            else
+                CONNECTED="no"
+            fi
+
+            echo "<device id=\"${DEVADDR}\" name=\"${DEVNAME}\" type=\"${DEVTYPE}\" connected=\"${CONNECTED}\" />"
+        fi
+    done
+}
+
+# Clean up device listing resources
+cleanup_devlist() {
+    local tail_pid
+
+    # Stop the tail process if running
+    if [ -f "${BT_LISTING_PID_FILE}" ]; then
+        tail_pid=$(cat "${BT_LISTING_PID_FILE}")
+        if [ -n "${tail_pid}" ]; then
+            kill -15 "${tail_pid}" 2>/dev/null
+        fi
+        rm -f "${BT_LISTING_PID_FILE}"
+    fi
+
+    # Signal stop via control file
+    echo "stop" > "${BT_CONTROL_FILE}"
+
+    # Clean up files
+    rm -f "${BT_LISTING_FILE}" "${BT_DEVICE_FILE}"
+}
+
+# Start device listing
+do_devlist() {
+    # Check if agent is running
+    if ! check_agent_status; then
+        log_error "Bluetooth agent is not running"
+        return 1
+    fi
+
+    # Initialize files
+    if ! > "${BT_DEVICE_FILE}"; then
+        log_error "Cannot create device file"
+        return 1
+    fi
+
+    if ! > "${BT_LISTING_FILE}"; then
+        log_error "Cannot create listing file"
+        return 1
+    fi
+
+    # Signal start via control file
+    echo "start" > "${BT_CONTROL_FILE}"
+
+    # Start monitoring in background
+    tail -f "${BT_LISTING_FILE}" &
+    echo $! > "${BT_LISTING_PID_FILE}"
+
+    # Set up cleanup on script exit
+    trap cleanup_devlist EXIT INT TERM
+
+    # Wait for the tail process
+    wait $(cat "${BT_LISTING_PID_FILE}")
+}
+
+# Stop device listing
+do_stopdevlist() {
+    cleanup_devlist
+}
+
+# Remove a device
+do_remove() {
+    local DEV="$1"
+
+    if ! validate_mac_address "${DEV}"; then
+        log_error "Invalid device address format"
+        return 1
+    fi
+
+    # Remove device using bluetoothctl
+    (echo "untrust ${DEV}"; echo "remove ${DEV}") | bluetoothctl >/dev/null 2>&1
+
+    # Remove device files
+    find "${CACHE_PATH}/bluetooth" -name "${DEV}" -exec rm -rf {} +
+
+    # Backup new configuration
+    do_save
+    log_info "Device ${DEV} removed successfully"
+}
+
+# Trust a device
+do_trust() {
+    local TRUSTDEV="$1"
+
+    # Check if agent is running
+    if ! check_agent_status; then
+        log_error "Bluetooth agent is not running"
+        return 1
+    fi    # This was the problem - had } instead of fi
+
+    # Validate input for device address
+    if [ "${TRUSTDEV}" != "input" ]; then
+        if ! validate_mac_address "${TRUSTDEV}"; then
+            log_error "Invalid device address format"
+            return 1
+        fi
+    fi
+
+    # Write device to control file
+    echo "${TRUSTDEV}" > "${BT_DEVICE_FILE}" || return 1
+
+    local LAST_MSG=""
+    local NEW_MSG=""
+    local N=60
+
+    while [ $N -gt 0 ]; do
+        if [ -f "${BT_STATUS_FILE}" ]; then
+            NEW_MSG=$(cat "${BT_STATUS_FILE}")
+            if [ "${LAST_MSG}" != "${NEW_MSG}" ]; then
+                LAST_MSG="${NEW_MSG}"
+                echo "${NEW_MSG}"
+            fi
+        fi
+
+        if [ "${TRUSTDEV}" != "input" ]; then
+            if do_list | grep -q "id=\"${TRUSTDEV}\""; then
+                break
+            fi
+        fi
+
+        sleep 1
+        N=$((N-1))
+    done
+
+    do_save
+}
+
+# Enable bluetooth
+do_enable() {
+    set_setting controllers.bluetooth.enabled 1
+    systemctl start bluetooth
+    systemctl start bluetooth-agent
+
+    # Wait for agent to start (up to 5 seconds)
+    local n=0
+    while [ $n -lt 10 ]; do
+        if check_agent_status; then
+            log_info "Bluetooth agent started successfully"
+            return 0
+        fi
+        sleep 0.5
+        n=$((n + 1))
+    done
+
+    log_error "Failed to start bluetooth agent"
+    return 1
+}
+
+# Disable bluetooth
+do_disable() {
+    set_setting controllers.bluetooth.enabled 0
+    systemctl stop bluetooth-agent
+    systemctl stop bluetooth
+    log_info "Bluetooth disabled"
+}
+
+# Connect to a device
+do_connect() {
+    local DEV="$1"
+
+    if ! validate_mac_address "${DEV}"; then
+        log_error "Invalid device address format"
+        return 1
+    fi
+
+    if bluetoothctl -- info "${DEV}" | grep -q "Connected: yes"; then
+        log_info "Device ${DEV} is already connected"
+        return 0
+    fi
+
+    log_info "Attempting to connect to device ${DEV}..."
+    if bluetoothctl -- connect "${DEV}"; then
+        log_info "Successfully connected to device ${DEV}"
+        return 0
+    else
+        log_error "Failed to connect to device ${DEV}"
+        return 1
+    fi
+}
+
+# Disconnect from a device
+do_disconnect() {
+    local DEV="$1"
+
+    if ! validate_mac_address "${DEV}"; then
+        log_error "Invalid device address format"
+        return 1
+    fi
+
+    if ! bluetoothctl -- info "${DEV}" | grep -q "Connected: yes"; then
+        log_error "Device ${DEV} is not connected"
+        return 1
+    fi
+
+    if bluetoothctl -- disconnect "${DEV}"; then
+        log_info "Successfully disconnected device ${DEV}"
+        return 0
+    else
+        log_error "Failed to disconnect device ${DEV}"
+        return 1
+    fi
+}
+
+# Main command processing
+case "${ACTION}" in
+    "list")
+        do_list
+        ;;
+    "trust")
+        [ -z "$2" ] && { do_help "${0}"; exit 1; }
+        do_trust "$2"
+        ;;
+    "remove")
+        [ -z "$2" ] && { do_help "${0}"; exit 1; }
+        do_remove "$2"
+        ;;
+    "save")
+        do_save
+        ;;
+    "restore")
+        do_restore
+        ;;
+    "start_live_devices"|"live_devices")
+        do_devlist
+        ;;
+    "stop_live_devices")
+        do_stopdevlist
+        ;;
+    "enable")
+        do_enable
+        ;;
+    "disable")
+        do_disable
+        ;;
+    "connect")
+        [ -z "$2" ] && { do_help "${0}"; exit 1; }
+        do_connect "$2"
+        ;;
+    "disconnect")
+        [ -z "$2" ] && { do_help "${0}"; exit 1; }
+        do_disconnect "$2"
+        ;;
+    *)
+        do_help "${0}"
+        exit 1
+        ;;
+esac
+
+exit 0

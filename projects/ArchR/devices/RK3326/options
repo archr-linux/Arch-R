@@ -1,0 +1,85 @@
+################################################################################
+# setup device defaults
+################################################################################
+
+  # Device name for image filenames (overrides DEVICE in image name only)
+    DEVICE_NAME="R36S"
+
+  # The TARGET_CPU variable controls which processor should be targeted for
+  # generated code.
+    case ${TARGET_ARCH} in
+      aarch64)
+        TARGET_KERNEL_ARCH="arm64"
+        TARGET_KERNEL_PATCH_ARCH="aarch64"
+        TARGET_CPU="cortex-a35"
+        TARGET_ARCH_FLAGS="+crc+fp+simd"
+        TARGET_FEATURES="64bit"
+        ;;
+      arm)
+        TARGET_KERNEL_ARCH="arm64"
+        TARGET_KERNEL_PATCH_ARCH="aarch64"
+        TARGET_FLOAT="hard"
+        TARGET_CPU="cortex-a35"
+        TARGET_ARCH_FLAGS="+crc"
+        TARGET_FPU="crypto-neon-fp-armv8"
+        TARGET_FEATURES="32bit"
+        ;;
+    esac
+
+    PARTITION_TABLE="msdos"
+    HW_CPU="Rockchip RK3326"
+
+  # Kernel target
+    KERNEL_TARGET="Image"
+
+  # Kernel extra targets to build
+    KERNEL_MAKE_EXTRACMD=" $(get_kernel_make_extracmd)"
+
+  # Kernel cmdline
+    EXTRA_CMDLINE="quiet console=ttyS2,1500000 console=tty0 loglevel=0 vt.global_cursor_default=0 consoleblank=0 net.ifnames=0 systemd.show_status=false mitigations=off audit=0 nowatchdog threadirqs zswap.enabled=0 loop.max_loop=16"
+
+  # Bootloader to use (syslinux / u-boot)
+    BOOTLOADER="u-boot"
+
+  # U-Boot firmware package(s) to use
+    UBOOT_FIRMWARE="rkbin"
+
+  # Mali GPU family
+    MALI_FAMILY="bifrost-g31"
+    GRAPHIC_DRIVERS="mali panfrost"
+
+  # For maximum cross compatbility
+    PREFER_GLES="yes"
+
+  # Displayserver to use (wl / no)
+    DISPLAYSERVER="wl"
+
+  # Windowmanager to use (weston / swaywm-env / no)
+    WINDOWMANAGER="swaywm-env"
+
+  # Additional drivers to install:
+  # for a list of additional drivers see packages/linux-drivers
+  # Space separated list is supported,
+  # e.g. ADDITIONAL_DRIVERS="DRIVER1 DRIVER2"
+    ADDITIONAL_DRIVERS="RTL8812AU RTL8814AU RTL8821AU RTL8821CU RTL88x2BU RTL8831 AIC8800 mali-bifrost"
+
+  # Additional Firmware to use ( )
+  # Space separated list is supported,
+  # e.g. FIRMWARE=""
+    FIRMWARE="esp8089-firmware"
+  
+  # Additional packages to install
+    ADDITIONAL_PACKAGES="device-switch libmali generic-dsi"
+    ADDITIONAL_PACKAGES_32BIT="libmali"
+
+  # Debug tty path
+    DEBUG_TTY="/dev/ttyS2"
+
+  # ZRAM Algorithm
+    ZRAM_COMPRESSION_ALGO="lzo-rle"
+
+  # ZRAM Size
+    ZRAM_SWAP_SIZE="512"
+
+  # Disk Swap
+    SWAP_FILE_SIZE="0"

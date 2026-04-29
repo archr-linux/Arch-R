@@ -1,0 +1,26 @@
+#!/bin/sh
+. /etc/profile
+HOSTNAME=$(get_setting system.hostname)
+echo ${HOSTNAME} >/proc/sys/kernel/hostname
+hostnamectl --transient hostname ${HOSTNAME}
+avahi-set-host-name ${HOSTNAME}
+
+rm -f /run/archr/hosts
+if [ -f /storage/.config/hosts.conf ]; then
+  cat /storage/.config/hosts.conf > /run/archr/hosts
+fi
+
+# RESOLUTION ORDER:
+# 1. USER OVERRIDE: /storage/.config/resolv.conf exists -> Use it directly.
+# 2. DYNAMIC/STUB:  No override -> Symlink to systemd-resolved stub.
+if [ -f /storage/.config/resolv.conf ]; then
+  rm -f /run/archr/resolv.conf
+  cat /storage/.config/resolv.conf > /run/archr/resolv.conf
+else
+  TARGET="/run/systemd/resolve/stub-resolv.conf"
+  LINK="/run/archr/resolv.conf"
+  if [ ! -L "$LINK" ] || [ "$(readlink "$LINK")" != "$TARGET" ]; then
+      rm -f "$LINK"
+      ln -sf "$TARGET" "$LINK"
+  fi
+fi

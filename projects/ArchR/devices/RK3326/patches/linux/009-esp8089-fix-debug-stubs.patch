@@ -1,0 +1,36 @@
+From: ArchR <noreply@arch-r.io>
+Subject: [PATCH] esp8089: fix conflicting types in debug stubs for kernel 6.12+
+
+The non-debugfs stubs returned struct dentry* while the real functions
+returned void, causing build failure with GCC 15.
+
+--- a/drivers/net/wireless/esp8089/esp_debug.c
++++ b/drivers/net/wireless/esp8089/esp_debug.c
+@@ -186,21 +186,21 @@
+
+ #else
+
+-inline struct dentry *esp_dump_var(const char *name, struct dentry *parent,
++inline void esp_dump_var(const char *name, struct dentry *parent,
+ 				   void *value, esp_type type)
+ {
+-	return NULL;
++	return;
+ }
+
+-inline struct dentry *esp_dump_array(const char *name,
++inline void esp_dump_array(const char *name,
+ 				     struct dentry *parent,
+ 				     struct debugfs_blob_wrapper *blob)
+ {
+-	return NULL;
++	return;
+ }
+
+-inline struct dentry *esp_dump(const char *name, struct dentry *parent,
++inline void esp_dump(const char *name, struct dentry *parent,
+ 			       void *data, int size)
+ {
+-	return NULL;
++	return;
+ }

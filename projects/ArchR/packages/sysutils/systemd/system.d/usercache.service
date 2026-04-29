@@ -1,0 +1,14 @@
+[Unit]
+Description=Setup User cache dir
+DefaultDependencies=no
+After=systemd-tmpfiles-setup.service storage.mount
+Before=automount.service autostart.service
+RequiresMountsFor=/storage
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/usercache-setup
+RemainAfterExit=yes
+
+[Install]
+WantedBy=sysinit.target

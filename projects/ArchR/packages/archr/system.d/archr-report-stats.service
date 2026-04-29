@@ -1,0 +1,9 @@
+[Unit]
+Description=Report anonymous ArchR install statistics
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/archr-report-stats
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,15 @@
+[Unit]
+Description=Setup debug config
+DefaultDependencies=no
+After=systemd-tmpfiles-setup.service
+RequiresMountsFor=/storage
+ConditionKernelCommandLine=|debugging
+ConditionPathExists=|/storage/.cache/debug.archr
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'cp /usr/share/debugconf/*.conf /run/archr/debug'
+RemainAfterExit=yes
+
+[Install]
+WantedBy=sysinit.target

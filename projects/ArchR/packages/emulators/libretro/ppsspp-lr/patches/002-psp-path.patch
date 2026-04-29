@@ -1,0 +1,17 @@
+diff --git a/Core/Util/PathUtil.cpp b/Core/Util/PathUtil.cpp
+--- a/Core/Util/PathUtil.cpp
++++ b/Core/Util/PathUtil.cpp
+@@ -45,12 +45,7 @@
+ Path GetSysDirectory(PSPDirectories directoryType) {
+ 	const Path &memStickDirectory = g_Config.memStickDirectory;
+ 	Path pspDirectory;
+-	if (!strcasecmp(memStickDirectory.GetFilename().c_str(), "PSP")) {
+-		// Let's strip this off, to easily allow choosing a root directory named "PSP" on Android.
+-		pspDirectory = memStickDirectory;
+-	} else {
+-		pspDirectory = memStickDirectory / "PSP";
+-	}
++	pspDirectory = memStickDirectory / "PSP";
+
+ 	switch (directoryType) {
+ 	case DIRECTORY_PSP:

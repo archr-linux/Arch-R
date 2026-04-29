@@ -1,0 +1,13 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2023 ArchR (https://github.com/archr-linux/Arch-R)
+
+# This is a helper function, not really user oriented just to avoid copying code.
+# wlr-randr itself is best for as a user
+set_refresh_rate() {
+  DISPLAY_MODE="$1"
+  DISPLAY_OUTPUT=$(/usr/bin/wlr-randr | awk 'NR==1{print $1;}')
+  RESOLUTION=$(/usr/bin/wlr-randr --output ${DISPLAY_OUTPUT} | awk 'f{print $1;f=0}/Modes/{f=1}')
+  /usr/bin/wlr-randr --output ${DISPLAY_OUTPUT} --mode ${RESOLUTION}@$(echo ${DISPLAY_MODE} | tr -cd '[[:digit:]].')
+}
+

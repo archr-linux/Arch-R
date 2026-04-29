@@ -1,0 +1,60 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2024-present ArchR (https://github.com/archr-linux/Arch-R)
+
+. /etc/profile.d/001-functions
+. /etc/profile.d/100-gamecontroller-functions
+
+# -- Config & Setup --
+# Destination file
+if [[ -z "$1" ]] && [[ -z "$2" ]] && [[ -z "$3" ]]; then
+  echo "Usage: controller-layout [platform] [game] [gamecontrollerdb.txt]"
+  exit -1
+fi
+
+PLATFORM="$1"
+GAME="$2"
+CONTROLLER_DB="$3"
+
+# Where the emulationstation configuration file is
+ES_CONFIG="/tmp/es_input.cfg"
+
+# Scrub the CONTROLLER_DB file
+echo "" > ${CONTROLLER_DB}
+
+# Set layout via EmulationStation
+CONTROLLER_LAYOUT=$(get_setting controller_layout "${PLATFORM}" "${GAME}")
+
+if [ "${CONTROLLER_LAYOUT}" = "xbox" ]; then
+  # xbox layout
+  ABUT="b"
+  BBUT="a"
+  XBUT="y"
+  YBUT="x"
+  unset LEFTSHOULDER
+  unset LEFTTRIGGER
+  unset RIGHTSHOULDER
+  unset RIGHTTRIGGER
+elif [ "${CONTROLLER_LAYOUT}" = "xbox_swap_shoulders_triggers" ]; then
+  # xbox layout - with shoulders and triggers swapped
+  ABUT="b"
+  BBUT="a"
+  XBUT="y"
+  YBUT="x"
+  LEFTSHOULDER="lefttrigger"
+  LEFTTRIGGER="leftshoulder"
+  RIGHTSHOULDER="righttrigger"
+  RIGHTTRIGGER="rightshoulder"
+else
+  # nintendo layout
+  unset ABUT
+  unset BBUT
+  unset XBUT
+  unset YBUT
+  unset LEFTSHOULDER
+  unset LEFTTRIGGER
+  unset RIGHTSHOULDER
+  unset RIGHTTRIGGER
+fi
+
+# Call function to create controller db from ES input config file for only connected devices
+create_controller_db ${CONTROLLER_LAYOUT} ${ES_CONFIG} ${CONTROLLER_DB}

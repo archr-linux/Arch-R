@@ -1,0 +1,11 @@
+[Unit]
+Description=Start SyncThing
+After=archr.service
+ConditionPathExists=/storage/.cache/services/syncthing.conf
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/start_syncthing.sh
+
+[Install]
+WantedBy=archr.service

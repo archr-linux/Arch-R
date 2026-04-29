@@ -1,0 +1,64 @@
+# Cloud Sync Default Configuration
+# This file defines the default values used when creating a new configuration
+
+# Base Directory Paths
+# -------------------
+# Directory where Retroarch saves, savestates, and screenshots are located
+DEFAULT_BACKUPPATH="/storage/roms"
+
+# Changing the below to be different from BACKUPPATH will prevent data from being replaced on restore
+DEFAULT_RESTOREPATH="/storage/roms"
+
+# Local path where backups are stored (defined in backuptool)
+DEFAULT_BACKUPFOLDER="/storage/roms/backup"
+
+# Cloud Storage Paths
+# ------------------
+# Directory on the remote where save data should be stored
+DEFAULT_SYNCPATH="/GAMES"
+
+# Remote path where backups are stored
+DEFAULT_SYNCPATH_BACKUP="/GAMES/backup"
+
+# Logging Options
+# --------------
+# Set the minimum level of messages to log (INFO, WARN, ERROR)
+DEFAULT_LOG_LEVEL="INFO"
+
+# Transfer Settings
+# ---------------
+# rclone sync rules - modify these options to change transfer behavior
+# IMPORTANT: Each option must be preceded by a backslash (\) except the first one
+DEFAULT_RCLONEOPTS="--progress \
+--log-file /var/log/cloud_sync.log \
+--filter-from /storage/.config/cloud_sync-rules.txt \
+--delete-excluded"
+
+# Backup Options
+# -------------
+## Backup method
+### The default is "sync", which creates a 1:1 match between the local path and remote
+### Switching to "copy" will overwrite newer files at the remote with the local version, but leave other files and folders in place
+DEFAULT_BACKUPMETHOD="sync"
+
+## Enable backing-up the system backup file
+### The default is "yes", which will include the system backup file in the backup
+### Switching to "no" will exclude the system backup file from the backup
+DEFAULT_BACKUPFILE_BACKUP_OPTION="yes"
+
+# Restore Options
+# --------------
+## Restore method
+### The default is "copy", which will preserve any existing files and folders
+### Switching to "sync" will replace all local files in the restore path with what is on the remote
+DEFAULT_RESTOREMETHOD="copy"
+
+## Enable restoring the system backup file
+### The default is "no", which will exclude the system backup file from the restore
+### Switching to "yes" will include the system backup file in the restore
+DEFAULT_BACKUPFILE_RESTORE_OPTION="no"
+
+# Maintenance Options
+# -----------------
+# Option to enable/disable removing orphaned empty directories on the remote that are also empty locally. Enabled by default. Comment out to disable.
+DEFAULT_RSYNCRMDIR="yes"

@@ -1,0 +1,8 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+
+. /storage/.config/profile.d/001-device_config
+
+### RG351P/M has a volume rocker, so the internal volume should always be 100%.
+amixer -c 0 set "Master" "${DEVICE_VOLUME}%"

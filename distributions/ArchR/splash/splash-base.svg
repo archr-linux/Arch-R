@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="50%" r="70%">
+      <stop offset="0%" stop-color="#111111"/>
+      <stop offset="100%" stop-color="#000000"/>
+    </radialGradient>
+    <linearGradient id="glow" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#0060CC"/>
+      <stop offset="50%" stop-color="#00AAFF"/>
+      <stop offset="100%" stop-color="#0060CC"/>
+    </linearGradient>
+  </defs>
+  <rect width="1920" height="1080" fill="url(#bg)"/>
+  <!-- Subtle line accent -->
+  <line x1="660" y1="620" x2="1260" y2="620" stroke="url(#glow)" stroke-width="2" opacity="0.6"/>
+  <!-- Main Logo Text -->
+  <text x="960" y="560" font-family="Quantico, 'Arial Black', sans-serif" font-weight="700" font-size="180" text-anchor="middle" letter-spacing="8">
+    <tspan fill="#0080FF">Arch</tspan><tspan fill="#FFFFFF" dx="8"> R</tspan>
+  </text>
+  <!-- Subtitle -->
+  <text x="960" y="660" font-family="Quantico, 'Arial', sans-serif" font-weight="400" font-size="28" text-anchor="middle" fill="#666666" letter-spacing="12">
+    GAMING OS FOR R36S
+  </text>
+  <!-- Loading indicator -->
+  <text x="960" y="980" font-family="Quantico, 'Arial', sans-serif" font-weight="400" font-size="18" text-anchor="middle" fill="#333333">
+    Loading...
+  </text>
+</svg>

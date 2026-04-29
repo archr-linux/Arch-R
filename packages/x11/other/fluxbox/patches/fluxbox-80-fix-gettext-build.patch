@@ -1,0 +1,22 @@
+From e9c3dacdbbd3d948c7c6aaa80ee65e0fb8d46d62 Mon Sep 17 00:00:00 2001
+From: Rudi Heitbaum <rudi@heitbaum.com>
+Date: Mon, 5 May 2025 19:33:06 +1000
+Subject: [PATCH] allow build with gettext 0.24.1
+
+make sure iconv.m4 is available for autoconf to find it
+---
+ configure.ac | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/configure.ac b/configure.ac
+index 5e8d09347..ef1a00b3a 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -186,6 +186,7 @@ AC_COMPILE_IFELSE([
+ 	AC_MSG_RESULT([no])
+ ])
+ 
++AM_GNU_GETTEXT_VERSION([0.11.5])
+ AM_ICONV
+ AS_IF([test x$am_cv_proto_iconv_arg1 = "xconst"], [
+ 	AC_DEFINE([HAVE_CONST_ICONV], [1], [Is second argument of iconv() is of type 'const char **' or 'char **'])

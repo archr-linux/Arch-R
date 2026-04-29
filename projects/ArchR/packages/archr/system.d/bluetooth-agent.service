@@ -1,0 +1,13 @@
+[Unit]
+Description=Start bluetooth agent
+After=bluetooth.service
+PartOf=bluetooth.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/archr-bluetooth-agent
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=bluetooth.service

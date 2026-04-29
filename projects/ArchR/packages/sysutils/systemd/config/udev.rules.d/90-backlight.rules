@@ -1,0 +1,5 @@
+# Allow non-root users to control backlight brightness
+ACTION=="add", SUBSYSTEM=="backlight", RUN+="/bin/chmod 0666 /sys%p/brightness"
+
+# Allow non-root users to control CPU boost (turbomode)
+ACTION=="add", ATTR{cpufreq/boost}=="*", RUN+="/bin/chmod 0666 /sys/devices/system/cpu/cpufreq/boost"

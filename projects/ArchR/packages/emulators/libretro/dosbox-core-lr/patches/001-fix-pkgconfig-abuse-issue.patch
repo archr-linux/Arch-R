@@ -1,0 +1,15 @@
+--- a/libretro/Makefile.common	2025-06-11 13:20:35.626175688 +0000
++++ b/libretro/Makefile.common	2025-06-11 13:26:33.757777680 +0000
+@@ -20,8 +20,12 @@
+ 	-I$(CORE_DIR)/libretro/src \
+ 	-I$(CORE_DIR)/libretro/src/virtual_keyboard \
+ 	-I$(CORE_DIR)/src \
++	-I$(CORE_DIR)/libretro/deps_bin/include \
+ 	-I$(LIBRETRO_COMM_DIR)/include
+ 
++LDFLAGS += \
++	-L$(CORE_DIR)/libretro/deps_bin/lib
++
+ # common files
+ SOURCES_CXX += \
+ 	$(CORE_DIR)/libretro/src/CoreOptionCategory.cpp \

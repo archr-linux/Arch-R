@@ -1,0 +1,28 @@
+diff --git a/SDL/SDLMain.cpp b/SDL/SDLMain.cpp
+index 04c16ca7a0..f2ae555923 100644
+--- a/SDL/SDLMain.cpp
++++ b/SDL/SDLMain.cpp
+@@ -974,12 +974,7 @@ static void ProcessSDLEvent(SDL_Window *window, const SDL_Event &event, InputSta
+ 				g_Config.iWindowWidth = new_width;
+ 				g_Config.iWindowHeight = new_height;
+ 			}
+-			// Hide/Show cursor correctly toggling fullscreen
+-			if (lastUIState == UISTATE_INGAME && fullscreen && !g_Config.bShowTouchControls) {
+-				SDL_ShowCursor(SDL_DISABLE);
+-			} else if (lastUIState != UISTATE_INGAME || !fullscreen) {
+-				SDL_ShowCursor(SDL_ENABLE);
+-			}
++			SDL_ShowCursor(SDL_DISABLE);
+ 			break;
+ 		}
+ 
+@@ -1746,9 +1741,7 @@ int main(int argc, char *argv[]) {
+ 	// OK, we have a valid graphics backend selected. Let's clear the failures.
+ 	g_Config.sFailedGPUBackends.clear();
+ 
+-#ifdef MOBILE_DEVICE
+ 	SDL_ShowCursor(SDL_DISABLE);
+-#endif
+ 
+ 	// Avoid the IME popup when holding keys. This doesn't affect all versions of SDL.
+ 	// Note: We re-enable it in text input fields! This is necessary otherwise we don't receive

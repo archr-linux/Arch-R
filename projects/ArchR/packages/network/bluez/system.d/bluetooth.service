@@ -1,0 +1,22 @@
+[Unit]
+Description=Bluetooth service
+After=syslog.target
+
+[Service]
+Type=dbus
+BusName=org.bluez
+NotifyAccess=main
+EnvironmentFile=-/run/archr/debug/bluez.conf
+ExecStartPre=/usr/bin/archr-bluetooth restore
+ExecStart=/usr/lib/bluetooth/bluetoothd $BLUEZ_ARGS $BLUEZ_DEBUG
+ExecStopPost=/usr/bin/archr-bluetooth save
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW CAP_FOWNER
+LimitNPROC=1
+TimeoutStopSec=1s
+Restart=on-failure
+RestartSec=2
+StartLimitInterval=0
+
+[Install]
+WantedBy=bluetooth.target
+Alias=dbus-org.bluez.service

@@ -1,0 +1,12 @@
+[Unit]
+Description=Video Sense
+RequiresMountsFor=/storage
+Before=archr.target
+
+[Service]
+Environment=HOME=/storage
+ExecStart=/usr/bin/video_sense
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

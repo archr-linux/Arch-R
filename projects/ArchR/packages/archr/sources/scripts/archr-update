@@ -1,0 +1,188 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026 ArchR (https://github.com/archr-linux/Arch-R)
+
+. /etc/profile
+
+BRANCH="$(get_setting updates.branch)"
+FORCE="$(get_setting updates.force)"
+
+ENDPOINT_URL="https://update.arch-r.io"
+
+MACHINEIDFILE=/storage/.cache/systemd-machine-id
+USERID=$(cat ${MACHINEIDFILE})
+
+# Function to check for an update. It returns a URL if an update is available.
+check_update() {
+    custom_force="${1:-$FORCE}"
+
+    update_url=$(curl -s -S -X POST \
+        -F "OS=${OS_NAME}" \
+        -F "ARCH=${HW_ARCH}" \
+        -F "SOC=${HW_DEVICE}" \
+        -F "VERSION=${OS_VERSION}" \
+        -F "UID=${USERID:(-12)}" \
+        -F "BUILD=${OS_BUILD}" \
+        -F "DEV=${QUIRK_DEVICE}" \
+        -F "FORCE=${custom_force}" \
+        -F "BRANCH=${BRANCH}" \
+        "$ENDPOINT_URL")
+    echo "$update_url"
+    return $?
+}
+
+# Function to get list of releases
+get_releases() {
+    releases=$(curl -s -S -X POST \
+        -F "OS=${OS_NAME}" \
+        -F "ARCH=${HW_ARCH}" \
+        -F "SOC=${HW_DEVICE}" \
+        -F "BRANCH=${BRANCH}" \
+        -F "LIST=1" \
+        "$ENDPOINT_URL")
+    echo "$releases"
+    return $?
+}
+
+# Returns 0 if there is enough available free space at target_path in megabytes.
+check_disk_space() {
+    target_path=$1
+    required_mB=$2
+    available_mB=$(df -m "$target_path" | awk 'NR==2 {print $4}')
+    if [ "$available_mB" -ge "$required_mB" ]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# Download a file from url to destination and show progress.
+download_file() {
+    url=$1
+    destination=$2
+    curl --progress-bar -S -L "$url" -o "$destination"
+    return $?
+}
+
+# Main update logic.
+main_update() {
+    custom_force="${1:-$FORCE}"
+    update_url=$(check_update "$custom_force")
+
+    # Check if the returned update_url looks like a URL (e.g., starts with http)
+    case "$update_url" in
+        http://*|https://*)
+            echo "Update available at: $update_url" ;;
+        *)
+            echo "No update available or invalid update URL."
+            exit 1
+            ;;
+    esac
+
+    # Check that there is at least 2GB of available free space on /storage.
+    if ! check_disk_space "/storage" "2048"; then
+        echo "Not enough free space on /storage (need at least 2GB)."
+        exit 1
+    fi
+
+    # Ensure that the /storage/.update folder exists.
+    if [ ! -d "/storage/.update" ]; then
+        mkdir -p /storage/.update || { echo "Failed to create /storage/.update directory."; exit 1; }
+    fi
+
+    # Extract the file name from the update URL.
+    filename=$(basename "$update_url")
+
+    # Define download destinations inside /storage/.update folder using the original file names.
+    update_file="/storage/.update/${filename}"
+    checksum_file="/storage/.update/${filename}.sha256"
+
+    # Download the update file.
+    echo "Downloading update file..."
+    download_file "$update_url" "$update_file"
+    if [ $? -ne 0 ]; then
+        echo "Failed to download update file."
+        exit 1
+    fi
+
+    # Download the checksum file (append .sha256 to the update URL).
+    checksum_url="${update_url}.sha256"
+    echo "Downloading checksum file..."
+    download_file "$checksum_url" "$checksum_file"
+    if [ $? -ne 0 ]; then
+        echo "Failed to download checksum file."
+        rm -f "$update_file"
+        exit 1
+    fi
+
+    # Verify checksum.
+    echo "Verifying the downloaded update..."
+    expected_checksum=$(awk '{print $1}' "$checksum_file")
+    actual_checksum=$(sha256sum "$update_file" | awk '{print $1}')
+    if [ "$expected_checksum" = "$actual_checksum" ]; then
+        echo "Checksum verified successfully. Reboot to apply the update."
+        set_setting updates.force 0
+        sync
+    else
+        echo "Checksum verification failed. Removing downloaded files."
+        rm -f "$update_file" "$checksum_file"
+        exit 1
+    fi
+}
+
+# Check network connectivity (ping DNS server)
+if ! ping -c 1 8.8.8.8 >/dev/null 2>&1; then
+    echo "Network connection unavailable."
+    exit 1
+fi
+
+# Read the first argument to determine the mode.
+mode=$1
+
+# Check if the mode is a number (e.g., 20250101), which indicates forcing a specific version
+if echo "$mode" | grep -q '^[0-9]\{8\}$'; then
+    # If mode is a date (8 digits), treat it as a forced version
+    echo "Forcing update to version $mode..."
+    main_update "$mode"
+    exit 0
+fi
+
+case "$mode" in
+    check)
+        update_url=$(check_update)
+        case "$update_url" in
+            http://*|https://*)
+                # Extract the filename from the URL.
+                filename=$(basename "$update_url")
+                # Use shell parameter expansion to remove everything up to the last dash, then remove the .tar suffix.
+                version=${filename##*-}
+                version=${version%.tar}
+                echo "$version"
+                exit 0
+                ;;
+            *)
+                echo "No update available."
+                exit 1
+                ;;
+        esac
+        ;;
+    releases)
+        # Get the list of available releases
+        echo "Checking available releases..."
+        releases=$(get_releases)
+        echo "$releases"
+        exit 0
+        ;;
+    update|"")
+        # If mode is "update" or no argument is provided, proceed with the update.
+        main_update
+        ;;
+    *)
+        echo "Usage: $0 [check|update|releases|<version>]"
+        echo "  check     - Check for available updates and print version"
+        echo "  update    - Update to the latest version"
+        echo "  releases  - Show available releases"
+        echo "  <version> - Force update to specific version (e.g., 20250101)"
+        exit 1
+        ;;
+esac

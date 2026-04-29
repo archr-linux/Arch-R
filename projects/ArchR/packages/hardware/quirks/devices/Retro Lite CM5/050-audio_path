@@ -1,0 +1,21 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2024 ArchR (https://github.com/archr-linux/Arch-R)
+
+SPEAKER=$(pactl list sinks short | grep wm8960 | cut -c 0-2)
+pactl set-default-sink ${SPEAKER}
+
+cat <<EOF >/storage/.config/profile.d/002-audio_path
+DEVICE_PLAYBACK_PATH="Playback Mux"
+DEFAULT_SINK=${SPEAKER}
+EOF
+
+### Set sound properties
+amixer -c 0 -q cset name='Playback Volume' 243,243
+amixer -c 0 -q cset name='Speaker Playback Volume' 127,127
+amixer -c 0 -q cset name='Speaker DC Volume' 5
+amixer -c 0 -q cset name='Speaker AC Volume' 5
+amixer -c 0 -q cset name='Left Output Mixer PCM Playback Switch' on
+amixer -c 0 -q cset name='Right Output Mixer PCM Playback Switch' on
+amixer -c 0 -q cset name='DAC Polarity' 'Left Inverted'
+

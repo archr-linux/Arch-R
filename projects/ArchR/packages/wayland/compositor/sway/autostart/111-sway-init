@@ -1,0 +1,166 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2024 JELOS (https://github.com/JustEnoughLinuxOS)
+# Copyright (C) 2025 ArchR (https://github.com/archr-linux/Arch-R)
+
+. /etc/profile
+
+export SWAY_HOME=/storage/.config/sway/
+export SWAY_CONFIG_KIOSK=/usr/share/sway/config.kiosk
+export SWAY_CONFIG_DESKTOP=/usr/share/sway/config.desktop
+
+if [ ! -d "$SWAY_HOME" ]
+then
+  mkdir $SWAY_HOME
+fi
+
+# Copy base config, we are overwriting any user config
+UIMODE=$(get_setting desktop.enabled)
+if [ "${UIMODE}" = "1" ]; then
+    cp $SWAY_CONFIG_DESKTOP $SWAY_HOME/config
+    # Shouldn't need to mask, but disable wouldn't do it.
+    systemctl mask essway.service
+    set_setting desktop.enabled "0"
+else
+    cp $SWAY_CONFIG_KIOSK $SWAY_HOME/config
+    systemctl unmask essway.service
+fi
+# get the card number, this may not be a safe way to derive it...
+card_no=$(ls /sys/class/drm/ | grep -E "DP|HDMI|DSI" | head -n 1 | cut -b 5)
+
+env_file=/storage/.config/profile.d/095-sway
+
+# Write wlroots env vars
+rm -f ${env_file}
+echo "WLR_DRM_DEVICES=/dev/dri/card${card_no}" >> ${env_file}
+echo "WLR_BACKENDS=drm,libinput" >> ${env_file}
+
+# Scan connectors
+card=/sys/class/drm/card${card_no}
+connected_cons=()
+for connector in ${card}/card${card_no}*/
+do
+    status=$(cat ${connector}/status)
+    if [ "$status" = "connected" ]; then
+        # If device has a connected DSI port, store that device.
+        if [[ $connector  == *"DSI"* ]]; then
+            dsi=$(basename $connector)
+            dsi=${dsi: +6}
+        fi
+    # Simply prioritize later connectors, meaning HDMI/DP priority
+	con=$(basename $connector)
+	con=${con: +6}
+	connected_cons+=("$con")
+    fi
+done
+
+# If dsi check rotation
+if [[ $con  == "DSI"* ]]; then
+    rot=$(cat /sys/class/graphics/fbcon/rotate)
+    case $rot in
+        1) angle="90";;
+        2) angle="180";;
+        3) angle="270";;
+        *) angle="0";;
+    esac
+else
+    # Main output not DSI and DSI is connected, then disable it
+    if [ ! -z $dsi ]; then
+	echo $dsi
+        echo "output ${dsi} disable" >> $SWAY_HOME/config
+    fi
+    angle="0"
+fi
+
+# Main output string base
+output="output ${con}"
+echo "${output} transform ${angle}" >> $SWAY_HOME/config
+echo "WLR_CON=${con}" >> ${env_file}
+# check refresh rate
+DISPLAY_MODE=$(get_setting system.display_mode)
+if [ "${DISPLAY_MODE}" ]; then
+    # we only need to specify this if we have user set display mode
+    # if not specified we just use default decided by the panel driver
+    RR=$(echo ${DISPLAY_MODE} | tr -cd '[[:digit:]].')
+    if [[ $rot =~ 1|3 ]]; then
+        echo "${output} mode $(fbheight)x$(fbwidth)@${RR}Hz" >> $SWAY_HOME/config
+    else
+        echo "${output} mode $(fbwidth)x$(fbheight)@${RR}Hz" >> $SWAY_HOME/config
+    fi
+fi
+echo "${output} bg #000000 solid_color" >> $SWAY_HOME/config
+echo "${output} allow_tearing yes" >> $SWAY_HOME/config
+echo "${output} max_render_time off" >> $SWAY_HOME/config
+
+# Retroid Dual Screen Add-on
+# Check the display exists first before we do anything
+if hexdump -C /sys/class/drm/card0-DP-1/edid | grep -q "Lontium"; then
+  echo "output DP-1 transform 270" >> $SWAY_HOME/config
+  echo "output DP-1 bg #000000 solid_color" >> $SWAY_HOME/config
+  echo "output DP-1 allow_tearing yes"  >> $SWAY_HOME/config
+  echo "output DP-1 max_render_time off" >> $SWAY_HOME/config
+  echo "output DP-1 scale 1" >> $SWAY_HOME/config
+  echo "output DP-1 position 0 0" >> $SWAY_HOME/config
+  echo "input \"0:0:generic_ft5x06_(a0)\" map_to_output DSI-1" >> $SWAY_HOME/config
+  echo "input \"0:0:generic_ft5x06_(a0)\" events disabled" >> $SWAY_HOME/config
+  echo "input \"0:0:generic_ft5x06_(8d)\" map_to_output DSI-1" >> $SWAY_HOME/config
+  echo "input \"0:0:generic_ft5x06_(8d)\" events disabled" >> $SWAY_HOME/config
+  echo "input \"8746:1:RetroidPocket_RDS_Touchscreen\" map_to_output DP-1" >> $SWAY_HOME/config
+  echo "input \"8746:1:RetroidPocket_RDS_Touchscreen\" calibration_matrix 0 1 0 -1 0 1" >> $SWAY_HOME/config
+  echo 'for_window [app_id="emulationstation"] focus output DP-1' >> $SWAY_HOME/config
+  con="DP-1"
+fi
+
+if [ "${QUIRK_DEVICE}" = "AYANEO Pocket DS" ]; then
+  con="DSI-1"
+  echo 'for_window [app_id="emulationstation"] focus output DSI-1' >> $SWAY_HOME/config
+  echo 'for_window [app_id="emulationstation"] reload' >> $SWAY_HOME/config
+  echo 'input "1046:967:Goodix_Capacitive_TouchScreen" map_to_output DSI-2' >> $SWAY_HOME/config
+  echo 'input "0:0:generic_ft5x06_(44)" map_to_output DSI-1' >> $SWAY_HOME/config
+  echo 'output DSI-2 power off' >> $SWAY_HOME/config
+  echo "exec_always sh -c 'pgrep -x /usr/bin/wvkbd-mobintl >/dev/null && swaymsg output DSI-2 power on'"  >> $SWAY_HOME/config
+  echo "exec_always swaymsg 'seat seat1 attach 1046:967:Goodix_Capacitive_TouchScreen'" >> $SWAY_HOME/config
+  echo "exec_always swaymsg 'seat seat1 attach 0:0:generic_ft5x06_(44)'" >> $SWAY_HOME/config
+  echo 'for_window [title=".*(Secondary|\[w2\]|Sub|Bottom|Screen 2|GamePad).*"] output DSI-2 power on, output DSI-2 transform 270' >> $SWAY_HOME/config
+fi
+
+# Move the secondary window to the second output and apply vertical orientation for applicable cases
+if [ "${DEVICE_HAS_DUAL_SCREEN}" = "true" ]; then
+  second_con=$([[ "${connected_cons[0]}" == "$con" ]] && echo "${connected_cons[1]}" || echo "${connected_cons[0]}")
+  echo 'for_window [title=".*(Secondary|\[w2\]|Sub|Bottom|Screen 2|GamePad).*"] move window to output '"${second_con}" >> $SWAY_HOME/config
+  echo 'for_window [title="RetroArch\s(melonDS|DeSmuME|VecX|MAME|FinalBurn|FB Alpha).*"] exec /usr/bin/vertical-check' >> $SWAY_HOME/config
+  # Required for the touch keyboard to both accept inputs on bottom screen and sent those events to the top screen
+  echo "exec_always swaymsg '[app_id=\"emulationstation\"]' seat seat0 attach \"0:0:wlr_virtual_keyboard_v1\"" >> $SWAY_HOME/config
+  echo "exec_always swaymsg '[app_id=\"emulationstation\"]' seat seat1 attach \"0:0:wlr_virtual_keyboard_v1\"" >> $SWAY_HOME/config
+fi
+
+# AYN Thor touchscreen setup
+if [ "${QUIRK_DEVICE}" = "AYN Thor" ]; then
+  echo 'for_window [app_id="emulationstation"] reload' >> $SWAY_HOME/config
+  echo "exec_always swaymsg '[app_id=\"emulationstation\"]' focus output ${con}" >> $SWAY_HOME/config
+  echo "exec_always swaymsg '[app_id=\"emulationstation\"]' seat seat1 attach \"0:0:generic_ft5x06_(8d)\"" >> $SWAY_HOME/config
+  echo "exec_always swaymsg '[app_id=\"emulationstation\"]' seat seat1 attach \"4660:22136:InputPlumber_Keyboard\"" >> $SWAY_HOME/config
+fi
+
+# AYANEO Pocket S: force primary output to the internal DSI panel.
+# Some panel stacks expose extra connectors and sway can pick the wrong one.
+if [ "${QUIRK_DEVICE}" = "AYANEO Pocket S 2K" ]; then
+  if [ -n "${dsi}" ]; then
+    con="${dsi}"
+    echo "output ${con} transform ${angle}" >> $SWAY_HOME/config
+    echo "output ${con} bg #000000 solid_color" >> $SWAY_HOME/config
+    echo "output ${con} allow_tearing yes" >> $SWAY_HOME/config
+    echo "output ${con} max_render_time off" >> $SWAY_HOME/config
+    echo "WLR_CON=${con}" >> ${env_file}
+  fi
+fi
+
+# Anbernic RG DS touchscreen setup
+if [ "${QUIRK_DEVICE}" = "Anbernic RG DS" ]; then
+  echo 'for_window [title=".*(Secondary|\[w2\]|Sub|Bottom|Screen 2|GamePad).*"] output '"${second_con}"' power on' >> $SWAY_HOME/config 
+  echo 'for_window [app_id="drastic"] output '"${second_con}"' power on, input "1046:911:Goodix_Capacitive_TouchScreen" map_to_output '"${con}" >> $SWAY_HOME/config
+  echo 'for_window [app_id="emulationstation"] reload' >> $SWAY_HOME/config
+  echo "exec_always swaymsg '[app_id=\"emulationstation\"]' focus output ${con}, output ${second_con} power off" >> $SWAY_HOME/config
+  echo "exec_always swaymsg '[app_id=\"emulationstation\"]' seat seat1 attach \"1046:911:Goodix_Capacitive_TouchScreen\"" >> $SWAY_HOME/config
+  echo "exec_always swaymsg '[app_id=\"emulationstation\"]' seat seat1 fallback yes" >> $SWAY_HOME/config
+fi

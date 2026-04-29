@@ -1,0 +1,434 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2025-present ArchR (https://github.com/archr-linux/Arch-R)
+
+. /etc/profile
+
+### Enable logging
+case $(get_setting system.loglevel) in
+verbose)
+  DEBUG=true
+  ;;
+*)
+  DEBUG=false
+  ;;
+esac
+
+check_hardware_suspend_enabled() {
+  local SUSPEND_MODE="$(get_setting system.suspendmode)"
+
+  if [[ "${SUSPEND_MODE}" != "off" ]]; then
+    return 0
+  else
+    return 1
+  fi
+}
+
+check_hdmi_connected() {
+  for status_file in /sys/class/drm/card*-HDMI-A-[0-9]/status; do
+    if [[ -f "$status_file" ]]; then
+      local HDMI_STATUS=$(cat "$status_file")
+      if [[ "${HDMI_STATUS}" = "connected" ]]; then
+        return 0
+      fi
+    fi
+  done
+
+  return 1
+}
+
+check_charging() {
+  local CHARGE_STATUS=$(cat /sys/class/power_supply/battery/status) 
+
+  if [[ "${CHARGE_STATUS}" = "Charging" ]]; then
+    return 0
+  else
+    return 1
+  fi
+}
+
+check_es_running_game() {
+  local HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:1234/runningGame")
+  ${DEBUG} && log $0 "ES runningGame HTTP_STATUS - ${HTTP_STATUS}"
+  test $? != 0 && return 1 # call failed, assume no game running
+  test "${HTTP_STATUS}" = 201 && return 1 # 201 when no game running
+  test "${HTTP_STATUS}" = 200 && return 0 # 200 when game running
+}
+
+display_off() {
+  if [[ "${ENABLE_DPMS}" == "1" ]]; then
+    # DPMS enabled, use it to turn off the display
+    ${DEBUG} && log $0 "DPMS - display off"
+
+    if echo "${UI_SERVICE}" | grep "sway"; then
+      ${DEBUG} && log $0 "Display power off"
+      swaymsg "output * power off"
+    elif echo "${UI_SERVICE}" | grep "weston"; then
+      weston-dpms -m off
+    fi
+  else
+    # DPMS disabled, just turn off the backlight
+    ${DEBUG} && log $0 "Backlight off"
+
+    for BL_POWER_DEVICE in "${BL_POWER_DEVICES[@]}"; do
+      echo 4 > "${BL_POWER_DEVICE}"
+    done
+  fi
+}
+
+display_on() {
+  if [[ "${ENABLE_DPMS}" == "1" ]]; then
+    # DPMS enabled, use it to turn on the display
+    ${DEBUG} && log $0 "DPMS - display on"
+
+    if echo "${UI_SERVICE}" | grep "sway"; then
+      ${DEBUG} && log $0 "Display power on"
+      swaymsg "output * power on"
+    elif echo "${UI_SERVICE}" | grep "weston"; then
+      weston-dpms -m on
+    fi
+  else
+    # DPMS disabled, just turn on the backlight
+    ${DEBUG} && log $0 "Backlight on"
+
+    for BL_POWER_DEVICE in "${BL_POWER_DEVICES[@]}"; do
+      echo 0 > "${BL_POWER_DEVICE}"
+    done
+  fi
+}
+
+mute_audio() {
+  ${DEBUG} && log $0 "Mute audio"
+  pactl set-sink-mute @DEFAULT_SINK@ true
+}
+
+unmute_audio() {
+  ${DEBUG} && log $0 "Unmute audio"
+  pactl set-sink-mute @DEFAULT_SINK@ false
+}
+
+disable_leds() {
+  ${DEBUG} && log $0 "disable leds"
+  /usr/bin/ledcontrol poweroff
+}
+
+enable_leds() {
+  ${DEBUG} && log $0 "restore leds"
+  LED_STATE=$(get_setting "led.color")
+  /usr/bin/ledcontrol ${LED_STATE}
+}
+
+powersave_governors() {
+  ${DEBUG} && log $0 "Set CPU/GPU governors to powersave"
+
+  # Get the current cpu and gpu governor, save for restoration on resume
+  local CURR_CPU_GOVERNOR="$(cat ${CPU_FREQ}/scaling_governor)"
+  local CURR_GPU_GOVERNOR="$(cat ${GPU_FREQ}/governor)"
+
+  set_setting sleep.cpugovernor "${CURR_CPU_GOVERNOR}"
+  set_setting sleep.gpugovernor "${CURR_GPU_GOVERNOR}"
+
+  # Set all governors to powersave
+  set_cpu_gov powersave
+  set_gpu_gov powersave
+}
+
+restore_governors() {
+  ${DEBUG} && log $0 "Restore CPU/GPU governors"
+
+  # Grab the old governors
+  local PRE_SUSPEND_CPU_GOVERNOR=$(get_setting "sleep.cpugovernor")
+  [[ -z "${PRE_SUSPEND_CPU_GOVERNOR}" ]] && PRE_SUSPEND_CPU_GOVERNOR="ondemand"
+
+  local PRE_SUSPEND_GPU_GOVERNOR=$(get_setting "sleep.gpugovernor")
+  [[ -z "${PRE_SUSPEND_GPU_GOVERNOR}" ]] && PRE_SUSPEND_GPU_GOVERNOR="simple_ondemand"
+
+  # Restore old governors
+  set_cpu_gov "${PRE_SUSPEND_CPU_GOVERNOR}"
+  set_gpu_gov "${PRE_SUSPEND_GPU_GOVERNOR}"
+
+  # Clean up
+  del_setting "sleep.cpugovernor"
+  del_setting "sleep.gpugovernor"
+}
+
+park_cores() {
+  ${DEBUG} && log $0 "CPU core parking"
+  for x in /sys/devices/system/cpu/cpu*/online; do
+    if [[ ! $(echo "${x}" | grep "cpu0") ]]; then
+      echo 0 > "${x}"
+    fi
+  done
+}
+
+unpark_cores() {
+  ${DEBUG} && log $0 "Undo CPU core parking"
+  for x in /sys/devices/system/cpu/cpu*/online; do
+    echo 1 > "${x}"
+  done
+}
+
+block_input() {
+  for x in /dev/input/event*; do
+    local EVENT_INPUT=$(echo ${x} | awk 'BEGIN{FS="/"} {print $NF}')
+    local DEVICE_NAME=$(cat /sys/class/input/$EVENT_INPUT/device/name)
+
+    # If device is not in whitelist, block input
+    local FOUND=0
+    for WHITELIST_DEVICE in "${INPUT_WHITELIST[@]}"; do
+      if [[ "${WHITELIST_DEVICE}" = "${DEVICE_NAME}" ]]; then
+        FOUND=1
+        break
+      fi
+    done
+
+    if (( ! ${FOUND})); then
+      ${DEBUG} && log $0 "Blocking input for ${x} - ${DEVICE_NAME}"
+      /usr/bin/evtest --grab ${x} > /dev/null &
+    fi
+  done
+}
+
+unblock_input() {
+  ${DEBUG} && log $0 "Unblocking input"
+  for x in $(pgrep -f "evtest --grab"); do
+    kill -9 ${x}
+  done
+}
+
+do_suspend_actions() {
+  # Turn off display
+  display_off
+
+  # Mute audio
+  mute_audio
+
+  # Set CPU / GPU governors
+  powersave_governors
+
+  # CPU core parking (if enabled)
+  [[ "${ENABLE_CORE_PARKING}" == "1" ]] && park_cores
+
+  # Block input
+  block_input
+
+  # Disable LEDs
+  disable_leds
+}
+
+do_resume_actions() {
+  # Turn on display
+  display_on
+
+  # Unmute audio
+  unmute_audio
+
+  # Restore CPU / GPU governors
+  restore_governors
+
+  # Undo CPU core parking (if enabled)
+  [[ "${ENABLE_CORE_PARKING}" == "1" ]] && unpark_cores
+
+  # Unblock input
+  unblock_input
+
+  # Restore LEDs
+  enable_leds
+}
+
+do_shutdown() {
+  # Check if HDMI has been connected while suspended
+  check_hdmi_connected
+  local HDMI_CONNECTED=$?
+
+  if [[ $HDMI_CONNECTED -eq 0 ]]; then
+    ${DEBUG} && log $0 "HDMI connected, not shutting down"
+    return 0
+  fi
+
+  # Check if charger has been connected while suspended
+  check_charging
+  local CHARGING=$?
+
+  if [[ $CHARGING -eq 0 ]]; then
+    ${DEBUG} && log $0 "Charging, not shutting down"
+    return 0
+  fi
+
+  # Unmute audio - otherwise wireplumber will keep it muted on next boot
+  unmute_audio
+
+  # Check whether a game is running
+  check_es_running_game
+  local RUNNING_GAME=$?
+
+  if [[ $RUNNING_GAME -eq 0 ]]; then
+    # ES shutdown API won't work if a game is running
+    ${DEBUG} && log $0 "Shutting down now"
+    shutdown now
+  else
+    # Use ES shutdown API so metadata is saved
+    ${DEBUG} && log $0 "Shutting down via ES API"
+    curl "http://localhost:1234/shutdown"
+  fi
+}
+
+suspend() {
+  # Create delay flag file
+  ${DEBUG} && log $0 "Creating ${DELAY_FLAG_FILE}"
+  touch "${DELAY_FLAG_FILE}"
+
+  check_es_running_game
+  local RUNNING_GAME=$?
+
+  check_charging
+  local CHARGING=$?
+
+  # Determine shutdown delay
+  local DELAY=${SHUTDOWN_DELAY}
+  [[ $RUNNING_GAME -eq 0 ]] && DELAY=${SHUTDOWN_DELAY_RUNNING_GAME}
+  ${DEBUG} && log $0 "Shutdown delay - ${DELAY} seconds"
+  [[ ${CHARGING} -eq 0 ]] && ${DEBUG} && log $0 "Charging ..."
+
+  if [[ "${DELAY}" -gt 0 || ${CHARGING} -eq 0 ]]; then
+    do_suspend_actions
+  fi
+
+  # Delay shutdown
+  sleep ${DELAY}
+
+  # Delay has completed - check whether the flag file is still present
+  if [[ -f "${DELAY_FLAG_FILE}" ]]; then
+    ${DEBUG} && log $0 "Delay expired, flag file found"
+    # Flag present - shutdown
+    do_shutdown
+  else
+    ${DEBUG} && log $0 "Delay expired, flag file not found"
+  fi
+}
+
+resume() {
+  # Resume event - remove all flag files and kill processes
+  ${DEBUG} && log $0 "Removing flags"
+  rm -f "${DELAY_FLAG_FILE_PATTERN}".*
+  rm -f "${POWER_SUSPEND_ACTIVE_FLAG_FILE}"
+  rm -f "${LID_CLOSED_FLAG_FILE}"
+
+  # Do resume actions
+  do_resume_actions
+
+  ${DEBUG} && log $0 "Resume - killing ${TO_KILL} processes"
+  killall ${TO_KILL}
+}
+
+# Main logic
+# Only do something when hardware suspend is disabled
+check_hardware_suspend_enabled
+HW_SUSPEND_ENABLED=$?
+
+if [[ $HW_SUSPEND_ENABLED -eq 0 ]]; then
+  ${DEBUG} && log $0 "Hardware suspend enabled, exiting"
+  exit 0
+fi
+
+# If a game is not running, by default delay the shutdown for 15 minutes
+SHUTDOWN_DELAY="$(get_setting system.shutdown_delay)"
+[[ "${SHUTDOWN_DELAY}" = "" ]] && SHUTDOWN_DELAY=900
+
+# If a game is running, by default delay the shutdown for 15 minutes
+SHUTDOWN_DELAY_RUNNING_GAME="$(get_setting system.shutdown_delay_running_game)"
+[[ "${SHUTDOWN_DELAY_RUNNING_GAME}" = "" ]] && SHUTDOWN_DELAY_RUNNING_GAME=900
+
+# On suspend, should CPU cores be parked
+ENABLE_CORE_PARKING="$(get_setting system.suspend.park_cores)"
+[[ "${ENABLE_CORE_PARKING}" = "" ]] && ENABLE_CORE_PARKING="1"
+
+# On suspend, should DPMS be used
+ENABLE_DPMS="$(get_setting system.suspend.dpms)"
+[[ "${ENABLE_DPMS}" = "" ]] && ENABLE_DPMS="1"
+
+# flag files
+PID=$$
+DELAY_FLAG_FILE_PATTERN="/var/run/shutdown-delay.flag"
+DELAY_FLAG_FILE="${DELAY_FLAG_FILE_PATTERN}.${PID}"
+POWER_SUSPEND_ACTIVE_FLAG_FILE="/var/run/power-fake-suspend-active.flag"
+LID_CLOSED_FLAG_FILE="/var/run/lid-closed.flag"
+
+# Process to kill
+TO_KILL="archr-fake-suspend"
+
+# Lid / power button - event input device whitelist
+INPUT_WHITELIST=(
+  # H700
+  "axp20x-pek" \
+  "gpio-keys-lid" \
+  # S922X
+  "rk805 pwrkey" \
+  # SM8550
+  "pmic_pwrkey"
+)
+
+# Ayn Thor gpio-keys contains lid events
+[[ "${QUIRK_DEVICE}" == "AYN Thor" ]] && INPUT_WHITELIST+=("gpio-keys")
+
+# Backlight power devices
+declare -a BL_POWER_DEVICES=()
+while IFS= read -r line; do
+  BL_POWER_DEVICES+=("$line")
+done < <(find /sys/class/backlight/*/ -name bl_power 2>/dev/null)
+
+# Source = power / lid
+SOURCE=$1
+
+# Action = open / close
+ACTION=$2
+
+# Check if HDMI is connected
+check_hdmi_connected
+HDMI_CONNECTED=$?
+
+# Handle event
+if [[ "${SOURCE}" = "power" ]]; then
+  ${DEBUG} && log $0 "Power button pressed ..."
+
+  if [[ -f "${LID_CLOSED_FLAG_FILE}" ]]; then
+    ${DEBUG} && log $0 "Lid closed - no action"
+  elif [[ -f "${POWER_SUSPEND_ACTIVE_FLAG_FILE}" ]]; then
+    # In a 'suspend' state from power button, 'resume'
+    ${DEBUG} && log $0 "Power suspend active - resuming"
+    resume
+  else
+    if [[ $HDMI_CONNECTED -eq 0 ]]; then
+      ${DEBUG} && log $0 "HDMI connected, not suspending"
+    else
+      # Create flag file and suspend
+      ${DEBUG} && log $0 "Suspending"
+      touch ${POWER_SUSPEND_ACTIVE_FLAG_FILE}
+      suspend
+    fi
+  fi
+elif [[ "${SOURCE}" = "lid" && "${ACTION}" = "close" ]]; then
+  ${DEBUG} && log $0 "Lid closed ..."
+  touch ${LID_CLOSED_FLAG_FILE}
+
+  if [[ -f "${POWER_SUSPEND_ACTIVE_FLAG_FILE}" ]]; then
+    # In a 'suspend' state from power button, do nothing
+    ${DEBUG} && log $0 "Power suspend active - no action"
+  else
+    if [[ $HDMI_CONNECTED -eq 0 ]]; then
+      ${DEBUG} && log $0 "HDMI connected, not suspending"
+    else
+      # Suspend
+      ${DEBUG} && log $0 "Suspending"
+      suspend
+    fi
+  fi
+elif [[ "${SOURCE}" = "lid" && "${ACTION}" = "open" ]]; then
+  rm -f "${LID_CLOSED_FLAG_FILE}"
+
+  # Always resume on lid open - regardless of suspend source
+  ${DEBUG} && log $0 "Lid opened - resuming"
+  resume
+fi
+
+exit 0

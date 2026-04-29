@@ -1,0 +1,18 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+
+cat <<EOF >/storage/.config/profile.d/010-governors
+CPU_FREQ=("/sys/devices/system/cpu/cpufreq/policy0" "/sys/devices/system/cpu/cpufreq/policy2")
+
+GPUDRIVER=$(/usr/bin/gpudriver)
+
+case \${GPUDRIVER} in
+  "libmali")
+    GPU_FREQ=("/sys/devices/platform/soc/ffe40000.gpu_mali_vulkan/devfreq/ffe40000.gpu_mali_vulkan")
+  ;;
+  "panfrost")
+     GPU_FREQ=("/sys/devices/platform/soc/ffe40000.gpu/devfreq/ffe40000.gpu")
+  ;;
+esac
+EOF

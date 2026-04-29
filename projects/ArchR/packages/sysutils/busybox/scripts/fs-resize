@@ -1,0 +1,74 @@
+#!/bin/sh
+
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2009-2014 Stephan Raue (stephan@openelec.tv)
+
+StartProgressLog() {
+  if [ "$1" = "spinner" ]; then
+    echo "*** $3" >>$LOG
+  fi
+  StartProgress "$@"
+}
+
+if [ -e /storage/.please_resize_me ] ; then
+  . /usr/lib/archr/functions
+
+  hidecursor
+
+  mount -o remount,rw /flash
+  LOG=/flash/fs-resize.log
+  date -Iseconds >>$LOG
+
+  # this sh** was never intended to be used
+  # on already installed and runing system
+  if [ -d /storage/.config -o -d /storage/.cache ] ; then
+    rm -f /storage/.please_resize_me
+    sync
+    echo "Resizing is not permitted - the system has already been initialised." | tee -a $LOG
+    mount -o remount,ro /flash
+    StartProgress countdown "Rebooting in 5s... " 5 "NOW"
+    reboot -f
+  fi
+
+  # get the disk. /storage on 2nd partition
+  echo $(grep "/storage " /proc/mounts) >>$LOG
+  PART=$(grep "/storage " /proc/mounts | cut -d" " -f1 | grep '[0-9]$')
+  PARTNUM="${PART: -1}"
+
+  # get disk: /dev/sdx2 -> /dev/sdx, /dev/mmcblkxp2 -> /dev/mmcblkx
+  case $PART in
+    "/dev/mmcblk"*|"/dev/nvme"*)
+      DISK=$(echo $PART | sed s/p[0-9]$//g)
+      ;;
+    *)
+      DISK=$(echo $PART | sed s/[0-9]$//g)
+      ;;
+  esac
+
+  rm -f /storage/.please_resize_me
+  sync
+
+  echo "DISK: $DISK  PART: $PART" >>$LOG
+
+  # just in case
+  if [ ! -z "$DISK" -a ! -z "$PART" ] ; then
+    umount $PART
+
+    echo "PARTITION RESIZING IN PROGRESS"
+    echo ""
+    echo "Please do not reboot or turn off your @DISTRONAME@ device!"
+    echo ""
+
+    StartProgressLog spinner "Resizing partition...   " "parted -s -f -m $DISK resizepart $PARTNUM 100% >>$LOG 2>&1"
+    StartProgressLog spinner "Checking file system... " "e2fsck -f -p $PART >>$LOG 2>&1"
+    StartProgressLog spinner "Resizing file system... " "resize2fs $PART >>$LOG 2>&1"
+    StartProgressLog spinner "Regenerating UUIDs...   " "tune2fs $PART -U random >>$LOG 2>&1; fatlabel -i -r ${DISK}p1 >>$LOG 2>&1"
+    StartProgressLog spinner "Syncing to disk...      " "sync >>$LOG 2>&1"
+    StartProgress countdown "Rebooting in 5s...     " 5 "NOW"
+  else
+    echo "Partition was not detected - resizing aborted."
+    StartProgress countdown "Rebooting in 5s... " 5 "NOW"
+  fi
+  mount -o remount,ro /flash
+fi
+reboot -f &>/dev/null

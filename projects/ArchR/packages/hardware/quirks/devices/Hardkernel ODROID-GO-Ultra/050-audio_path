@@ -1,0 +1,18 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+
+cat <<EOF >/storage/.config/profile.d/002-audio_path
+DEVICE_PLAYBACK_PATH_SPK="SPK"
+DEVICE_PLAYBACK_PATH_HP="HP"
+DEVICE_PLAYBACK_PATH="Playback Mux"
+DEVICE_PIPEWIRE_PROFILE="pro-audio"
+EOF
+
+### Set sound properties
+amixer -c 0 -q sset 'FRDDR_A SINK 1 SEL' 'OUT 1'
+amixer -c 0 -q sset 'FRDDR_A SRC 1 EN' 'on'
+
+### Required with kernels after 6.12 - restart pipewire so the
+### source / sink get picked up correctly by wireplumber
+systemctl restart pipewire

@@ -1,0 +1,20 @@
+#
+# Arch Linux ARM mirror list
+# Generated for ArchR distribution
+#
+
+## Arch Linux ARM - Primary
+Server = http://mirror.archlinuxarm.org/$arch/$repo
+
+## Arch Linux ARM - US mirrors
+# Server = http://ca.us.mirror.archlinuxarm.org/$arch/$repo
+# Server = http://fl.us.mirror.archlinuxarm.org/$arch/$repo
+# Server = http://il.us.mirror.archlinuxarm.org/$arch/$repo
+# Server = http://nj.us.mirror.archlinuxarm.org/$arch/$repo
+
+## Arch Linux ARM - EU mirrors
+# Server = http://de.mirror.archlinuxarm.org/$arch/$repo
+# Server = http://dk.mirror.archlinuxarm.org/$arch/$repo
+# Server = http://eu.mirror.archlinuxarm.org/$arch/$repo
+# Server = http://hu.mirror.archlinuxarm.org/$arch/$repo
+# Server = http://sg.mirror.archlinuxarm.org/$arch/$repo

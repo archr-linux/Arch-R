@@ -1,0 +1,8 @@
+/ {
+	archr,device_switch {
+		r33s = "rk3326-gameconsole-r33s";
+		r36s = "rk3326-gameconsole-r36s";
+		soysauce = "rk3326-gameconsole-soysauce";
+		rgb10x = "rk3326-powkiddy-rgb10x";
+	};
+};

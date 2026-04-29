@@ -1,0 +1,22 @@
+diff --git a/VideoOutput.cpp b/VideoOutput.cpp
+index 4109192..9dc1bca 100644
+--- a/VideoOutput.cpp
++++ b/VideoOutput.cpp
+@@ -324,7 +324,7 @@ void VideoOutput::InitRendering()
+     
+     // on a core OpenGL profile, we need this since
+     // the default VAO is not valid!
+-    #if defined(EMUELEC) || defined(HAVE_OPENGLES2)
++    #if defined(HAVE_OPENGLES2)
+       glGenVertexArraysOES( 1, &VAO );
+       glBindVertexArrayOES( VAO );
+     #else
+@@ -473,7 +473,7 @@ void VideoOutput::Destroy()
+     VBOVertexInfo = VBOIndices = 0;
+     
+     LOG( "Destroying OpenGL vertex arrays" );
+-    #if defined(EMUELEC) || defined(HAVE_OPENGLES2)
++    #if defined(HAVE_OPENGLES2)
+       glDeleteVertexArraysOES( 1, &VAO );
+     #else
+       glDeleteVertexArrays( 1, &VAO );

@@ -1,0 +1,16 @@
+#!/bin/sh
+
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2024-present ArchR (https://github.com/archr-linux/Arch-R)
+
+. /etc/profile
+
+# Get GPU overclock state
+GPU_OC_SPEED=$(get_setting "gpu-overclock-speed")
+if [ ! -n "${GPU_OC_STATE}" ]; then
+  GPU_OC_STATE="0"
+  set_setting "gpu-overclock-speed" "${GPU_OC_SPEED}"
+fi
+
+# Set GPU OC state
+/usr/lib/autostart/quirks/platforms/SM8250/bin/gpu_overclock "${GPU_OC_SPEED}"

@@ -1,0 +1,4 @@
+STATE=$(get_setting simplehttp.enabled)
+SVC="simple-http-server"
+CONF="simplehttp.conf"
+DAEMONS=("simple-http-server")

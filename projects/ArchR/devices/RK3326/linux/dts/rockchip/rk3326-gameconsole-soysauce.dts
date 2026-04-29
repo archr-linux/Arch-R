@@ -1,0 +1,243 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * Copyright (C) 2026 ArchR (https://github.com/archr-linux/Arch-R)
+ *
+ * Device tree for R36S "soysauce" variant (Y3506 boards).
+ * Hardware differences from standard R36S:
+ *   - All buttons on GPIO3 (standard uses GPIO1/GPIO2)
+ *   - Analog mux on GPIO0 (standard uses GPIO3)
+ *   - Panel reset GPIO: GPIO3_PB0
+ *   - Panel enable GPIO: GPIO1_PC2
+ *   - amux-channel-mapping reordered
+ *   - Different joypad product ID (0x1100 "GO-Super Gamepad")
+ */
+
+/dts-v1/;
+#include "rk3326-gameconsole-r3xs.dtsi"
+#include "rk3326-device-group-r36.dtsi"
+
+/ {
+	model = "Game Console R36S Soysauce";
+	compatible = "gameconsole,soysauce", "gameconsole,r36s", "rockchip,rk3326";
+
+	archr,device_switch {
+		this = "soysauce";
+	};
+
+	/* LED indicators (soysauce-specific) */
+	leds {
+		compatible = "gpio-leds";
+
+		led-red {
+			gpios = <&gpio0 RK_PA5 GPIO_ACTIVE_LOW>;
+			label = "red";
+			default-state = "off";
+		};
+
+		led-blue {
+			gpios = <&gpio0 RK_PA0 GPIO_ACTIVE_LOW>;
+			label = "blue";
+			default-state = "off";
+		};
+	};
+
+	/* Volume buttons: GPIO3_PC6/PC5 on soysauce (base has GPIO2_PA0/PA1) */
+	gpio-keys-vol {
+		button-vol-down {
+			gpios = <&gpio3 RK_PC5 GPIO_ACTIVE_LOW>;
+		};
+
+		button-volume-up {
+			gpios = <&gpio3 RK_PC6 GPIO_ACTIVE_LOW>;
+		};
+	};
+
+	joypad: odroidgo3-joypad {
+		compatible = "archr-joypad", "odroidgo3-joypad";
+		pwms = <&pwm0 0 200000000 0>;
+		pwm-names = "enable";
+		rumble-boost-weak = <0x0000>;
+		rumble-boost-strong = <0x0000>;
+
+		joypad-name = "GO-Super Gamepad";
+		joypad-product = <0x1100>;
+		joypad-revision = <0x0100>;
+
+		status = "okay";
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&btn_pins>;
+		pinctrl-1 = <&pwm0_pin>;
+
+		/* Analog mux on GPIO0 (different from standard R36S) */
+		io-channel-names = "amux_adc";
+		io-channels = <&saradc 1>;
+
+		amux-count = <4>;
+		amux-channel-mapping = <3 2 0 1>;
+		amux-a-gpios = <&gpio0 RK_PB5 GPIO_ACTIVE_LOW>;
+		amux-b-gpios = <&gpio0 RK_PB4 GPIO_ACTIVE_LOW>;
+		amux-en-gpios = <&gpio0 RK_PC1 GPIO_ACTIVE_LOW>;
+
+		button-adc-scale = <2>;
+		button-adc-deadzone = <64>;
+		button-adc-fuzz = <32>;
+		button-adc-flat = <32>;
+
+		abs_x-p-tuning = <200>;
+		abs_x-n-tuning = <200>;
+		abs_y-p-tuning = <200>;
+		abs_y-n-tuning = <200>;
+		abs_rx-p-tuning = <200>;
+		abs_rx-n-tuning = <200>;
+		abs_ry-p-tuning = <200>;
+		abs_ry-n-tuning = <200>;
+
+		poll-interval = <10>;
+
+		invert-absx;
+		invert-absy;
+
+		/* All buttons on GPIO3 (soysauce layout) */
+		sw1 {
+			gpios = <&gpio3 RK_PA7 GPIO_ACTIVE_LOW>;
+			label = "GPIO DPAD-UP";
+			linux,code = <BTN_DPAD_UP>;
+		};
+		sw2 {
+			gpios = <&gpio3 RK_PB0 GPIO_ACTIVE_LOW>;
+			label = "GPIO DPAD-DOWN";
+			linux,code = <BTN_DPAD_DOWN>;
+		};
+		sw3 {
+			gpios = <&gpio3 RK_PB2 GPIO_ACTIVE_LOW>;
+			label = "GPIO DPAD-LEFT";
+			linux,code = <BTN_DPAD_LEFT>;
+		};
+		sw4 {
+			gpios = <&gpio3 RK_PB1 GPIO_ACTIVE_LOW>;
+			label = "GPIO DPAD-RIGHT";
+			linux,code = <BTN_DPAD_RIGHT>;
+		};
+		sw5 {
+			gpios = <&gpio3 RK_PB6 GPIO_ACTIVE_LOW>;
+			label = "GPIO KEY BTN-A";
+			linux,code = <BTN_EAST>;
+		};
+		sw6 {
+			gpios = <&gpio3 RK_PB4 GPIO_ACTIVE_LOW>;
+			label = "GPIO BTN-B";
+			linux,code = <BTN_SOUTH>;
+		};
+		sw7 {
+			gpios = <&gpio3 RK_PB3 GPIO_ACTIVE_LOW>;
+			label = "GPIO BTN-Y";
+			linux,code = <BTN_WEST>;
+		};
+		sw8 {
+			gpios = <&gpio3 RK_PB5 GPIO_ACTIVE_LOW>;
+			label = "GPIO BTN-X";
+			linux,code = <BTN_NORTH>;
+		};
+		sw11 {
+			gpios = <&gpio0 RK_PB3 GPIO_ACTIVE_LOW>;
+			label = "GPIO BTN_THUMBL";
+			linux,code = <BTN_THUMBL>;
+		};
+		sw12 {
+			gpios = <&gpio3 RK_PD3 GPIO_ACTIVE_LOW>;
+			label = "GPIO BTN_THUMBR";
+			linux,code = <BTN_THUMBR>;
+		};
+		sw13 {
+			gpios = <&gpio3 RK_PA4 GPIO_ACTIVE_LOW>;
+			label = "GPIO BTN_MODE";
+			linux,code = <BTN_MODE>;
+		};
+		sw15 {
+			gpios = <&gpio3 RK_PA3 GPIO_ACTIVE_LOW>;
+			label = "GPIO TOP-LEFT";
+			linux,code = <BTN_TL>;
+		};
+		sw16 {
+			gpios = <&gpio3 RK_PA0 GPIO_ACTIVE_LOW>;
+			label = "GPIO TOP-RIGHT";
+			linux,code = <BTN_TR>;
+		};
+		sw19 {
+			gpios = <&gpio3 RK_PA5 GPIO_ACTIVE_LOW>;
+			label = "GPIO BTN_SELECT";
+			linux,code = <BTN_SELECT>;
+		};
+		sw20 {
+			gpios = <&gpio3 RK_PA2 GPIO_ACTIVE_LOW>;
+			label = "GPIO TOP-LEFT2";
+			linux,code = <BTN_TL2>;
+		};
+		sw21 {
+			gpios = <&gpio3 RK_PA1 GPIO_ACTIVE_LOW>;
+			label = "GPIO TOP-RIGHT2";
+			linux,code = <BTN_TR2>;
+		};
+		sw22 {
+			gpios = <&gpio3 RK_PA6 GPIO_ACTIVE_LOW>;
+			label = "GPIO BTN_START";
+			linux,code = <BTN_START>;
+		};
+	};
+};
+
+/* Soysauce panel: same reset GPIO as base (GPIO3_PC0), add enable GPIO */
+&internal_display {
+	compatible = "archr,generic-dsi", "rocknix,generic-dsi";
+	enable-gpios = <&gpio1 RK_PC2 GPIO_ACTIVE_HIGH>;
+};
+
+/* Soysauce uses GPIO3_PB6 for BTN-A, not sdio card detect */
+&sdio {
+	/delete-property/ cd-gpios;
+	non-removable;
+};
+
+&rk817_codec {
+	spk-ctl-gpios = <&gpio3 RK_PC4 GPIO_ACTIVE_HIGH>;
+};
+
+&pinctrl {
+	btns {
+		btn_pins_vol: btn-pins-vol {
+			rockchip,pins = <3 RK_PC5 RK_FUNC_GPIO &pcfg_pull_up>,
+					<3 RK_PC6 RK_FUNC_GPIO &pcfg_pull_up>;
+		};
+
+		btn_pins: btn-pins {
+			rockchip,pins =
+				<3 RK_PA0 RK_FUNC_GPIO &pcfg_pull_up>,
+				<3 RK_PA1 RK_FUNC_GPIO &pcfg_pull_up>,
+				<3 RK_PA2 RK_FUNC_GPIO &pcfg_pull_up>,
+				<3 RK_PA3 RK_FUNC_GPIO &pcfg_pull_up>,
+				<3 RK_PA4 RK_FUNC_GPIO &pcfg_pull_up>,
+				<3 RK_PA5 RK_FUNC_GPIO &pcfg_pull_up>,
+				<3 RK_PA6 RK_FUNC_GPIO &pcfg_pull_up>,
+				<3 RK_PA7 RK_FUNC_GPIO &pcfg_pull_up>,
+				<3 RK_PB0 RK_FUNC_GPIO &pcfg_pull_up>,
+				<3 RK_PB1 RK_FUNC_GPIO &pcfg_pull_up>,
+				<3 RK_PB2 RK_FUNC_GPIO &pcfg_pull_up>,
+				<3 RK_PB3 RK_FUNC_GPIO &pcfg_pull_up>,
+				<3 RK_PB4 RK_FUNC_GPIO &pcfg_pull_up>,
+				<3 RK_PB5 RK_FUNC_GPIO &pcfg_pull_up>,
+				<3 RK_PB6 RK_FUNC_GPIO &pcfg_pull_up>,
+				<3 RK_PD3 RK_FUNC_GPIO &pcfg_pull_up>,
+				<0 RK_PB3 RK_FUNC_GPIO &pcfg_pull_up>,
+				<0 RK_PB4 RK_FUNC_GPIO &pcfg_pull_up>,
+				<0 RK_PB5 RK_FUNC_GPIO &pcfg_pull_up>,
+				<0 RK_PC1 RK_FUNC_GPIO &pcfg_pull_up>;
+		};
+	};
+
+	panel {
+		panel_enable: panel-enable {
+			rockchip,pins = <1 RK_PC2 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+	};
+};

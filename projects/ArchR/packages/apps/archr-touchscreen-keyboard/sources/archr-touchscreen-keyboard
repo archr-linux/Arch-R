@@ -1,0 +1,39 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2025-present ArchR (https://github.com/archr-linux/Arch-R)
+
+. /etc/profile
+
+TSKEY=$(get_setting "archr.touchscreen-keyboard.enabled")
+if [ ! -n "${TSKEY}" ]; then
+  if [ "$DEVICE_HAS_TOUCHSCREEN" == "true" ]; then
+    set_setting "archr.touchscreen-keyboard.enabled" "1"
+  else
+    set_setting "archr.touchscreen-keyboard.enabled" "0"
+  fi
+fi
+
+
+while true; do
+  TSKEY=$(get_setting "archr.touchscreen-keyboard.enabled")
+  if [[ "${DEVICE_HAS_TOUCHSCREEN}" == "true" ]] && [[ "${TSKEY}" == "1" ]]; then
+    PID="$(pidof wvkbd-mobintl)"
+    if [  "$PID" != ""  ]; then
+      killall wvkbd-mobintl
+    elif [[ "${DEVICE_HAS_DUAL_SCREEN}" == "true" ]]; then
+      secondary_output=$(swaymsg -t get_outputs -r | jq -r '.[] | select(.focused == false) | .name')
+      swaymsg output ${secondary_output} power on
+      if [[ ! "${QUIRK_DEVICE}" == "Anbernic RG DS" ]]; then
+        tskb_height=720
+        tskb_legend_size=35
+      else
+        tskb_height=350
+        tskb_legend_size=18
+      fi
+      /usr/bin/wvkbd-mobintl -L ${tskb_height} -fg 6b6b75 -fg-sp 6b6b75 -bg 1d1d1d --text ffffff --text-sp ffffff -fn ${tskb_legend_size} -l simple --hidden --output ${secondary_output}
+    else
+      /usr/bin/wvkbd-mobintl -L 350 -fg 6b6b75 -fg-sp 6b6b75 -bg 1d1d1d --text ffffff --text-sp ffffff -fn 50 -l simple --hidden
+    fi
+  fi
+  sleep 5
+done

@@ -1,0 +1,14 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+
+cat <<EOF >/storage/.config/profile.d/010-governors
+CPU_FREQ=("/sys/devices/system/cpu/cpufreq/policy0" "/sys/devices/system/cpu/cpufreq/policy4")
+GPU_FREQ="/sys/devices/platform/ff9a0000.gpu/devfreq/ff9a0000.gpu"
+DMC_FREQ="/sys/devices/platform/memory-controller/devfreq/memory-controller"
+EOF
+
+### Lock in lowest freq we want to use
+echo 1008000 > /sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq
+echo 1008000 > /sys/devices/system/cpu/cpufreq/policy4/scaling_min_freq
+echo 600000000 > /sys/devices/platform/ff9a0000.gpu/devfreq/ff9a0000.gpu/min_freq

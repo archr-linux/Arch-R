@@ -1,0 +1,6 @@
+[Unit]
+Description=Handle HDMI hotplug
+[Service]
+ExecStartPre=/bin/sleep 1
+ExecStart=/usr/bin/handle-hdmi-hotplug
+Type=oneshot

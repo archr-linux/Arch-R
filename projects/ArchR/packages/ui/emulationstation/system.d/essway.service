@@ -1,0 +1,21 @@
+[Unit]
+Description=EmulationStation-with-Sway
+# This path never exist on rk3566
+#ConditionPathExists=/var/lock/start.games
+Requires=sway.service
+After=sway.service
+RequiresMountsFor=/storage
+
+[Service]
+Type=simple
+Environment=HOME=/storage
+EnvironmentFile=/etc/profile
+ExecStart=/usr/bin/start_es.sh
+WorkingDirectory=/storage
+Restart=always
+RestartSec=2
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Install]
+WantedBy=archr.target

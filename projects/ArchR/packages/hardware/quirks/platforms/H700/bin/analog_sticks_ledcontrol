@@ -1,0 +1,73 @@
+#!/bin/sh
+
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2024 ArchR (https://github.com/archr-linux/Arch-R)
+
+# Simple script to watch the battery capacity and
+# turn the power LED orange when it reaches 30%, red at 20%, and blinking red at 10%
+
+# Define the serial device
+SERIAL_DEVICE="/dev/ttyS2"
+LED_PATH="/sys/class/leds"
+
+function led_state() {
+  echo ${2} >${LED_PATH}/${1}/brightness
+}
+
+# Display usage if no parameters are provided
+if [ $# -ne 7 ]; then
+  echo "Usage: $0 <brightness> <right_red> <right_green> <right_blue> <left_red> <left_green> <left_blue>"
+  echo "Example: $0 255 255 0 0 0 0 255"
+  exit 1
+fi
+
+LED_MODE=1
+BRIGHTNESS=$1
+RIGHT_RED=$2
+RIGHT_GREEN=$3
+RIGHT_BLUE=$4
+LEFT_RED=$5
+LEFT_GREEN=$6
+LEFT_BLUE=$7
+
+# Function to calculate checksum
+calculate_checksum() {
+  local sum=0
+  for byte in "$@"; do
+    sum=$((sum + byte))
+  done
+  echo $((sum & 0xFF))
+}
+
+# Open the serial device
+exec 20<>$SERIAL_DEVICE
+stty -F $SERIAL_DEVICE 115200 -opost -isig -icanon -echo
+
+# Enable RGB LEDs
+led_state rgb:kbd_backlight 1
+
+# Construct the payload
+PAYLOAD=$(printf '\\x%02X\\x%02X' $LED_MODE $BRIGHTNESS)
+for ((i = 0; i < 8; i++)); do
+  PAYLOAD+=$(printf '\\x%02X\\x%02X\\x%02X' $RIGHT_RED $RIGHT_GREEN $RIGHT_BLUE)
+done
+for ((i = 0; i < 8; i++)); do
+  PAYLOAD+=$(printf '\\x%02X\\x%02X\\x%02X' $LEFT_RED $LEFT_GREEN $LEFT_BLUE)
+done
+
+# Calculate checksum for the payload
+PAYLOAD_BYTES=($LED_MODE $BRIGHTNESS)
+for ((i = 0; i < 8; i++)); do
+  PAYLOAD_BYTES+=($RIGHT_RED $RIGHT_GREEN $RIGHT_BLUE)
+done
+for ((i = 0; i < 8; i++)); do
+  PAYLOAD_BYTES+=($LEFT_RED $LEFT_GREEN $LEFT_BLUE)
+done
+CHECKSUM=$(calculate_checksum "${PAYLOAD_BYTES[@]}")
+PAYLOAD+=$(printf '\\x%02X' $CHECKSUM)
+
+# Send the payload
+echo -e -n "$PAYLOAD" > $SERIAL_DEVICE
+
+# Close the serial device
+exec 20>&-

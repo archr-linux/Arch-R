@@ -1,0 +1,339 @@
+### Generate System Documentation
+
+clean_doc_cache() {
+  DOCTMP="${ROOT}/.doc_cache/${DEVICE}"
+  if [ -d "${DOCTMP}" ]
+  then
+    rm -rf "${DOCTMP}"
+  fi
+}
+
+start_system_doc() {
+  if [ -z "${SYSDOC}" ]
+  then
+    echo "Unable to generate documentation, define SYSDOC in options."
+    exit 1
+  fi
+  if [ ! -d "${SYSDOCROOT}" ]
+  then
+    mkdir ${SYSDOCROOT}
+  fi
+  if [ -e "${SYSDOC}.md" ]
+  then
+    rm -f ${SYSDOC}.md
+  fi
+  if [ -e "${ROOT}/templates/HEADER.md" ]
+  then
+    cat ${ROOT}/templates/HEADER.md >${SYSDOC}.md
+  fi
+  DOCTEMPLATE="$(basename ${SYSDOC})"
+  if [ -e "${ROOT}/templates/${DOCTEMPLATE}.md" ]
+  then
+    cat ${ROOT}/templates/${DOCTEMPLATE}.md >>${SYSDOC}.md
+  fi
+  cat <<EOF >>${SYSDOC}.md
+|Manufacturer|System|Release Date|Games Path|Supported Extensions|Emulator / Core|
+|----|----|----|----|----|----|
+EOF
+}
+
+add_system_doc() {
+  echo -n "|${SYSTEM_MANUFACTURER}|${SYSTEM_FULLNAME} (${SYSTEM_NAME})|${SYSTEM_RELEASE}|\`$(basename ${SYSTEM_PATH})\`|${SYSTEM_EXTENSION}|" >>${DOCTMP}/${1}:system.tmp
+}
+
+add_emu_doc() {
+  if [ ! -d "${DOCTMP}" ]
+  then
+    mkdir -p "${DOCTMP}"
+  fi
+  if [ "${4}" = "true" ]
+  then
+    DEFAULT=" (default)"
+  else
+    unset DEFAULT
+  fi
+  echo -n "**${2}:** ${3}${DEFAULT}<br>" >>${DOCTMP}/${1}:emulators.tmp
+}
+
+mk_system_doc() {
+  for system in $(ls ${DOCTMP}/ | awk 'BEGIN {FS=":"} {print $1}' | sort | uniq)
+  do
+    cat ${DOCTMP}/${system}:system.tmp >>${SYSDOC}.tmp
+    if [ -e "${DOCTMP}/${system}:emulators.tmp" ]
+    then
+      cat ${DOCTMP}/${system}:emulators.tmp >>${SYSDOC}.tmp
+    fi
+    echo "|" >>${SYSDOC}.tmp
+  done
+  cat ${SYSDOC}.tmp | sort -f >>${SYSDOC}.md
+  rm -f ${SYSDOC}.tmp
+}
+
+### Generate ES Systems
+
+clean_es_cache() {
+  ESTMP="${ROOT}/.es_cache/${DEVICE}"
+  if [ -d "${ESTMP}" ]
+  then
+    rm -rf "${ESTMP}"
+  fi
+}
+
+add_emu_core() {
+  if [ ! -d "${ESTMP}" ]
+  then
+    mkdir -p "${ESTMP}"
+  fi
+
+  # Schema: emulator|core|true/false
+  echo "${2}|${3}|${4}" >>${ESTMP}/${1}-emulators.tmp
+  add_emu_doc $*
+}
+
+mk_es_systems() {
+
+  cat <<EOF >${ESTMP}/.es_systems.cfg
+<?xml version="1.0" encoding="UTF-8"?>
+<systemList>
+EOF
+  rm -f ${ESTMP}/*-emulators.tmp
+  for essystem in $(ls ${ESTMP}/*.tmp | sort)
+  do
+    cat ${essystem} >>${ESTMP}/.es_systems.cfg
+  done
+  cat <<EOF >>${ESTMP}/.es_systems.cfg
+</systemList>
+EOF
+xmlstarlet fo -t ${ESTMP}/.es_systems.cfg >${ESTMP}/es_systems.cfg 2>/dev/null
+
+} 
+
+add_system_dir() {
+  if [ ! -d "${ESTMP}" ]
+  then
+    mkdir -p "${ESTMP}"
+  fi
+  cat <<EOF >>${ESTMP}/system-dirs.conf
+d	${1}			0777 root root - -
+EOF
+}
+
+add_es_system() {
+  RUNCMD='/usr/bin/runemu.sh %ROM% -P%SYSTEM% --core=%CORE% --emulator=%EMULATOR% --controllers="%CONTROLLERSCONFIG%"'
+  if [ -e "${ROOT}/config/emulators/${1}.conf" ]
+  then
+    . ${ROOT}/config/emulators/${1}.conf
+  fi
+
+  if [ ! -d "${ESTMP}" ]
+  then
+    mkdir -p "${ESTMP}"
+  fi
+  if [[ -z "${SYSTEM_COMMAND}" ]];
+  then
+    SYSTEM_COMMAND=$RUNCMD
+  fi
+  if [ ! -e "${ESTMP}/${SYSTEM_NAME}.tmp" ]
+  then
+    cat <<EOF >${ESTMP}/${SYSTEM_NAME}.tmp
+<system>
+	<name>${SYSTEM_NAME}</name>
+	<fullname>${SYSTEM_FULLNAME}</fullname>
+	<manufacturer>${SYSTEM_MANUFACTURER}</manufacturer>
+	<release>${SYSTEM_RELEASE}</release>
+	<hardware>${SYSTEM_HARDWARE}</hardware>
+	<path>${SYSTEM_PATH}</path>
+	<extension>${SYSTEM_EXTENSION}</extension>
+	<command>${SYSTEM_COMMAND}</command>
+	<platform>${SYSTEM_PLATFORM}</platform>
+	<theme>${SYSTEM_THEME}</theme>
+</system>
+EOF
+  fi
+
+  add_system_dir "${SYSTEM_PATH}"
+
+  if [ -e "${ESTMP}/${SYSTEM_NAME}-emulators.tmp" ]
+  then
+    while read -r line
+    do
+      SYSTEM_EMULATOR=$(echo ${line} | awk 'BEGIN {FS="|"} {print $1}')
+      SYSTEM_CORE=$(echo ${line} | awk 'BEGIN {FS="|"} {print $2}')
+      SYSTEM_DEFAULT=$(echo ${line} | awk 'BEGIN {FS="|"} {print $3}')
+
+      ### Check to see if we've already added an emulator key.
+      EMTEST=$(xmlstarlet sel -t -c "//system/emulators" ${ESTMP}/${SYSTEM_NAME}.tmp 2>/dev/null ||:)
+      if [ -z "${EMTEST}" ]
+      then
+        ### Add the emulator element
+        xmlstarlet ed --omit-decl --inplace \
+          -s "//system" -t elem -n "emulators" -v "" \
+          ${ESTMP}/${SYSTEM_NAME}.tmp 2>&1 >/dev/null
+      fi
+
+      ### Check to see if we've already added an emulator key.
+      EETEST=$(xmlstarlet sel -t -c "//system/emulators/emulator[@name=\"${SYSTEM_EMULATOR}\"]" ${ESTMP}/${SYSTEM_NAME}.tmp 2>/dev/null ||:)
+      if [ -z "${EETEST}" ]
+      then
+        ### Add the emulator element
+        xmlstarlet ed --omit-decl --inplace \
+          -s "//system/emulators" -t elem -n "emulator" -v "" \
+          ${ESTMP}/${SYSTEM_NAME}.tmp 2>&1 >/dev/null
+      fi
+
+      ### Add an attribute defining the emulator's name.
+      xmlstarlet ed --omit-decl --inplace \
+          -s "//system/emulators/emulator[not(@name)]" -t attr -n "name" -v "${SYSTEM_EMULATOR}" \
+          ${ESTMP}/${SYSTEM_NAME}.tmp 2>&1 >/dev/null
+
+      ### Check to see if we've already added a core element.
+      COTEST=$(xmlstarlet sel -t -c "//system/emulators/emulator[@name=\"${SYSTEM_EMULATOR}\"]/cores/core" ${ESTMP}/${SYSTEM_NAME}.tmp 2>/dev/null ||:)
+      if [ -z "${COTEST}" ]
+      then
+        xmlstarlet ed --omit-decl --inplace \
+            -s "//system/emulators/emulator[@name=\"${SYSTEM_EMULATOR}\"]" -t elem -n "cores" -v "" \
+            ${ESTMP}/${SYSTEM_NAME}.tmp 2>&1 >/dev/null
+      fi
+
+      ### Add each core.
+      xmlstarlet ed --omit-decl --inplace \
+          -s "//system/emulators/emulator[@name=\"${SYSTEM_EMULATOR}\"]/cores" -t elem -n "core" -v "${SYSTEM_CORE}" \
+          ${ESTMP}/${SYSTEM_NAME}.tmp 2>&1 >/dev/null
+
+      if [ "${SYSTEM_DEFAULT}" = "true" ]
+      then
+        ### Add an attribute defining the default core
+        xmlstarlet ed --omit-decl --inplace \
+            -i "//system/emulators/emulator[@name=\"${SYSTEM_EMULATOR}\"]/cores/core" -t attr -n "default" -v "true" \
+            ${ESTMP}/${SYSTEM_NAME}.tmp 2>&1 >/dev/null
+      fi
+    done <${ESTMP}/${SYSTEM_NAME}-emulators.tmp
+  fi
+  add_system_doc ${SYSTEM_NAME}
+}
+
+# config.xml parsing
+CONFIGXML="${PROJECT_DIR}/${PROJECT}/config.xml"
+
+SUBDEVICES=$(xmlstarlet sel -t -m "//archr/${DEVICE}/*[@mkimage_options]" -v "name()" -n "${CONFIGXML}" 2>/dev/null | tr '\n' ' ')
+
+get_kernel_make_extracmd() {
+  local DTB_PREFIX
+  DTB_PREFIX=$(xmlstarlet sel -t -v "//archr/${DEVICE}/@dtb_prefix" "${CONFIGXML}" 2>/dev/null)
+  DTB_PREFIX="${DTB_PREFIX}/"
+  xmlstarlet sel -t -m "//archr/${DEVICE}//file" -o "${DTB_PREFIX}" -v "." -o ".dtb " "${CONFIGXML}" 2>/dev/null
+}
+
+get_fdt() {
+  local FDT_FILENAME=""
+    
+  if [[ -n "${SUBDEVICE}" ]]; then
+    FDT_FILENAME=$(xmlstarlet sel -t -v "//archr/${DEVICE}/${SUBDEVICE}/@fdt" "${CONFIGXML}" 2>/dev/null || true)
+  fi
+
+  if [[ -z "${FDT_FILENAME}" ]]; then
+    FDT_FILENAME=$(xmlstarlet sel -t -v "//archr/${DEVICE}/@fdt" "${CONFIGXML}" 2>/dev/null || true)
+  fi
+    
+  [ -n "${FDT_FILENAME}" ] && echo "${FDT_FILENAME}" || true
+}
+
+get_fdt_type() {
+  local FDT_TYPE=""
+
+  if [[ -n "${SUBDEVICE}" ]]; then
+    FDT_TYPE=$(xmlstarlet sel -t -v "//archr/${DEVICE}/${SUBDEVICE}/@fdt_type" "${CONFIGXML}" 2>/dev/null)
+  fi
+
+  if [[ -z "${FDT_TYPE}" ]]; then
+    FDT_TYPE=$(xmlstarlet sel -t -v "//archr/${DEVICE}/@fdt_type" "${CONFIGXML}" 2>/dev/null)
+  fi
+
+  if [[ "${FDT_TYPE}" == "fdtdir" ]]; then
+    echo "FDTDIR"
+  else
+    echo "FDT"
+  fi
+}
+
+generate_grub_cfg_body() {
+  cat << EOF
+insmod part_gpt
+insmod part_msdos
+load_env
+
+if [ "\${saved_entry}" ]; then
+  set timeout=2
+  set default="\${saved_entry}"
+else
+  set timeout=-1
+fi
+
+if [ x"\${feature_menuentry_id}" = xy ]; then
+  menuentry_id_option="--id"
+else
+  menuentry_id_option=""
+fi
+export menuentry_id_option
+
+function savedefault {
+  saved_entry="\${chosen}"
+  save_env saved_entry
+}
+
+set timeout_style=menu
+set lang=en_US
+loadfont /boot/grub/dejavu-mono.pf2
+set rotation=270
+set gfxmode=auto
+insmod efi_gop
+insmod gfxterm
+terminal_output gfxterm
+set menu_color_normal=cyan/blue
+set menu_color_highlight=white/blue
+
+EOF
+
+  xmlstarlet sel -t -m "//archr/${DEVICE}/file" \
+    -v "concat(@short, '|', @full, '|', .)" -n "${CONFIGXML}" 2>/dev/null | while IFS='|' read -r SHORT FULL DTB; do
+
+  cat << EOF
+menuentry '${FULL}' \$menuentry_id_option '${SHORT}' {
+        savedefault
+        search --set -f /KERNEL
+        linux /KERNEL boot=LABEL=${DISTRO_BOOTLABEL} disk=LABEL=${DISTRO_DISKLABEL} grub_portable ${EXTRA_CMDLINE}
+        devicetree /boot/grub/${DTB}.dtb
+}
+EOF
+  done
+
+  xmlstarlet sel -t -m "//archr/${DEVICE}/file" \
+    -v "concat(@short, '|', @full, '|', .)" -n "${CONFIGXML}" 2>/dev/null | while IFS='|' read -r SHORT FULL DTB; do
+
+  cat << EOF
+menuentry '${FULL} RECOVERY' \$menuentry_id_option '${SHORT}-recovery' {
+        search --set -f /KERNEL
+        linux /KERNEL boot=LABEL=${DISTRO_BOOTLABEL} disk=LABEL=${DISTRO_DISKLABEL} grub_portable ${EXTRA_CMDLINE} recovery
+        devicetree /boot/grub/${DTB}.dtb
+}
+EOF
+  done
+}
+
+mkimage_all() {
+  local OPTIONS_LIST=""
+    
+  if [[ -n "${SUBDEVICE}" ]]; then
+    OPTIONS_LIST=$(xmlstarlet sel -t -v "//archr/${DEVICE}/${SUBDEVICE}/@mkimage_options" "${CONFIGXML}" 2>/dev/null)
+  fi
+
+  if [[ -z "${OPTIONS_LIST}" ]]; then
+    OPTIONS_LIST=$(xmlstarlet sel -t -v "//archr/${DEVICE}/@mkimage_options" "${CONFIGXML}" 2>/dev/null)
+  fi
+
+  for step in $(echo "${OPTIONS_LIST}" | tr ',' ' '); do
+    local func_name="mkimage_${step}"
+        
+    "${func_name}"
+  done
+}

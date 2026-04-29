@@ -1,0 +1,53 @@
+#!/usr/bin/bash
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 ArchR (https://github.com/archr-linux)
+#
+# pacman-init: Initialize pacman on first boot
+# Creates directory structure and initializes GPG keyring
+# Works offline using embedded Arch Linux ARM keys
+
+set -e
+
+PACMAN_ROOT="/storage/.pacman"
+
+echo "ArchR: Initializing pacman..."
+
+# Create pacman directory structure on /storage
+mkdir -p "${PACMAN_ROOT}/db/local"
+mkdir -p "${PACMAN_ROOT}/db/sync"
+mkdir -p "${PACMAN_ROOT}/cache"
+mkdir -p "${PACMAN_ROOT}/build"
+mkdir -p "${PACMAN_ROOT}/packages"
+mkdir -p "${PACMAN_ROOT}/sources"
+mkdir -p "${PACMAN_ROOT}/logs"
+
+echo "ArchR: Pacman directory structure created."
+
+# Initialize pacman GPG keyring
+if [ ! -d /etc/pacman.d/gnupg/trustdb.gpg ] || [ ! -s /etc/pacman.d/gnupg/trustdb.gpg ]; then
+  echo "ArchR: Initializing pacman keyring..."
+  pacman-key --init 2>/dev/null || true
+
+  # Populate with embedded Arch Linux ARM keys (offline, no network needed)
+  if [ -f /usr/share/pacman/keyrings/archlinuxarm.gpg ]; then
+    echo "ArchR: Populating keyring with Arch Linux ARM keys (offline)..."
+    pacman-key --populate archlinuxarm 2>/dev/null || true
+    echo "ArchR: Keyring populated successfully."
+  else
+    echo "ArchR: WARNING: archlinuxarm keyring not found at /usr/share/pacman/keyrings/"
+    echo "ArchR: Package signature verification may fail."
+  fi
+fi
+
+# Sync package databases if network is available
+if ping -c 1 -W 3 mirror.archlinuxarm.org >/dev/null 2>&1; then
+  echo "ArchR: Network available, syncing package databases..."
+  pacman -Sy --noconfirm 2>/dev/null || true
+else
+  echo "ArchR: Network unavailable, skipping database sync."
+  echo "ArchR: Run 'pacman -Sy' when online to sync databases."
+fi
+
+# Mark as initialized
+touch "${PACMAN_ROOT}/.initialized"
+echo "ArchR: Pacman initialization complete."

@@ -1,0 +1,15 @@
+[Unit]
+Description=ArchR user autostart script
+Before=autostart.service
+After=systemd-tmpfiles-setup.service
+RequiresMountsFor=/storage
+
+[Service]
+Type=oneshot
+Environment=HOME=/storage
+EnvironmentFile=/etc/profile
+ExecStart=/usr/bin/automount
+RemainAfterExit=yes
+
+[Install]
+WantedBy=archr.target

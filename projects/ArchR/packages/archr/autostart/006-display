@@ -1,0 +1,29 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2022-24 JELOS (https://github.com/JustEnoughLinuxOS)
+# Copyright (C) 2024-present ArchR (https://github.com/archr-linux/Arch-R)
+
+# Minimal OS variable loading for performance
+. /etc/profile.d/001-functions
+
+tocon "Configuring display..."
+
+BRIGHTNESS_1=$(get_setting display.brightness)
+DEFAULT_BRIGHTNESS="10"
+MIN_BRIGHTNESS="5"
+
+if [ -z "${BRIGHTNESS_1}" ] || [ "${BRIGHTNESS_1}" -lt "${MIN_BRIGHTNESS}" ]; then
+    BRIGHTNESS_1="${DEFAULT_BRIGHTNESS}"
+fi
+
+brightness set "${BRIGHTNESS_1}"
+
+BRIGHTNESS_2=$(get_setting display.brightness2)
+
+if [ -n "${BRIGHTNESS_2}" ]; then
+    if [ "${BRIGHTNESS_2}" -lt "${MIN_BRIGHTNESS}" ]; then
+        BRIGHTNESS_2="${DEFAULT_BRIGHTNESS}"
+    fi
+
+    brightness set 2 "${BRIGHTNESS_2}"
+fi

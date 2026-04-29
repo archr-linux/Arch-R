@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2009-2014 Stephan Raue (stephan@openelec.tv)
+# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+
+. /etc/os-release
+
+export HOME="/storage"
+export PATH="/usr/bin:/usr/sbin"
+export HOSTNAME=`cat /etc/hostname`
+export PS1='\[\e[1m\]\h:\[\e[1m\]\w \[\e[0m\]\$\[\e[0m\] '
+
+# Redirect requests for sudo to nowhere.
+alias sudo=''
+
+# Some convenient aliases from Ubuntu
+alias egrep='grep -E --color=auto'
+alias fgrep='grep -F --color=auto'
+alias grep='grep --color=auto'
+alias l='ls -CF'
+alias la='ls -A'
+alias ll='ls -alF'
+
+case "$TERM" in
+  linux|nxterm|screen)
+    ;;
+  "")
+    export TERM="linux"
+    ;;
+  *)
+    export TERM="xterm"
+    ;;
+esac

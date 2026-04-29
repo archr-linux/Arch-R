@@ -1,0 +1,12 @@
+[Unit]
+Description=LEDfix Service
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh /usr/bin/ledfix
+RemainAfterExit=yes
+StartLimitInterval=0
+
+[Install]
+WantedBy=multi-user.target

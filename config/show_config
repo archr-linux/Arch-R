@@ -1,0 +1,161 @@
+#!/bin/bash
+
+show_config() {
+  # load graphic configuration
+  get_graphicdrivers
+
+  dashes="==========================="
+  config_message="\n ${dashes}${dashes}${dashes}"
+  config_message+="\n Configuration for ${DISTRONAME} "
+  if [ "${OFFICIAL}" = "yes" ]; then
+    config_message+="(official)"
+  else
+    config_message+="(community)"
+  fi
+  config_message+="\n ${dashes}${dashes}${dashes}"
+
+  # Build options
+
+  config_message+="\n\n Buildsystem configuration:"
+  config_message+="\n ${dashes}${dashes}"
+
+  config_message+="\n - CPU:\t\t\t\t\t ${TARGET_CPU}"
+  config_message+="\n - Kernel Architecture:\t\t\t ${TARGET_KERNEL_ARCH}"
+  config_message+="\n - Userland Architecture:\t\t ${TARGET_ARCH}"
+  if [ -n "${TARGET_FLOAT}" ]; then
+    config_message+="\n - FLOAT:\t\t\t\t ${TARGET_FLOAT}"
+  fi
+  if [ -n "${TARGET_FPU}" ]; then
+    config_message+="\n - FPU:\t\t\t\t\t ${TARGET_FPU}"
+  fi
+  config_message+="\n - CPU features:\t\t\t ${TARGET_FEATURES}"
+  config_message+="\n - LTO (Link Time Optimization) support: ${LTO_SUPPORT}"
+  config_message+="\n - GOLD (Google Linker) Support:\t ${GOLD_SUPPORT}"
+  config_message+="\n - MOLD (Modern Linker) Support:\t ${MOLD_SUPPORT}"
+  config_message+="\n - Default Linker:\t\t\t ${DEFAULT_LINKER}"
+  config_message+="\n - Accelerated arm libc functions:\t ${ARM_MEM_SUPPORT}"
+  config_message+="\n - LLVM support:\t\t\t ${LLVM_SUPPORT}"
+  config_message+="\n - DEBUG:\t\t\t\t ${DEBUG:-no}"
+  config_message+="\n - CFLAGS:\t\t\t\t ${TARGET_CFLAGS}"
+  config_message+="\n - LDFLAGS:\t\t\t\t $(sed 's/^ *//' <<<${TARGET_LDFLAGS})"
+  config_message+="\n - Local Ccache:\t\t\t ${LOCAL_CCACHE:-no}"
+  config_message+="\n - CONFIG_SHELL:\t\t\t ${CONFIG_SHELL:-auto}"
+
+  # Misc. hardware configuration
+
+  config_message+="\n\n Misc. hardware configuration:"
+  config_message+="\n ${dashes}${dashes}"
+
+  config_message+="\n - ALSA support:\t\t\t ${ALSA_SUPPORT}"
+  config_message+="\n - Pulseaudio support:\t\t\t ${PULSEAUDIO_SUPPORT}"
+  config_message+="\n - Bluetooth support:\t\t\t ${BLUETOOTH_SUPPORT}"
+
+  for config_driver in ${ADDITIONAL_DRIVERS}; do
+    config_message+="\n - Include driver:\t\t\t ${config_driver}"
+  done
+
+  if [ "${DRIVER_ADDONS_SUPPORT}" = "yes" ]; then
+    for config_driver_addons in ${DRIVER_ADDONS}; do
+      config_message+="\n - Include driver add-ons:\t\t ${config_driver_addons}"
+    done
+  fi
+
+  for config_firmware in ${FIRMWARE}; do
+    config_message+="\n - Include firmware:\t\t\t ${config_firmware}"
+  done
+
+  # Image Filesystem
+
+  config_message+="\n\n Image Filesystems:"
+  config_message+="\n ${dashes}${dashes}"
+  config_message+="\n - Root Size (MiB): \t\t\t ${ROOT_SIZE}"
+  config_message+="\n - Storage Size (MiB): \t\t\t ${STORAGE_SIZE}"
+  config_message+="\n - Root Filesystem: \t\t\t ext4"
+
+  # Misc. Filesystems
+
+  config_message+="\n\n Misc. Filesystems:"
+  config_message+="\n ${dashes}${dashes}"
+
+  config_message+="\n - Swap Support:\t\t\t ${SWAP_SUPPORT}"
+  if [ "${SWAP_SUPPORT}" = "yes" ]; then
+    config_message+="\n   - Swapfile default size:\t\t ${SWAPFILESIZE}"
+  fi
+
+  # Network service configuration
+
+  config_message+="\n\n Network service configuration:"
+  config_message+="\n ${dashes}${dashes}"
+
+  config_message+="\n - Avahi (Zeroconf) support:\t\t ${AVAHI_DAEMON}"
+  config_message+="\n - NFS mounting support:\t\t ${NFS_SUPPORT}"
+  config_message+="\n - SAMBA mounting support:\t\t ${SAMBA_SUPPORT}"
+  config_message+="\n - SAMBA server support:\t\t ${SAMBA_SERVER}"
+  config_message+="\n - SFTP server support:\t\t\t ${SFTP_SERVER}"
+  config_message+="\n - OpenVPN support:\t\t\t ${OPENVPN_SUPPORT}"
+  config_message+="\n - WireGuard support:\t\t\t ${WIREGUARD_SUPPORT}"
+
+  # Graphic configuration
+
+  config_message+="\n\n Graphic configuration:"
+  config_message+="\n ${dashes}${dashes}"
+  config_message+="\n - Graphic Drivers:\t\t\t ${GRAPHIC_DRIVERS}"
+  config_message+="\n - Display Server:\t\t\t ${DISPLAYSERVER}"
+  if [ "${DISPLAYSERVER}" = "x11" ]; then
+    for drv in ${XORG_DRIVERS}; do
+      XORG_DRIVERS_CONFIG+="xf86-video-${drv} "
+    done
+    config_message+="\n - X.Org Graphic Drivers:\t\t ${XORG_DRIVERS_CONFIG}"
+    config_message+="\n - X.Org Composite support:\t\t ${COMPOSITE_SUPPORT}"
+  fi
+  config_message+="\n - Window Manager / Compositor:\t\t ${WINDOWMANAGER}"
+  config_message+="\n - OpenGL (GLX) support (provider):\t ${OPENGL_SUPPORT}"
+  [ "${OPENGL}" != "no" ] && config_message+=" (${OPENGL})"
+  config_message+="\n - OpenGL ES support (provider):\t ${OPENGLES_SUPPORT}"
+  [ "${OPENGLES}" != "no" ] && config_message+=" (${OPENGLES})"
+  config_message+="\n - Vulkan API support (provider):\t ${VULKAN_SUPPORT}"
+  [ "${VULKAN}" != "no" ] && config_message+=" (${VULKAN})"
+  if [ "${VULKAN_SUPPORT}" = "yes" ]; then
+    config_message+="\n - Vulkan Graphic Drivers:\t\t ${VULKAN_DRIVERS_CONFIG}"
+  fi
+
+  # Video Acceleration configuration
+
+  config_message+="\n\n Video Acceleration configuration:"
+  config_message+="\n ${dashes}${dashes}"
+  config_message+="\n - VA-API Support:\t\t\t ${VAAPI_SUPPORT}"
+  config_message+="\n - VDPAU Support:\t\t\t ${VDPAU_SUPPORT}"
+
+  # OS configuration
+
+  config_message+="\n\n OS configuration:"
+  config_message+="\n ${dashes}${dashes}"
+
+  config_message+="\n - OEM Support:\t\t\t\t ${OEM_SUPPORT}"
+  config_message+="\n - Default ROOT Password:\t\t ${ROOT_PASSWORD}"
+  config_message+="\n - Bootloader:\t\t\t\t ${BOOTLOADER}"
+  config_message+="\n - UDevil support:\t\t\t ${UDEVIL}"
+  config_message+="\n - Installer support:\t\t\t ${INSTALLER_SUPPORT}"
+  for config_package in ${ADDITIONAL_PACKAGES}; do
+    config_message+="\n - Include package:\t\t\t ${config_package}"
+  done
+
+  # Distribution specific configuration
+  # show_distro_config() should be included in one of:
+  #   $DISTRO/config/functions
+  #   $DISTRO/show_config
+
+  if [ -f distributions/${DISTRO}/show_config ]; then
+    . distributions/${DISTRO}/show_config
+  fi
+  if [ "$(type -t show_distro_config)" = "function" ]; then
+    show_distro_config
+  fi
+
+  config_message+="\n\n ${dashes}${dashes}${dashes}"
+  config_message+="\n End Configuration for ${DISTRONAME}"
+  config_message+="\n ${dashes}${dashes}${dashes}"
+  config_message+="\n\n\n"
+
+  echo -e "${config_message}"
+}

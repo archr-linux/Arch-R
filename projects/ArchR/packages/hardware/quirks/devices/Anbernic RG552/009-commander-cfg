@@ -1,0 +1,11 @@
+#!/bin/sh
+
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2025 ArchR (https://github.com/archr-linux/Arch-R)
+
+if [ ! -f "/storage/.config/commander.cfg" ]; then
+cat <<EOF >/storage/.config/commander.cfg
+disp_ppu_x=5
+disp_ppu_y=5
+EOF
+fi

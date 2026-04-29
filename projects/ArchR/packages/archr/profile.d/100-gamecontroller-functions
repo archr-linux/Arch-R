@@ -1,0 +1,157 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2024-present ArchR (https://github.com/archr-linux/Arch-R)
+
+# -- Helper functions --
+# Map the actual button/hat/axis - defaults to Nintendo layout mapping
+function map_input_control {
+  local INPUT_NAME=$1
+  local TYPE=$2
+  local ID=$3
+  local VALUE=$4
+
+  map_x_result=""
+  case "${INPUT_NAME}" in
+    "a")                TR_NAME="${ABUT:-a}";;
+    "b")                TR_NAME="${BBUT:-b}";;
+    "x")                TR_NAME="${XBUT:-x}";;
+    "y")                TR_NAME="${YBUT:-y}";;
+    "hotkeyenable")     TR_NAME="guide";;
+    "up")               TR_NAME="dpup";;
+    "down")             TR_NAME="dpdown";;
+    "left")             TR_NAME="dpleft";;
+    "right")            TR_NAME="dpright";;
+    "leftshoulder")     TR_NAME="${LEFTSHOULDER:-leftshoulder}";;
+    "leftthumb")        TR_NAME="leftstick";;
+    "lefttrigger")      TR_NAME="${LEFTTRIGGER:-lefttrigger}";;
+    "rightshoulder")    TR_NAME="${RIGHTSHOULDER:-rightshoulder}";;
+    "rightthumb")       TR_NAME="rightstick";;
+    "righttrigger")     TR_NAME="${RIGHTTRIGGER:-righttrigger}";;
+    "select")           TR_NAME="back";;
+    "start")            TR_NAME="start";;
+    "leftanalogup")     TR_NAME="-lefty";;
+    "leftanalogleft")   TR_NAME="-leftx";;
+    "leftanalogdown")   TR_NAME="+lefty";;
+    "leftanalogright")  TR_NAME="+leftx";;
+    "rightanalogup")    TR_NAME="-righty";;
+    "rightanalogleft")  TR_NAME="-rightx";;
+    "rightanalogdown")  TR_NAME="+righty";;
+    "rightanalogright") TR_NAME="+rightx";;
+    *)
+      return
+      ;;
+  esac
+
+  case "${TYPE}" in
+  "axis")
+    if (( $VALUE < 0 )); then
+      map_x_result="${TR_NAME}:${map_x_result}-a${ID},"
+    else
+      # Most (save for a few misbehaved children...) triggers are [0, 1] instead of [-1, 1]
+      # Shitty workaround for an emulationstation issue
+      if [[ $INPUT_NAME =~ .*"trigger" ]]; then
+        map_x_result="${TR_NAME}:${map_x_result}a${ID},"
+      else
+        map_x_result="${TR_NAME}:${map_x_result}+a${ID},"
+      fi
+    fi
+    ;;
+  "button")
+    map_x_result="${TR_NAME}:${map_x_result}b${ID},"
+    ;;
+  "hat")
+    map_x_result="${TR_NAME}:${map_x_result}h${ID}.${VALUE},"
+    ;;
+  *)
+    echo "Invalid entry ${TYPE}"
+    ;;
+  esac
+}
+
+function get_map_suffix {
+  map_suffix="platform:Linux,"
+}
+
+function get_map_prefix {
+  map_prefix="${GUID},${NAME},"
+}
+
+function build_connected_devices_es_input {
+  local ES_CONFIG=${1}
+  # Clean up any old files
+  rm -rf /tmp/es_input
+  rm -rf "${ES_CONFIG}"
+
+  # Dump connected device GUIDs
+  /usr/bin/list-guid > /tmp/list-guid
+
+  # Loop through connected device and extract ES xml mapping
+  mkdir /tmp/es_input
+  while read DGUID; do
+    if [ ! -z "$(cat /storage/.config/emulationstation/es_input.cfg | grep ${DGUID})" ]; then
+      cp -r /storage/.config/emulationstation/es_input.cfg /tmp/es_input/${DGUID}.xml
+      xmlstarlet ed --inplace -d  "inputList/inputConfig[@deviceGUID!='${DGUID}']" /tmp/es_input/${DGUID}.xml
+    fi
+  done </tmp/list-guid
+
+  # Combine mappings for each device
+  sed -i '/inputList/d' /tmp/es_input/*.xml
+  echo '<inputList>' > "${ES_CONFIG}"
+  grep -vh '</\?inputConfig>>\|<?xml' /tmp/es_input/*.xml >> "${ES_CONFIG}"
+  echo '</inputList>' >> "${ES_CONFIG}"
+}
+
+# Create a controller DB file for connected controllers witih mappings for desired layout
+function create_controller_db {
+  local CONTROLLER_LAYOUT="${1}"
+  local ES_CONFIG="${2}"
+  local CONTROLLER_DB="${3}";
+
+  # Create an ES input config file containing only connected controllers
+  build_connected_devices_es_input ${ES_CONFIG}
+
+  # Query controllers mapped in emulationstation, ignore devices without a GUID
+  local ES_QUERY="$(xmlstarlet sel -T -t -m "inputList/inputConfig[@deviceGUID!='']" -n -v "concat(@deviceName,';',@deviceGUID)" $ES_CONFIG)"
+  printf "# ${CONTROLLER_LAYOUT} layout\n" >> "${CONTROLLER_DB}"
+
+  echo "## ES Dev Mapper ##"
+  while IFS=";" read -r NAME GUID; do
+    echo "$NAME :: $GUID"
+    # Ignore keyboards
+    if [[ "${GUID}" == -1 ]]; then
+      continue
+    fi
+
+      # Query this specific GUID on the mappings
+      local MAPPING_CFG=$(xmlstarlet sel -T -t -m "//inputConfig[@deviceGUID = '${GUID}']/input" -n -v "concat(@name,';',@type,';',@id,';',@value)" $ES_CONFIG)
+
+      # Grab the 'hotkeyenable' and 'select' button mappings to use later
+      unset HOTKEYENABLE_BUTTON
+      unset SELECT_BUTTON
+
+      while IFS=";" read -r -e INPUT_NAME TYPE ID VALUE; do
+        [ ${INPUT_NAME} == "hotkeyenable" ] && HOTKEYENABLE_BUTTON="${ID}"
+        [ ${INPUT_NAME} == "select" ] && SELECT_BUTTON="${ID}"
+      done <<< ${MAPPING_CFG:1}
+
+      local MAPPING=""
+      while IFS=";" read -r -e INPUT_NAME TYPE ID VALUE; do
+        # Map the controller - skip 'hotkeyenable' if it is the same as 'select'
+        if [ ${INPUT_NAME} == "hotkeyenable" -a ${HOTKEYENABLE_BUTTON} == ${SELECT_BUTTON} ]; then
+          echo "Skipping 'hotkeyenable', same mapping as 'select'"
+        else
+          map_input_control "${INPUT_NAME}" "${TYPE}" "${ID}" "${VALUE}"
+
+          # Only concatenate valid mappings
+          if [[ ! -z ${map_x_result} ]]; then
+            MAPPING="${MAPPING}${map_x_result}"
+          fi
+        fi
+      done <<< ${MAPPING_CFG:1}
+
+      get_map_prefix
+      get_map_suffix
+      if [[ ! -z "${MAPPING}" ]]; then
+        echo "${map_prefix}${MAPPING}${map_suffix}" >> "${CONTROLLER_DB}"
+      fi
+  done <<< ${ES_QUERY:1}
+}

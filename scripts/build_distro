@@ -1,0 +1,103 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2024-present ArchR (https://github.com/archr-linux/Arch-R)
+
+###
+### Simple script to build ROCKNX
+###
+
+set -e
+
+# Export OFFICIAL so it reaches scripts/image via make
+[ -n "${OFFICIAL}" ] && export OFFICIAL
+
+scripts/checkdeps
+
+if [ -z "${ARCH}" ]; then
+  echo "Please export ARCH before building."
+  exit 1
+fi
+
+. config/options ""
+. projects/${PROJECT}/devices/${DEVICE}/options
+
+echo "Building ${DISTRO} for ${DEVICE}"
+
+# Collect packages to clean
+PKG_CLEAN=""
+
+if [ "${ENABLE_32BIT}" == "true" ]; then
+  PKG_CLEAN+=" ${CLEAN_EMU_32BIT}"
+fi
+
+if [ "${WINDOWMANAGER}" == "weston" ]; then
+  PKG_CLEAN+=" ${CLEAN_WESTON}"
+fi
+
+# Handle DEVICE_ROOT logic
+if [ -n "${DEVICE_ROOT}" ]; then
+  if [ "${DEVICE_ROOT}" != "${DEVICE}" ]; then
+    # Remove existing build directory if present
+    if [ -d "build.${DISTRO}-${DEVICE}.${ARCH}" ]; then
+      echo "Removing stale build root."
+      rm -rf build.${DISTRO}-${DEVICE}.${ARCH}
+    fi
+
+    # Ensure DEVICE_ROOT is built before DEVICE
+    if [ ! -d "build.${DISTRO}-${DEVICE_ROOT}.${ARCH}" ]; then
+      echo "ERROR: Can't find build root build.${DISTRO}-${DEVICE_ROOT}.${ARCH}"
+      echo "You need to build ${DEVICE_ROOT} before ${DEVICE}"
+      exit 1
+    fi
+
+    # Link build directory to DEVICE_ROOT
+    if [ ! -L "build.${DISTRO}-${DEVICE}.${ARCH}" ]; then
+      ln -sf build.${DISTRO}-${DEVICE_ROOT}.${ARCH} build.${DISTRO}-${DEVICE}.${ARCH}
+    fi
+
+    # Link sources if necessary
+    if [ -d "sources-${DEVICE_ROOT}" ] && [ ! -L "sources-${DEVICE}" ]; then
+      ln -sf sources-${DEVICE_ROOT} sources-${DEVICE}
+    fi
+  fi
+  PKG_CLEAN+=" ${CLEAN_DEVICE_ROOT}"
+fi
+
+# Add standard packages to clean
+PKG_CLEAN+=" ${CLEAN_NETWORK} ${CLEAN_OS_BASE} ${CLEAN_PACKAGES}"
+
+if [ -z "${DIRTY}" ]; then
+  # Clean packages to ensure build date and version are updated
+  for package in ${PKG_CLEAN}; do
+    echo "Clean: ${package}"
+    ./scripts/clean "${package}" 2>/dev/null || true
+  done
+  rm -rf build.${DISTRO}-${DEVICE_ROOT}.${ARCH}/{.stamps/initramfs,initramfs}
+fi
+
+# Prune old releases
+echo "Prune old releases: ${DISTRO}-${DEVICE}.${ARCH}-*"
+rm -f ./release/${DISTRO}-${DEVICE}.${ARCH}-*
+rm -f ./target/${DISTRO}-${DEVICE}.${ARCH}-*
+
+# Remove image root
+rm -rf ./build.${DISTRO}-${DEVICE}.${ARCH}/image
+
+case "${ARCH}" in
+  arm)
+    if [ "${BASE_ONLY}" == "true" ] || [ "${ENABLE_32BIT}" != "true" ]; then
+      exit 0
+    fi
+    export PKG_BUILD_PERF=no
+    scripts/build_compat arm
+    scripts/install arm
+    ;;
+  *)
+    make image
+    ;;
+esac
+
+if [ $? -ne 0 ]; then
+  echo "Build failed..exiting."
+  exit 1
+fi

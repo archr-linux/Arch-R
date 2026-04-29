@@ -1,0 +1,105 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+
+TMPFILE=$(uuidgen)
+OUTFILE=$(uuidgen)
+
+CONTROLLER=$(control-gen | awk 'BEGIN {FS="\""} /^DEVICE/ {print $2;exit}')
+xmlstarlet sel -t \
+               -m "/inputList/inputConfig[@deviceGUID='${CONTROLLER}']/input" \
+               -v "concat(@name,'|',@type,'|',@id,'|',@value)" \
+               -n /storage/.config/emulationstation/es_input.cfg >/tmp/${TMPFILE}
+
+while read -r line
+do
+  BTN=$(echo ${line} | awk 'BEGIN { FS="|" } {print $1}')
+  TYPE=$(echo ${line} | awk 'BEGIN { FS="|" } {print $2}')
+  ID=$(echo ${line} | awk 'BEGIN {FS="|" } {print $3}')
+  VALUE=$(echo ${line} | awk 'BEGIN { FS="|" } {print $4}')
+  if [ "${TYPE}" == "axis" ]
+  then
+    if [[ "${VALUE}" =~ ^[0-9] ]]
+    then
+      ID="${ID}+"
+    else
+      ID="${ID}-"
+    fi
+  elif [ "${TYPE}" == "hat" ]
+  then
+    ID="h${ID}${BTN}"
+  fi
+  if [[ ${BTN} == "pagedown" ]]
+  then
+    BTN="leftshoulder"
+  elif [[ ${BTN} == "pageup" ]]
+  then
+    BTN="rightshoulder"
+  elif [[ ${BTN} == "l2" ]]
+  then
+    BTN="lefttrigger"
+  elif [[ ${BTN} == "r2" ]]
+  then
+    BTN="righttrigger"
+  elif [[ ${BTN} == "l3" ]]
+  then
+    BTN="leftthumb"
+  elif [[ ${BTN} == "r3" ]]
+  then
+    BTN="rightthumb"
+  fi
+  echo "${BTN}=${ID}" >>/tmp/${OUTFILE}
+done < /tmp/${TMPFILE}
+
+rm -f /tmp/${TMPFILE}
+
+source /tmp/${OUTFILE}
+
+# For analog triggers assume negative direction is the same axis opposite sign
+if [ "${lefttrigger: -1}" = "-" ]; then
+  lefttriggerminus="${lefttrigger:: -1}+"
+elif [[ "${lefttrigger: -1}" = "+" ]]; then
+  lefttriggerminus="${lefttrigger:: -1}-"
+else
+  lefttriggerminus=""
+fi
+if [ "${righttrigger: -1}" = "-" ]; then
+  righttriggerminus="${righttrigger:: -1}+"
+elif [ "${righttrigger: -1}" = "+" ]; then
+  righttriggerminus="${righttrigger:: -1}-"
+else
+  righttriggerminus=""
+fi
+
+cat <<EOF >/storage/.config/profile.d/098-controller
+DEVICE_BTN_SOUTH="${b}"
+DEVICE_BTN_EAST="${a}"
+DEVICE_BTN_NORTH="${x}"
+DEVICE_BTN_WEST="${y}"
+DEVICE_BTN_TL="${leftshoulder}"
+DEVICE_BTN_TR="${rightshoulder}"
+DEVICE_BTN_TL2="${lefttrigger}"
+DEVICE_BTN_TR2="${righttrigger}"
+DEVICE_BTN_TL2_MINUS="${lefttriggerminus}"
+DEVICE_BTN_TR2_MINUS="${righttriggerminus}"
+DEVICE_BTN_SELECT="${select}"
+DEVICE_BTN_START="${start}"
+DEVICE_BTN_MODE="${hotkeyenable}"
+DEVICE_BTN_THUMBL="${leftthumb}"
+DEVICE_BTN_THUMBR="${rightthumb}"
+DEVICE_BTN_DPAD_UP="${up}"
+DEVICE_BTN_DPAD_DOWN="${down}"
+DEVICE_BTN_DPAD_LEFT="${left}"
+DEVICE_BTN_DPAD_RIGHT="${right}"
+DEVICE_BTN_AL_DOWN="${leftanalogdown}"
+DEVICE_BTN_AL_UP="${leftanalogup}"
+DEVICE_BTN_AL_LEFT="${leftanalogleft}"
+DEVICE_BTN_AL_RIGHT="${leftanalogright}"
+DEVICE_BTN_AR_DOWN="${rightanalogdown}"
+DEVICE_BTN_AR_UP="${rightanalogup}"
+DEVICE_BTN_AR_LEFT="${rightanalogleft}"
+DEVICE_BTN_AR_RIGHT="${rightanalogright}"
+EOF
+
+rm /tmp/${OUTFILE}
+

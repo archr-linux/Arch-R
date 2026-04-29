@@ -1,0 +1,18 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+
+if [ -z "${QUIRK_DEVICE}" ] || [ -z "${HW_DEVICE}" ]; then
+  . /etc/profile
+fi
+
+###
+### LED Control now redirects to the quirk device or platform /bin/ledcontrol
+### so we don't need to have multiple variants in /usr/bin.
+###
+
+if [ -f "/usr/lib/autostart/quirks/devices/${QUIRK_DEVICE}/bin/ledcontrol" ]; then
+  exec "/usr/lib/autostart/quirks/devices/${QUIRK_DEVICE}/bin/ledcontrol" $*
+elif [ -f "/usr/lib/autostart/quirks/platforms/${HW_DEVICE}/bin/ledcontrol" ]; then
+  exec "/usr/lib/autostart/quirks/platforms/${HW_DEVICE}/bin/ledcontrol" $*
+fi

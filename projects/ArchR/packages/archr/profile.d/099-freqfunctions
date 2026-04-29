@@ -1,0 +1,248 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+
+. /etc/os-release
+
+# Need GPU_FREQ var
+GOVERNORS="/storage/.config/profile.d/010-governors"
+[[ -f ${GOVERNORS} ]] && source ${GOVERNORS}
+
+get_threads() {
+  for THREAD in $(seq 1 1 $(find /sys/devices/system/cpu -name online | wc -l)) all default; do
+    echo ${THREAD}
+  done
+}
+
+set_online_threads() {
+  AVAILABLE_THREADS=$(($(find /sys/devices/system/cpu -name online | wc -l) - 1))
+  MODE=${2}
+  if [ -z "${MODE}" ]; then
+    MODE=0
+  fi
+  case ${1} in
+    default)
+      return
+      ;;
+    all)
+      THREADS=0
+      MODE="1"
+      ;;
+    0)
+      THREADS=1
+      ;;
+    *)
+      THREADS=${1}
+      ;;
+  esac
+
+  for thread in $(seq 0 1 ${THREADS}); do
+    echo 1  | tee /sys/devices/system/cpu/cpu${thread}/online >/dev/null 2>&1
+  done
+
+  for thread in $(seq ${THREADS} 1 ${AVAILABLE_THREADS}); do
+    echo ${MODE} | tee /sys/devices/system/cpu/cpu${thread}/online >/dev/null 2>&1
+  done
+}
+
+set_cpu_gov() {
+  for POLICY in $(ls /sys/devices/system/cpu/cpufreq 2>/dev/null | grep policy[0-9]); do
+    if [ -e "/sys/devices/system/cpu/cpufreq/${POLICY}/scaling_governor" ]; then
+      echo $1 >/sys/devices/system/cpu/cpufreq/${POLICY}/scaling_governor 2>/dev/null
+    fi
+  done
+}
+
+# Toggle the CPU turbo OPP. On RK3326 the 1512 MHz OPP is marked
+# turbo-mode in the DT, which means cpufreq-dt excludes it from the
+# regular ladder until cpufreq/boost=1. Without this the ondemand and
+# performance governors top out at 1416 MHz, regardless of how the
+# floor is pinned.
+set_cpu_boost() {
+  [ -e /sys/devices/system/cpu/cpufreq/boost ] || return
+  case ${1} in
+    on|1)  echo 1 >/sys/devices/system/cpu/cpufreq/boost 2>/dev/null ;;
+    off|0) echo 0 >/sys/devices/system/cpu/cpufreq/boost 2>/dev/null ;;
+  esac
+}
+
+# Pin CPU max_freq across all policies to the highest available OPP.
+# Turbo OPPs (DT `turbo-mode`) live in scaling_boost_frequencies, NOT in
+# scaling_available_frequencies, even after cpufreq/boost=1. Combine
+# both so "highest" really hits 1512 MHz on RK3326 when the user's
+# turbo switch is on, and naturally falls back to 1416 when off (boost
+# file then reports an empty list).
+set_cpu_max_freq() {
+  for POLICY in /sys/devices/system/cpu/cpufreq/policy[0-9]*; do
+    [ -e "${POLICY}/scaling_max_freq" ] || continue
+    [ -e "${POLICY}/scaling_available_frequencies" ] || continue
+
+    local target=""
+    case ${1} in
+      highest)
+        target=$( {
+          cat "${POLICY}/scaling_available_frequencies" 2>/dev/null
+          cat "${POLICY}/scaling_boost_frequencies" 2>/dev/null
+        } | tr ' ' '\n' | grep -E '^[0-9]+$' | sort -n | tail -n1)
+        ;;
+      *)
+        target=${1}
+        ;;
+    esac
+
+    [ -n "${target}" ] && echo "${target}" >"${POLICY}/scaling_max_freq" 2>/dev/null
+  done
+}
+
+set_cpu_min_freq() {
+  for POLICY in /sys/devices/system/cpu/cpufreq/policy[0-9]*; do
+    [ -e "${POLICY}/scaling_min_freq" ] || continue
+    [ -e "${POLICY}/scaling_available_frequencies" ] || continue
+
+    local target=""
+    case ${1} in
+      highest)
+        target=$( {
+          cat "${POLICY}/scaling_available_frequencies" 2>/dev/null
+          cat "${POLICY}/scaling_boost_frequencies" 2>/dev/null
+        } | tr ' ' '\n' | grep -E '^[0-9]+$' | sort -n | tail -n1)
+        ;;
+      lowest)
+        target=$(tr ' ' '\n' <"${POLICY}/scaling_available_frequencies" | grep -E '^[0-9]+$' | sort -n | head -n1)
+        ;;
+      *)
+        target=${1}
+        ;;
+    esac
+
+    [ -n "${target}" ] && echo "${target}" >"${POLICY}/scaling_min_freq" 2>/dev/null
+  done
+}
+
+set_dmc_gov() {
+  if [ -e "${DMC_FREQ}/governor" ]; then
+    for governor in $1 dmc_$1 simple_$1; do
+      echo ${governor} >${DMC_FREQ}/governor 2>/dev/null
+      if [ "$?" = 0 ]; then
+        return
+      fi
+   done
+  fi
+}
+
+set_gpu_gov() {
+  if [ -e "${GPU_FREQ}/governor" ]; then
+    for governor in $1 dmc_$1 simple_$1; do
+      echo ${governor} >${GPU_FREQ}/governor 2>/dev/null
+      if [ "$?" = 0 ]; then
+        return
+      fi
+   done
+  fi
+}
+
+# Pin GPU min_freq to floor a workload at a given OPP. Without this, devfreq
+# can sit at 200/300 MHz at the start of a frame and miss vsync; ROCKNIX
+# achieves a similar effect by exposing only one OPP in DT. We do it at
+# runtime so suspend/idle can still drop to low OPPs.
+set_gpu_min_freq() {
+  [ -e "${GPU_FREQ}/min_freq" ] || return
+  [ -e "${GPU_FREQ}/available_frequencies" ] || return
+
+  local target=""
+  case ${1} in
+    highest)
+      target=$(tr ' ' '\n' <"${GPU_FREQ}/available_frequencies" | sort -n | tail -n1)
+      ;;
+    lowest)
+      target=$(tr ' ' '\n' <"${GPU_FREQ}/available_frequencies" | sort -n | head -n1)
+      ;;
+    *)
+      target=${1}
+      ;;
+  esac
+
+  [ -n "${target}" ] && echo "${target}" >"${GPU_FREQ}/min_freq" 2>/dev/null
+}
+
+onlinethreads() {
+  set_online_threads ${1} ${2}
+}
+
+# Restore the user-configured boost setting. Idle/menu paths call this so
+# that turning the device's "Turbo Mode" toggle off in the UI is honored
+# outside gameplay; gameplay always overrides it on for the duration of
+# the run.
+restore_cpu_boost() {
+  local TURBO_SETTING
+  TURBO_SETTING=$(get_setting "enable.turbo-mode" 2>/dev/null)
+  case ${TURBO_SETTING} in
+    1) set_cpu_boost on ;;
+    *) set_cpu_boost off ;;
+  esac
+}
+
+performance() {
+  # Honor the user's "Enable CPU Overclock" switch from ES even during
+  # gameplay: gameplay shouldn't silently enable turbo behind the user's
+  # back. If they want the 1512 MHz OPP, they toggle it on; if they
+  # prefer to stay at 1416 MHz for thermals/battery, gameplay respects
+  # that. set_cpu_max_freq highest then pins to the highest currently
+  # available frequency (1512 if boost on, 1416 if off).
+  restore_cpu_boost
+  set_cpu_gov performance
+  set_cpu_max_freq highest
+  set_dmc_gov performance
+}
+
+ondemand() {
+  restore_cpu_boost
+  set_cpu_gov ondemand
+  set_dmc_gov ondemand
+  # Tune ondemand: stay at high freq longer, reduce switching overhead
+  for POLICY in $(ls /sys/devices/system/cpu/cpufreq 2>/dev/null | grep policy[0-9]); do
+    local ONDEMAND="/sys/devices/system/cpu/cpufreq/${POLICY}/ondemand"
+    if [ -d "${ONDEMAND}" ]; then
+      echo 85 > ${ONDEMAND}/up_threshold 2>/dev/null
+      echo 150 > ${ONDEMAND}/sampling_down_factor 2>/dev/null
+    fi
+  done
+}
+
+schedutil() {
+  restore_cpu_boost
+  set_cpu_gov schedutil
+  set_dmc_gov ondemand
+}
+
+powersave() {
+  set_cpu_gov powersave
+  set_dmc_gov powersave
+}
+
+get_gpu_performance_level() {
+  get_setting system.gpuperf
+}
+
+gpu_performance_level() {
+  case ${1} in
+    auto|default)
+      # Restore governor; do NOT lower min_freq here. Direct min_freq writes
+      # at game exit (especially while Panfrost is mid-teardown of the GL
+      # context) caused immediate kernel reboots on R36S V22 boards. Governor
+      # ondemand naturally drops cur_freq when idle, which is enough.
+      set_gpu_gov ondemand
+      ;;
+    performance)
+      set_gpu_gov performance
+      set_gpu_min_freq highest
+      ;;
+    *)
+      set_gpu_gov ${1}
+      ;;
+  esac
+}
+
+get_available_gpu_governors() {
+  echo "default"; tr " " "\n" < $GPU_FREQ/available_governors | grep \[a-z\]
+}

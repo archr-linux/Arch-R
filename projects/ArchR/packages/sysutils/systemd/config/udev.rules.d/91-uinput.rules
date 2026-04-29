@@ -1,0 +1,6 @@
+# PortMaster ports use gptokeyb to remap controller input to keyboard
+# events; gptokeyb writes to /dev/uinput. Some ports also chmod 0666
+# the device themselves, but they only succeed when invoked as root.
+# ArchR runs ports under the "archr" user, so set the permission
+# globally at hotplug time.
+KERNEL=="uinput", MODE="0666", OPTIONS+="static_node=uinput"

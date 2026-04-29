@@ -1,0 +1,60 @@
+# Cloud Sync Rules - Default Configuration
+#
+# These rules determine which files are included/excluded during cloud sync operations.
+# The syntax follows the same pattern as .gitignore, where:
+#   + pattern = explicitly include matching files/directories
+#   - pattern = explicitly exclude matching files/directories
+#
+# Rules are processed in order, with later rules overriding earlier ones.
+# Using /** matches files recursively through all subdirectories.
+
+# Start by explicitly including directories we want to fully backup
++ /savefiles/**
++ /savestates/**
++ /screenshots/**
+
+# Include specific save file types across all directories
++ /**/*.srm
++ /**/*.sav
++ /**/*.fs
++ /**/*.state*
++ /**/*.auto
++ /**/*.dsv*
+
+# Include system-specific save directories
++ /n64/save/*.eep
++ /n64/save/*.mpk
++ /n64/save/*.sra
++ /n64/save/*.srm
++ /psx/memcards/*.mcd
++ /psx/memcards/*.mcr
++ /dc/shared/savefiles/**
++ /psp/PPSSPP/**
+
+# Backup files
++ /backup/*.zip
+
+# Specifically exclude directories that should never be backed up
+- /roms/**
+- /bios/**
+- /downloads/**
+- /.cache/**
+- /images/**
+- /manuals/**
+- /videos/**
+- /themes/**
+- /**/*.bin
+- /**/*.iso
+- /**/*.img
+- /**/*.rom
+- /**/*.zip
+- /**/*.7z
+- /**/*.chd
+- /**/*.dol
+- /**/*.elf
+
+# Exclude XML files (like gamelist.xml) by default
+- /**/*.xml
+
+# Exclude everything else not explicitly included above
+- /**

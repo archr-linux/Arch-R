@@ -1,0 +1,5 @@
+ACTION=="add|change", KERNEL=="mmcblk[0-9]*", ATTR{queue/scheduler}="bfq"
+ACTION=="add|change", KERNEL=="mmcblk[0-9]*", ATTR{queue/iosched/low_latency}="1"
+ACTION=="add|change", KERNEL=="mmcblk[0-9]*", ATTR{queue/read_ahead_kb}="2048"
+ACTION=="add|change", KERNEL=="mmcblk[0-9]*", ATTR{queue/nr_requests}="128"
+ACTION=="add|change", KERNEL=="mmcblk[0-9]*", ATTR{queue/rq_affinity}="2"

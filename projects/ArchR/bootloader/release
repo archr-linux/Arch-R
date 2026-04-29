@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2024-present ArchR (https://github.com/archr-linux/Arch-R)
+
+mkdir -p ${RELEASE_DIR}/3rdparty/bootloader
+  cp -a ${INSTALL}/usr/share/bootloader/* ${RELEASE_DIR}/3rdparty/bootloader

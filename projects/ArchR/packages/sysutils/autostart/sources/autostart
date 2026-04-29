@@ -1,0 +1,145 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+
+. /etc/os-release
+
+BOOTLOG="/var/log/boot.log"
+# Persistent boot trace lives on /storage so that an interrupted boot
+# (hung autostart, kernel crash, manual reset) survives across the
+# reboot. The current script being run is written to .boot_last_step
+# *before* execution, then erased on success. If the file still exists
+# at the start of the next boot, the previous run hung on that script
+# — copy it to .boot_last_hang so it survives even after a clean boot
+# overwrites the marker.
+BOOT_LAST_STEP="/storage/.boot_last_step"
+
+log() {
+  echo "$(date): Autostart: $*" >>${BOOTLOG} 2>&1
+}
+
+trace_step() {
+  # Only attempt to write once /storage is mountable; quirks that run
+  # before automount don't touch this and that's fine — the kernel
+  # boot stage prior to /storage is already covered by dmesg.
+  echo "$1" >${BOOT_LAST_STEP} 2>/dev/null
+}
+
+trace_done() {
+  rm -f ${BOOT_LAST_STEP} 2>/dev/null
+}
+
+# If the previous boot hung, preserve a copy before we overwrite the
+# marker on this boot. Read it back later with:
+#   cat /storage/.boot_last_hang
+if [ -f "${BOOT_LAST_STEP}" ]; then
+  cp -f "${BOOT_LAST_STEP}" /storage/.boot_last_hang 2>/dev/null
+  log "Previous boot hung at: $(cat ${BOOT_LAST_STEP} 2>/dev/null)"
+fi
+
+performance 2>/dev/null
+
+### Fix permissions for non-root brightness and CPU boost control
+chmod 0666 /sys/class/backlight/*/brightness 2>/dev/null
+chmod 0666 /sys/devices/system/cpu/cpufreq/boost 2>/dev/null
+
+### Disable rumble motor on boot (prevents vibration on boards where PWM0 defaults high)
+if [ -d /sys/class/pwm/pwmchip0 ]; then
+  echo 0 > /sys/class/pwm/pwmchip0/export 2>/dev/null
+  echo 0 > /sys/class/pwm/pwmchip0/pwm0/duty_cycle 2>/dev/null
+  echo 0 > /sys/class/pwm/pwmchip0/pwm0/enable 2>/dev/null
+fi
+
+### Load platform specific quirks
+if [ -d "/usr/lib/autostart/quirks/platforms/${HW_DEVICE}" ]
+then
+  log "Run ${HW_DEVICE} quirks."
+  tocon "Applying ${HW_DEVICE} quirks..."
+  for script in "/usr/lib/autostart/quirks/platforms/${HW_DEVICE}"/*
+  do
+    log "Run ${script}"
+    trace_step "platform-quirk:${script}"
+    if [ -f "${script}" ]
+    then
+      "${script}" 2>&1 >>${BOOTLOG}
+    fi
+  done
+fi
+
+### Load device specific quirks
+if [ -d "/usr/lib/autostart/quirks/devices/${QUIRK_DEVICE}" ]
+then
+  log "Run ${QUIRK_DEVICE} quirks."
+  tocon "Applying ${QUIRK_DEVICE} quirks..."
+  for script in "/usr/lib/autostart/quirks/devices/${QUIRK_DEVICE}"/*
+  do
+    log "Run ${script}"
+    trace_step "device-quirk:${script}"
+    if [ -f "${script}" ]
+    then
+      "${script}" 2>&1 >>${BOOTLOG}
+    fi
+  done
+fi
+
+### Start the automount service
+trace_step "archr-automount"
+tocon "Starting storage services..."
+systemctl start archr-automount
+
+### Run common start scripts
+for script in /usr/lib/autostart/common/*
+do
+  log "Run ${script}"
+  trace_step "common:${script}"
+  ${script} 2>&1 >>${BOOTLOG}
+done
+wait
+
+### Run device start scripts
+if [ -d "/usr/lib/autostart/${HW_DEVICE}" ]
+then
+  for script in "/usr/lib/autostart/${HW_DEVICE}"/*
+  do
+    log "Run ${script}"
+    trace_step "device:${script}"
+    if [ -f "${script}" ]
+    then
+      "${script}" 2>&1 >>${BOOTLOG}
+    fi
+  done
+fi
+
+### Run custom start scripts
+if [ -d "/storage/.config/autostart" ]
+then
+  for script in /storage/.config/autostart/*
+  do
+    log "Run ${script}"
+    trace_step "custom:${script}"
+   ${script} 2>&1 >>${BOOTLOG}
+  done
+fi
+wait
+
+tocon "Starting user interface..."
+log "Startup complete..."
+
+### Re-source the profile so we fetch the correct UI_SERVICE variable.
+. /etc/profile
+
+### Lock is a prerequisite for emustation
+rm /var/lock/start.games 2>&1 >>${BOOTLOG}
+touch /var/lock/start.games 2>&1 >>${BOOTLOG}
+log "Starting ${UI_SERVICE}..."
+systemctl start ${UI_SERVICE} 2>&1 >>${BOOTLOG} &
+
+DEVICE_CPU_GOVERNOR=$(get_setting system.cpugovernor)
+${DEVICE_CPU_GOVERNOR} 2>&1 >>${BOOTLOG}
+log "Autostart complete..."
+
+# Boot reached the end without hanging — clear the marker so the next
+# boot doesn't think the previous one failed.
+trace_done
+
+clear >/dev/console

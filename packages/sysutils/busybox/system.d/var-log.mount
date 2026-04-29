@@ -1,0 +1,15 @@
+[Unit]
+Description=Persistent Log Storage
+RequiresMountsFor=/var /storage
+Requires=storage-log.service
+After=storage-log.service
+DefaultDependencies=no
+ConditionKernelCommandLine=!installer
+ConditionKernelCommandLine=|debugging
+ConditionPathExists=|/storage/.cache/debug.archr
+ConditionPathExists=|/storage/.cache/journald.conf.d/00_settings.conf
+
+[Mount]
+What=/storage/.cache/log
+Where=/var/log
+Options=bind

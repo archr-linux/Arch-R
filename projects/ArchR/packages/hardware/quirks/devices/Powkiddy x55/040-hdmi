@@ -1,0 +1,20 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+
+hdmi_con() {
+  if [ -f "/sys/class/extcon/hdmi/state" ]
+  then
+    HDMI="$(cat /sys/class/extcon/hdmi/state)"
+    if [ "${HDMI}" = "HDMI=1" ]
+    then
+      if [ -f "/sys/devices/virtual/graphics/fbcon/rotate" ]
+      then
+        echo 0 >/sys/devices/virtual/graphics/fbcon/rotate
+      fi
+    fi
+  fi
+}
+
+### If hdmi is connected, set the framebuffer rotation back to normal.
+hdmi_con

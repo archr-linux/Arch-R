@@ -1,0 +1,11 @@
+#!/bin/bash
+
+# Minimal OS variable loading for performance
+. /etc/profile.d/001-functions
+
+(
+  if [ "$(get_setting controllers.bluetooth.enabled)" == "1" ]; then
+    tocon "Starting bluetooth..."
+    nohup /usr/bin/archr-bluetooth enable &
+  fi
+) &

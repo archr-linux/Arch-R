@@ -1,0 +1,14 @@
+[Unit]
+Description=Shaders directory RetroArch
+After=systemd-tmpfiles-setup.service
+RequiresMountsFor=/storage
+DefaultDependencies=no
+
+[Mount]
+What=none
+Where=/tmp/shaders
+Type=overlay
+Options=lowerdir=/usr/share/common-shaders:/usr/share/glsl-shaders:/usr/share/slang-shaders,upperdir=/storage/shaders,workdir=/storage/.tmp/shaders-workdir
+
+[Install]
+WantedBy=archr.target

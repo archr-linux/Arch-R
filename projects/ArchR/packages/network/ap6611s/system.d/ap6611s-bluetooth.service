@@ -1,0 +1,15 @@
+[Unit]
+Description=Bluetooth OPi5 Max
+After=bluetooth.target
+
+[Service]
+Type=simple
+ExecStartPre=/usr/sbin/rfkill unblock all
+ExecStart=/usr/bin/brcm_patchram_plus_rk3399 -d --enable_hci --no2bytes --use_baudrate_for_download --tosleep 200000 --baudrate 1500000 --patchram /lib/firmware/brcm/SYN43711A0.hcd /dev/ttyS7
+TimeoutSec=0
+RemainAfterExit=yes
+SysVStartPriority=99
+
+[Install]
+WantedBy=multi-user.target
+

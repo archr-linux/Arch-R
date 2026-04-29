@@ -1,0 +1,13 @@
+#!/bin/bash
+
+# Minimal OS variable loading for performance
+. /etc/profile.d/001-functions
+
+(
+  # Getting model name
+  MODEL=$(cat /proc/device-tree/model 2>/dev/null | tr -d '\0')
+  if [[ "$MODEL" == "RK3588 OPi 5 Max" || "$MODEL" == "RK3588 OPi 5 Ultra" ]]; then
+    tocon "Starting Orange Pi 5 Max/Ultra Bluetooth Module..."
+    nohup systemctl start ap6611s-bluetooth &
+  fi
+) &

@@ -1,0 +1,13 @@
+[Unit]
+Description=Headphone Sense
+Before=archr.target
+After=pipewire.service
+RequiresMountsFor=/storage
+
+[Service]
+Environment=HOME=/storage
+ExecStart=/usr/bin/headphone_sense
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

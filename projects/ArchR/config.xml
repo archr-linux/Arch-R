@@ -1,0 +1,23 @@
+<archr>
+  <RK3326 dtb_prefix="rockchip">
+    <original mkimage_options="dtb,bootscr,extlinux,uboot" fdt_type="fdtdir" fdt="/dtbs/">
+      <file>rk3326-gameconsole-r36s</file>
+      <file>rk3326-gameconsole-r33s</file>
+      <file>rk3326-odroid-go2</file>
+      <file>rk3326-odroid-go2-v11</file>
+      <file>rk3326-odroid-go3</file>
+      <file>rk3326-anbernic-rg351m</file>
+      <file>rk3326-anbernic-rg351v</file>
+      <file>rk3326-gameforce-chi</file>
+      <file>rk3326-magicx-xu10</file>
+      <file>rk3326-powkiddy-rgb10</file>
+      <file>rk3326-gameconsole-soysauce</file>
+    </original>
+    <clone mkimage_options="dtb,bootscr,extlinux,uboot" fdt_type="fdtdir" fdt="/dtbs/">
+      <file>rk3326-gameconsole-eeclone</file>
+      <file>rk3326-powkiddy-rgb10x</file>
+      <file>rk3326-magicx-xu-mini-m</file>
+      <file>rk3326-odroid-go2</file>
+    </clone>
+  </RK3326>
+</archr>

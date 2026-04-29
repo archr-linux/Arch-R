@@ -1,0 +1,18 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * R36Max / K36 clone — alias for Generic EE clone board.
+ *
+ * ROCKNIX uses "r36max" for the K36 clone family. This DTS
+ * includes the eeclone base with a different model/compatible
+ * so U-Boot's fdtfile can reference either name.
+ *
+ * Copyright (c) 2024-present ROCKNIX (https://github.com/ROCKNIX)
+ * Copyright (c) 2025 Arch R
+ */
+
+#include "rk3326-gameconsole-eeclone.dts"
+
+/ {
+	model = "Game Console R36Max";
+	compatible = "gameconsole,r36max", "gameconsole,eeclone", "rockchip,rk3326";
+};

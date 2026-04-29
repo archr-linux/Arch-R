@@ -1,0 +1,20 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2024-present ArchR (https://github.com/archr-linux/Arch-R)
+
+# Panfrost / Mali-G31 (Bifrost) tuning. Sourced by /etc/profile so the vars
+# reach login shells AND every emulator launched from runemu.sh / start_*.sh
+# (which both do `. /etc/profile`). Previously these lived in a quirks/
+# autostart subshell that exited immediately, so the shader cache and Mesa
+# error-skip flags never reached emulator processes.
+
+# forcepack: pack vertex attributes; reduces draw call overhead on G31.
+export PAN_MESA_DEBUG=forcepack
+
+# Skip GL error checking — emulators don't query glGetError defensively.
+export MESA_NO_ERROR=1
+
+# Persistent shader cache on /storage to survive reboots and avoid
+# recompilation every launch. Mesa creates the dir on first write.
+export MESA_SHADER_CACHE_DIR=/storage/.cache/mesa_shader_cache
+export MESA_SHADER_CACHE_MAX_SIZE=128MB

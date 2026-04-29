@@ -1,0 +1,12 @@
+#!/bin/sh
+
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2009-2014 Stephan Raue (stephan@openelec.tv)
+# Copyright (C) 2025-present Team LibreELEC (https://libreelec.tv)
+
+message="$message\n You are 'root' so 'sudo' is not required or supported"
+message="$message\n "
+
+echo -e $message
+
+exit 1

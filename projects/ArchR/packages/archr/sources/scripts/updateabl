@@ -1,0 +1,46 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2024-present ArchR (https://github.com/archr-linux/Arch-R)
+#
+# This script will update the ABL on the internal eMMC/UFS.
+
+. $SYSTEM_ROOT/etc/os-release
+
+case "$HW_DEVICE" in
+  SM6115|SM8250|SM8550|SM8650)
+    ;;
+  *)
+    echo "This script is not compatible with this device!"
+    exit 1
+    ;;
+esac
+
+# ---- Sanity checks ----
+ELF="$SYSTEM_ROOT/usr/share/bootloader/archr_abl/abl_signed-${HW_DEVICE}.elf"
+if [ ! -f "${ELF}" ]; then
+  echo "Error: ABL update not found"
+  exit 1
+fi
+
+ABL_A="$($SYSTEM_ROOT/usr/sbin/blkid -t PARTLABEL=abl_a -o device)"
+ABL_B="$($SYSTEM_ROOT/usr/sbin/blkid -t PARTLABEL=abl_b -o device)"
+if [ ! -b "${ABL_A}" ] || [ ! -b "${ABL_B}" ]; then
+  echo "Error: ABL partitions not found"
+  exit 1
+fi
+
+# ---- Get sector size ----
+SS="$($SYSTEM_ROOT/usr/sbin/blockdev --getss "${ABL_A}")"
+if [ -z "${SS}" ]; then
+  echo "Error: failed to get sector size"
+  exit 1
+fi
+
+# ---- Flash ----
+echo "Updating ABL partitions..."
+dd if="${ELF}" of="${ABL_A}" bs="${SS}" conv=fsync,notrunc status=none
+dd if="${ELF}" of="${ABL_B}" bs="${SS}" conv=fsync,notrunc status=none
+
+sync
+
+echo "ABL update completed successfully..."

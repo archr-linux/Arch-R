@@ -1,0 +1,174 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2024 ArchR (https://github.com/archr-linux/Arch-R)
+#
+# Helper script to manage cloud sync rules and configuration
+# Called by both cloud_backup and cloud_restore scripts
+#
+# This script handles:
+# 1. Merging default rules with user customizations
+# 2. Updating configuration files while preserving user settings
+# 3. Ensuring all required parameters exist with sensible defaults
+#
+# Version: 1.0
+# Last updated: 2024
+
+# Logs messages to the specified log file
+log_to_file() {
+  local log_file="${1}"
+  local message="${2}"
+  local level="${3:-INFO}"
+  local timestamp=$(date "+%Y-%m-%d %H:%M:%S")
+  local script_name="cloud_sync_helper"
+  
+  echo "[${timestamp}] [${level}] [${script_name}] ${message}" >> ${log_file}
+}
+
+# Merges default rules with user-customized rules
+# 
+# This function preserves user customizations while adding new default rules.
+# It creates a backup of the user's current rules before modifying them,
+# then adds any default rules that are not present in the user's file.
+# 
+# Parameters:
+#   $1: Path to log file for operation messages
+# Returns:
+#   0 on success, 1 if default rules file not found
+update_cloud_sync_rules() {
+  local log_file="${1:-/var/log/cloud_sync.log}"
+  
+  log_to_file "${log_file}" "Checking cloud sync rules file..."
+  
+  # Check if user has a custom cloud_sync-rules.txt
+  if [ -f "/storage/.config/cloud_sync-rules.txt" ]; then
+    # Create a backup of the user's custom rules
+    cp -f /storage/.config/cloud_sync-rules.txt /storage/.config/cloud_sync-rules.txt.bak
+    
+    # Check if defaults file exists
+    if [ ! -f "/usr/config/cloud_sync-rules.txt.defaults" ]; then
+      log_to_file "${log_file}" "Default rules file not found" "WARN"
+      return 1
+    fi
+    
+    # Copy default rules to a temporary file
+    cp -f /usr/config/cloud_sync-rules.txt.defaults /tmp/cloud_sync-rules.new
+    
+    log_to_file "${log_file}" "Merging custom rules with defaults"
+    
+    # Check each user rule and preserve it
+    while IFS= read -r line; do
+      # Skip comment lines and empty lines for comparison
+      if [[ "$line" != \#* ]] && [[ -n "$line" ]]; then
+        # Check if the rule is already in the defaults
+        # The -e flag ensures grep treats the entire line as a fixed pattern,
+        # preventing misinterpretation of spaces and special characters in rules
+        if ! grep -Fxq -e "$line" /tmp/cloud_sync-rules.new; then
+          # If not in defaults, append it to preserve user customization
+          echo "$line" >> /tmp/cloud_sync-rules.new
+        fi
+      fi
+    done < /storage/.config/cloud_sync-rules.txt
+    
+    # Replace the user's file with the merged version
+    mv /tmp/cloud_sync-rules.new /storage/.config/cloud_sync-rules.txt
+    
+    log_to_file "${log_file}" "Updated cloud_sync-rules.txt with new defaults while preserving custom rules"
+  else
+    # No existing rules file, just copy the defaults
+    log_to_file "${log_file}" "No existing rules file, copying defaults"
+    cp -f /usr/config/cloud_sync-rules.txt.defaults /storage/.config/cloud_sync-rules.txt
+  fi
+  
+  return 0
+}
+
+# Updates user configuration file with new defaults while preserving customizations
+#
+# This function ensures user configs have all required parameters while 
+# preserving any customized values. It adds any missing parameters from
+# the defaults file but doesn't overwrite existing user settings.
+#
+# Parameters:
+#   $1: Path to log file for operation messages
+# Returns:
+#   0 on success, 1 if default config file not found
+update_cloud_sync_config() {
+  local log_file="${1:-/var/log/cloud_sync.log}"
+  
+  log_to_file "${log_file}" "Checking cloud sync configuration..."
+  
+  # Check if user has a config file
+  if [ -f "/storage/.config/cloud_sync.conf" ]; then
+    # Create a backup of the user's config
+    cp -f /storage/.config/cloud_sync.conf /storage/.config/cloud_sync.conf.bak
+    
+    # Check if defaults file exists
+    if [ ! -f "/usr/config/cloud_sync.conf.defaults" ]; then
+      log_to_file "${log_file}" "Default config file not found" "WARN"
+      return 1
+    fi
+    
+    log_to_file "${log_file}" "Updating configuration with new defaults"
+    
+    # Extract all configuration variables from defaults - FIXED VERSION
+    while IFS='=' read -r key value; do
+      # Only process DEFAULT_ variables
+      if [[ "$key" == DEFAULT_* ]]; then
+        # Strip the DEFAULT_ prefix
+        var_name="${key#DEFAULT_}"
+        
+        # Check if this variable exists in the user config - FIX the grep pattern to avoid space issues
+        if ! grep -qF "${var_name}=" /storage/.config/cloud_sync.conf; then
+          # Variable doesn't exist, add it with proper quoting
+          echo "${var_name}=${value}" >> /storage/.config/cloud_sync.conf
+          log_to_file "${log_file}" "Added new configuration option: ${var_name}"
+        fi
+      fi
+    done < /usr/config/cloud_sync.conf.defaults
+    
+    log_to_file "${log_file}" "Configuration file updated while preserving customizations"
+  else
+    # No existing config file, create one with defaults
+    log_to_file "${log_file}" "No existing config file, creating from template"
+    
+    # Create a basic user config from defaults
+    touch /storage/.config/cloud_sync.conf
+    
+    # Process each default variable
+    while IFS='=' read -r key value; do
+      if [[ "$key" == DEFAULT_* ]]; then
+        var_name="${key#DEFAULT_}"
+        echo "${var_name}=${value}" >> /storage/.config/cloud_sync.conf
+      fi
+    done < /usr/config/cloud_sync.conf.defaults
+  fi
+  
+  return 0
+}
+
+# Main function that handles all updates
+main() {
+  local log_file="${1:-/var/log/cloud_sync.log}"
+  
+  # Update both rules and config
+  update_cloud_sync_rules "${log_file}"
+  update_cloud_sync_config "${log_file}"
+  
+  # Remove conflicting --verbose flags from existing user config to prevent parameter conflicts
+  # This is needed for users upgrading from older versions where --verbose was used
+  if [ -f "/storage/.config/cloud_sync.conf" ]; then
+    log_to_file "${log_file}" "Removing conflicting --verbose flags from configuration"
+    sed -i 's/--verbose//g' /storage/.config/cloud_sync.conf
+    sed -i 's/-v / /g' /storage/.config/cloud_sync.conf
+    # Clean up any double spaces left by removal
+    sed -i 's/  \+/ /g' /storage/.config/cloud_sync.conf
+    log_to_file "${log_file}" "Configuration cleaned of conflicting flags"
+  fi
+  
+  return 0
+}
+
+# If script is called directly, run the main function
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi

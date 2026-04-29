@@ -1,0 +1,45 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+# Copyright (C) 2019-present Team LibreELEC (https://libreelec.tv)
+
+check_hosts() {
+  grep -v "^#" /run/archr/hosts | grep "${1}"
+}
+
+# setup hostname
+if [ -f /storage/.cache/hostname ]; then
+  cat /storage/.cache/hostname >/proc/sys/kernel/hostname
+fi
+
+# setup /etc/hosts
+rm -f /run/archr/hosts
+if [ -f /storage/.config/hosts.conf ]; then
+  cat /storage/.config/hosts.conf >/run/archr/hosts
+  # add localhost to hosts if not present
+  LOCALHOST_HOSTS=$(check_hosts "localhost")
+  if [ -z "${LOCALHOST_HOSTS}" ]; then
+    {
+      echo "127.0.0.1 localhost"
+      echo "::1 localhost ip6-localhost ip6-loopback"
+    } >>/run/archr/hosts
+  fi
+  # add HOSTNAME to hosts if not present
+  HOSTNAME=$(cat /proc/sys/kernel/hostname)
+  HOSTNAME_HOSTS=$(check_hosts "${HOSTNAME}")
+  if [ -z "${HOSTNAME_HOSTS}" ]; then
+    echo "127.0.1.1 ${HOSTNAME}" >>/run/archr/hosts
+  fi
+fi
+
+# setup /etc/resolv.conf
+rm -f /run/archr/resolv.conf
+if [ -f /storage/.config/resolv.conf ]; then
+  cat /storage/.config/resolv.conf >/run/archr/resolv.conf
+elif [ -f /dev/.kernel_ipconfig ] && [ -f /proc/net/pnp ]; then
+  cat /proc/net/pnp >/run/archr/resolv.conf
+else
+  cat <<EOF >/run/archr/resolv.conf
+nameserver 8.8.8.8
+nameserver 8.8.4.4
+EOF
+fi

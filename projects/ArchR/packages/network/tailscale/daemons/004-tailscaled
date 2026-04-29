@@ -1,0 +1,4 @@
+STATE=$(get_setting tailscale.up)
+SVC="tailscaled"
+CONF="tailscaled.conf"
+DAEMONS=("tailscaled")

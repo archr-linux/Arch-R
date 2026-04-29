@@ -1,0 +1,9 @@
+ACTION!="add|change", GOTO="end_video"
+SUBSYSTEM=="pci", ATTR{class}=="0x030000", ATTR{vendor}=="0x10de", GOTO="configure_nvidia"
+GOTO="end_video"
+
+LABEL="configure_nvidia"
+ENV{xorg_driver}="nvidia", TAG+="systemd", ENV{SYSTEMD_WANTS}+="xorg-configure@nvidia.service"
+GOTO="end_video"
+
+LABEL="end_video"

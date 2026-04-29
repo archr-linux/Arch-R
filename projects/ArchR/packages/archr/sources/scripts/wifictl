@@ -1,0 +1,176 @@
+#!/bin/bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+# Copyright (C) 2022 kkoshelev (https://github.com/kkoshelev)
+# Refactored for iwd (including AP mode)
+# Symlink management added for read-only root filesystems.
+
+. /etc/profile
+
+###
+### Basic WIFI properties used across the tool.
+###
+### Usage:
+###     wifictl command [ssid] [psk]
+###
+
+IWD_AP_CFG_DIR="/storage/.cache/iwd/ap"
+WIFI_TYPE=$(get_setting wifi.adhoc.enabled)
+NETWORK_ADDRESS="192.168.80"
+ADHOC_CLIENT_ID=$(get_setting wifi.adhoc.id)
+# Detect any wireless interface (wlan*, wlx*, wlp*)
+WIFI_DEV="$(ls /sys/class/net | grep -m1 '^wl')"
+DEFAULT_CHAN="6"
+
+# Exit the script if the WiFi device isn't available
+[ -z "${WIFI_DEV}" ] && exit 0
+[ ! -d "/sys/class/net/${WIFI_DEV}" ] && exit 0
+
+SSID="${2:-$(get_setting wifi.ssid 2>/dev/null)}"
+PSK="${3:-$(get_setting wifi.key 2>/dev/null)}"
+COUNTRY="${4:-$(get_setting wifi.country | tr -d '[:space:]' 2>/dev/null)}"
+
+if [ "${WIFI_TYPE}" = "1" ]; then
+  SSID="NETPLAY_AP"
+  PSK="deadbeef"
+fi
+
+ADHOC_CHAN=$(get_setting wifi.adhoc.channel)
+if [ -z "${ADHOC_CHAN}" ]; then
+  ADHOC_CHAN="${DEFAULT_CHAN}"
+  set_setting wifi.adhoc.channel ${DEFAULT_CHAN}
+fi
+
+###
+### Functions...
+###
+
+# Wait for iwd to start and have a device available
+wait_for_wifi() {
+  for i in $(seq 1 15); do
+    iwctl device list 2>/dev/null | grep -q "${WIFI_DEV}" && break
+    sleep 1
+  done
+  [ -n "${COUNTRY}" ] && iw reg set "${COUNTRY}" 2>/dev/null
+}
+
+# lists all wifi networks
+list_wifi() {
+  wait_for_wifi
+  /usr/bin/iwd_get-networks
+}
+
+connect_wifi() {
+  wait_for_wifi
+
+  iwctl device ${WIFI_DEV} set-property Mode station 2>/dev/null
+  sleep 1
+
+  # Create iwd network profile for persistent connection
+  IWD_DIR="/storage/.cache/iwd"
+  mkdir -p "${IWD_DIR}"
+  if [ -n "${PSK}" ]; then
+    printf '[Security]\nPassphrase=%s\n' "${PSK}" > "${IWD_DIR}/${SSID}.psk"
+  else
+    printf '[Security]\n' > "${IWD_DIR}/${SSID}.open"
+  fi
+
+  # Scan and connect
+  iwctl station ${WIFI_DEV} scan 2>/dev/null
+  sleep 2
+  iwctl station ${WIFI_DEV} connect "${SSID}" 2>/dev/null
+
+  # Wait for connection
+  for i in $(seq 1 15); do
+    STATE=$(iwctl station ${WIFI_DEV} show 2>/dev/null | grep -i "state" | awk '{print $NF}')
+    [ "${STATE}" = "connected" ] && return 0
+    sleep 1
+  done
+  return 1
+}
+
+create_adhoc() {
+  wait_for_wifi
+
+  # Create an iwd AP profile file
+  cat <<EOF >"${IWD_AP_CFG_DIR}/${SSID}.ap"
+[General]
+Channel=${ADHOC_CHAN}
+DisableHT=true
+
+[Security]
+Passphrase=${PSK}
+
+[IPv4]
+Address=${NETWORK_ADDRESS}.${ADHOC_CLIENT_ID}
+Netmask=255.255.255.0
+Gateway=${NETWORK_ADDRESS}.${ADHOC_CLIENT_ID}
+EOF
+
+  iwctl device ${WIFI_DEV} set-property Mode ap
+  # Start the AP profile
+  iwctl ap ${WIFI_DEV} start-profile "${SSID}" 2>/dev/null
+}
+
+destroy_adhoc() {
+  iwctl ap ${WIFI_DEV} stop 2>/dev/null
+  rm -f "${IWD_AP_CFG_DIR}/${SSID}.ap" 2>/dev/null
+}
+
+has_ap_mode() {
+  wait_for_wifi
+
+  PHY=$(basename "$(readlink /sys/class/net/${WIFI_DEV}/phy80211)")
+  if iwctl adapter "$PHY" show | grep -q 'SupportedModes.*ap'; then
+    exit 0
+  else
+    exit 1
+  fi
+}
+
+case "${1}" in
+  enable)
+    rfkill unblock wifi
+    ;;
+  disable)
+    rfkill block wifi
+    ;;
+  connect)
+    if [ "${WIFI_TYPE}" = "1" ] && \
+       [ "${ADHOC_CLIENT_ID}" = "1" ]; then
+      create_adhoc >/dev/null 2>&1
+    else
+      destroy_adhoc >/dev/null 2>&1
+      connect_wifi
+    fi
+  ;;
+  disconnect)
+    if [ "${WIFI_TYPE}" = "1" ]; then
+      destroy_adhoc >/dev/null 2>&1
+      iwctl ap ${WIFI_DEV} stop 2>/dev/null
+    else
+      iwctl station ${WIFI_DEV} disconnect 2>/dev/null
+    fi
+    ;;
+  reconnect)
+    /usr/bin/wifictl disconnect
+    /usr/bin/wifictl connect
+    ;;
+  list)
+    list_wifi
+    ;;
+  channels)
+    iw list | awk '/[0-9] MHz \[/ && ! /disabled|radar|no IR/ { gsub(/^.*\[/,""); gsub(/\].*$/,""); print}'
+    ;;
+  has_ap_mode)
+    has_ap_mode
+    ;;
+  scan)
+    iwctl station ${WIFI_DEV} scan 2>/dev/null
+    ;;
+  scanlist)
+    iwctl station ${WIFI_DEV} scan 2>/dev/null
+    sleep 2
+    list_wifi
+    ;;
+esac

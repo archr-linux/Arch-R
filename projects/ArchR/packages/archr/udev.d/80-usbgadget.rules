@@ -1,0 +1,4 @@
+# trigger for activating gadget after cable is plugged
+SUBSYSTEMS=="extcon", ACTION=="change", RUN+="/usr/bin/usbgadget trigger"
+# rename gadget interface to avoid ES displaying connected state
+ACTION=="add", SUBSYSTEM=="net", ENV{DEVTYPE}=="gadget", NAME="gadget"

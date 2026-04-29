@@ -1,0 +1,609 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2024 ArchR (https://github.com/archr-linux/Arch-R)
+
+# Script configuration and global variables
+SCRIPT_NAME=$(basename "$0")
+LOG_FILE="/var/log/cloud_sync.log"
+START_TIME=$(date +%s)
+
+# Logging function that supports different severity levels and optional console output
+# Parameters:
+#   $1: Message text
+#   $2: Whether to echo to screen (true/false, defaults to true)
+#   $3: Log level (INFO, WARN, ERROR, defaults to configured LOG_LEVEL or INFO)
+log_message() {
+    local message="$1"
+    local echo_to_screen="${2:-true}"  # Default to true
+    local level="${3:-${LOG_LEVEL:-INFO}}"  # Use configured LOG_LEVEL as default
+    local timestamp=$(date "+%Y-%m-%d %H:%M:%S")
+    
+    echo "[${timestamp}] [${level}] [${SCRIPT_NAME}] ${message}" >> ${LOG_FILE}
+    
+    if [[ "${echo_to_screen}" == "true" ]]; then
+        # Color output based on level
+        case "${level}" in
+            ERROR) echo -e "\e[31m${message}\e[0m" ;;
+            WARN)  echo -e "\e[33m${message}\e[0m" ;;
+            *)     echo -e "${message}" ;;
+        esac
+    fi
+}
+
+# Load controller configuration if available
+if [ -f "/storage/.config/profile.d/098-controller" ]; then
+    source /storage/.config/profile.d/098-controller
+    log_message "Controller config loaded: SOUTH=${DEVICE_BTN_SOUTH}, DPAD_UP=${DEVICE_BTN_DPAD_UP}" "false"
+fi
+
+# Simple controller input function using evtest for actual joystick input
+# Improved controller input: persistent evtest for low-latency input
+read_controller_input() {
+    local timeout="${1:-0}" # Default to no timeout
+    local input_device=""
+    for dev in /dev/input/event*; do
+        if [ -c "$dev" ]; then
+            local supports=$(udevadm info "$dev" 2>/dev/null | awk '/ID_INPUT_JOYSTICK=1/ {print "joystick"}')
+            if [ "$supports" = "joystick" ]; then
+                input_device="$dev"
+                break
+            fi
+        fi
+    done
+    if [ -z "$input_device" ]; then
+        # Fallback to keyboard input if no controller is found
+        if [ "$timeout" -gt 0 ]; then
+            read -t "$timeout" -sn1 input 2>/dev/null
+        else
+            read -sn1 input 2>/dev/null
+        fi
+        case "$input" in
+            "w"|"W"|$'\e[A') echo "up" ;;
+            "s"|"S"|$'\e[B') echo "down" ;;
+            "a"|"A"|$'\e[D') echo "left" ;;
+            "d"|"D"|$'\e[C') echo "right" ;;
+            $'\n'|" ")       echo "confirm" ;;
+            "q"|"Q"|$'\e')   echo "cancel" ;;
+            "") echo "timeout" ;;
+            *) echo "unknown" ;;
+        esac
+        return
+    fi
+    
+    # For controllers, block and wait for the first button press event.
+    # This is more responsive than polling with a timeout.
+    local event_output
+    if [ "$timeout" -gt 0 ]; then
+        event_output=$(timeout "$timeout" evtest "$input_device" 2>/dev/null | grep -m 1 "value 1")
+    else
+        event_output=$(evtest "$input_device" 2>/dev/null | grep -m 1 "value 1")
+    fi
+    
+    if [ -z "$event_output" ]; then
+        echo "timeout"
+        return
+    fi
+    
+    # Parse the first button press event found
+    log_message "Raw event data: $event_output" "false"
+    if [[ "$event_output" =~ BTN_DPAD_UP.*value[[:space:]]+1 ]] || [[ "$event_output" =~ ABS_HAT0Y.*value[[:space:]]+-1 ]]; then
+        echo "up"
+    elif [[ "$event_output" =~ BTN_DPAD_DOWN.*value[[:space:]]+1 ]] || [[ "$event_output" =~ ABS_HAT0Y.*value[[:space:]]+1 ]]; then
+        echo "down"
+    elif [[ "$event_output" =~ BTN_DPAD_LEFT.*value[[:space:]]+1 ]] || [[ "$event_output" =~ ABS_HAT0X.*value[[:space:]]+-1 ]]; then
+        echo "left"
+    elif [[ "$event_output" =~ BTN_DPAD_RIGHT.*value[[:space:]]+1 ]] || [[ "$event_output" =~ ABS_HAT0X.*value[[:space:]]+1 ]]; then
+        echo "right"
+    elif [[ "$event_output" =~ BTN_SOUTH.*value[[:space:]]+1 ]] || [[ "$event_output" =~ BTN_A.*value[[:space:]]+1 ]] || [[ "$event_output" =~ "code 0.*value[[:space:]]+1" ]] || [[ "$event_output" =~ BTN_EAST.*value[[:space:]]+1 ]]; then
+        echo "confirm"
+    elif [[ "$event_output" =~ BTN_B.*value[[:space:]]+1 ]] || [[ "$event_output" =~ "code 1.*value[[:space:]]+1" ]]; then
+        echo "cancel"
+    elif [[ "$event_output" =~ BTN_START.*value[[:space:]]+1 ]]; then
+        echo "start"
+    elif [[ "$event_output" =~ BTN_SELECT.*value[[:space:]]+1 ]]; then
+        echo "select"
+    else
+        log_message "Unrecognized button event: $event_output" "false"
+        echo "unknown"
+    fi
+}
+
+# Simple controller-friendly confirmation using the same pattern as other ArchR scripts
+# Parameters: $1=message, $2=initial_selection (0=yes, 1=no, defaults to 0)
+controller_confirm() {
+    local message="$1"
+    local selected="${2:-0}"         # Default to Yes initially selected
+    local options=("Yes" "No")
+    local last_selected=-1
+    log_message "Starting controller_confirm with message: '$message', initial: $selected" "false"
+    
+    while true; do
+        # Only redraw if selection changed
+        if [ $selected -ne $last_selected ]; then
+            printf "\033[2J\033[H"  # Clear screen and move to top
+            echo -e "\e[33m${message}\e[0m"
+            echo ""
+            for i in "${!options[@]}"; do
+                if [ $i -eq $selected ]; then
+                    echo -e "\e[34m> \e[32m${options[$i]}\e[0m"
+                else
+                    echo "  ${options[$i]}"
+                fi
+            done
+            echo ""
+            echo "Controls: D-Pad Up/Down=Navigate, A=Confirm, B=Cancel"
+            echo "Keyboard: W/S=Navigate, Enter=Confirm, Q=Cancel"
+            echo ""
+            last_selected=$selected
+        fi
+        
+        local input=$(read_controller_input)
+        log_message "Received input: '$input'" "false"
+        case "$input" in
+            "up")
+                selected=$(( (selected - 1 + 2) % 2 ))
+                log_message "Selection changed to: $selected (moved up)" "false"
+                ;;
+            "down")
+                selected=$(( (selected + 1) % 2 ))
+                log_message "Selection changed to: $selected (moved down)" "false"
+                ;;
+            "confirm")
+                log_message "Confirmed with selection: $selected" "false"
+                sleep 0.3
+                return $selected
+                ;;
+            "cancel")
+                log_message "Cancelled" "false"
+                return 1
+                ;;
+            "timeout")
+                # Continue waiting for input
+                ;;
+            *)
+                log_message "Unknown input received: '$input'" "false"
+                ;;
+        esac
+        sleep 0.05
+    done
+}
+
+# Get available input devices for controller monitoring
+get_controller_devices() {
+    INPUT_DEVICES=()
+    for DEV in /dev/input/event*; do
+        unset SUPPORTS
+        SUPPORTS=$(udevadm info ${DEV} | awk '/ID_INPUT_KEY=|ID_INPUT_JOYSTICK=/ {print $2}')
+        if [ -n "${SUPPORTS}" ]; then
+            DEVICE=$(udevadm info ${DEV} | awk 'BEGIN {FS="="} /DEVNAME=/ {print $2}')
+            if [[ "${SUPPORTS}" =~ ID_INPUT_JOYSTICK ]]; then
+                INPUT_DEVICES+=("${DEVICE}")
+            fi
+        fi
+    done
+}
+
+# Controller-friendly menu with evtest-based input handling
+# Parameters: $1=title, $@=options
+controller_menu() {
+    local title="$1"
+    shift
+    local options=("$@")
+    local selected=0
+    local choice_made=false
+    local user_choice=""
+    
+    get_controller_devices
+    
+    while [ "$choice_made" = false ]; do
+        # Display menu
+        clear
+        echo -e "\e[36m${title}\e[0m"
+        echo "Use D-Pad to navigate, A button to confirm, B button to cancel"
+        echo ""
+        
+        for i in "${!options[@]}"; do
+            if [ $i -eq $selected ]; then
+                echo -e "> \e[32m${options[$i]}\e[0m"
+            else
+                echo "  ${options[$i]}"
+            fi
+        done
+        echo ""
+        echo "Controls: D-Pad=Navigate, A=Confirm, B=Cancel"
+        
+        # Monitor controller input with timeout
+        (
+            for INPUT_DEVICE in ${INPUT_DEVICES[@]}; do
+                timeout 1 evtest "${INPUT_DEVICE}" 2>&1 &
+            done
+            wait
+        ) | while read line; do
+            case ${line} in
+                (${UP_EVENT}|${UP_ALT_EVENT})
+                    selected=$(( (selected - 1 + ${#options[@]}) % ${#options[@]} ))
+                    break
+                ;;
+                (${DOWN_EVENT}|${DOWN_ALT_EVENT})
+                    selected=$(( (selected + 1) % ${#options[@]} ))
+                    break
+                ;;
+                (${CONFIRM_EVENT})
+                    user_choice="${options[$selected]}"
+                    choice_made=true
+                    break
+                ;;
+                (${CANCEL_EVENT})
+                    user_choice=""
+                    choice_made=true
+                    break
+                ;;
+            esac
+        done
+        
+        # Small delay to prevent rapid menu updates
+        sleep 0.1
+    done
+    
+    echo "$user_choice"
+}
+
+# Performs cleanup operations and exits with the specified code
+# Records total execution time in the log for performance tracking
+# Parameters:
+#   $1: Exit code to return
+clean_exit() {
+    local exit_code=$1
+    local duration=$(($(date +%s) - START_TIME))
+    
+    log_message "Script completed in ${duration} seconds with exit code ${exit_code}" "false"
+    exit ${exit_code}
+}
+
+# Verifies rclone is properly configured before attempting operations
+# Exits with error if configuration file is missing
+check_rclone_config() {
+    if [ ! -e "/storage/.config/rclone/rclone.conf" ]; then
+        log_message "You must configure rclone before using this tool. Run \`rclone config\` to get started." "true" "ERROR"
+        sleep 3
+        clean_exit 1
+    fi
+}
+
+# Validates internet connectivity before attempting cloud operations
+# Uses ping to google.com as a connectivity test
+check_internet() {
+    log_message "Checking internet connectivity..." "false"
+    ONLINESTATUS=`ping -q -c1 google.com &>/dev/null && echo online || echo offline`
+    if [ "${ONLINESTATUS}" == "offline" ]; then
+        log_message "You're not currently connected to the internet.\nPlease verify your settings and then try again." "true" "ERROR"
+        sleep 3
+        clean_exit 1
+    fi
+    log_message "Internet connection detected" "false"
+}
+
+# Loads user configuration from cloud_sync.conf
+# Applies default values for any missing configuration parameters
+load_config() {
+    log_message "Loading configuration from cloud_sync.conf" "false"
+    source /storage/.config/cloud_sync.conf
+
+    # Update cloud sync rules and config by calling the helper script
+    if [ -f "/usr/bin/cloud_sync_helper" ]; then
+        log_message "Updating cloud sync rules and config" "false"
+        /usr/bin/cloud_sync_helper ${LOG_FILE}
+    fi
+
+    # Check for duplicate variable assignments in config
+    local conf_file="/storage/.config/cloud_sync.conf"
+    local dupes_found=0
+    # List of variable names that appear more than once
+    mapfile -t duplicate_vars < <(awk -F= '/^[A-Za-z0-9_]+=/{gsub(/"/,"",$1); count[$1]++} END{for (v in count) if(count[v]>1) print v}' "$conf_file")
+    if [ ${#duplicate_vars[@]} -gt 0 ]; then
+        dupes_found=1
+    fi
+
+    if [ $dupes_found -eq 1 ]; then
+        # Build the full message including the duplicate info
+        local dupe_message="Warning: Duplicate variable assignments detected in cloud_sync.conf\n\nDuplicate cloud sync variables have been found in the configuration file:"
+        for var in "${duplicate_vars[@]}"; do
+            dupe_message="${dupe_message}\n  - $var"
+        done
+        dupe_message="${dupe_message}\n\nWould you like to automatically clean up duplicates?"
+        
+        controller_confirm "$dupe_message" 0
+        local cleanup_choice=$?
+        log_message "Cleanup choice returned: $cleanup_choice" "false"
+        
+        if [ $cleanup_choice -eq 0 ]; then
+            # User selected Yes - cleanup duplicates
+            echo -e "\e[34m> Running duplicate cleanup...\e[0m"
+            /usr/bin/cloud_sync_cleanup_duplicates.sh "$conf_file"
+            echo -e "\e[34m> Duplicates cleaned.\e[0m"
+            echo ""
+            sleep 2
+            # Reload config after cleanup
+            source /storage/.config/cloud_sync.conf
+        else
+            # User selected No or cancelled - skip cleanup
+            echo -e "\e[34m> Skipped duplicate cleanup.\e[0m"
+            sleep 2
+        fi
+
+    fi
+
+    # Clean and normalize rclone options to ensure proper spacing
+    log_message "Original RCLONEOPTS: ${RCLONEOPTS}" "false"
+    RCLONEOPTS=$(echo "${RCLONEOPTS}" | tr '\n\\' '  ' | tr -s ' ')
+    log_message "After newline cleanup: ${RCLONEOPTS}" "false"
+    
+    # Remove conflicting --verbose and -v flags that conflict with --log-level
+    RCLONEOPTS=$(echo "${RCLONEOPTS}" | sed 's/--verbose//g' | sed 's/-v / /g')
+    log_message "After removing verbose flags: ${RCLONEOPTS}" "false"
+    
+    RCLONEOPTS=$(echo "${RCLONEOPTS}" | sed 's/--/ --/g' | sed 's/^ //')
+    log_message "After spacing fix: ${RCLONEOPTS}" "false"
+    
+    # Clean up any double spaces left by removal
+    RCLONEOPTS=$(echo "${RCLONEOPTS}" | tr -s ' ')
+    log_message "After final cleanup: ${RCLONEOPTS}" "false"
+    
+    RCLONE_OPTS_ARRAY=()
+    for opt in ${RCLONEOPTS}; do
+        RCLONE_OPTS_ARRAY+=("$opt")
+    done
+    log_message "Options array has ${#RCLONE_OPTS_ARRAY[@]} elements" "false"
+    RESTORE_RCLONEOPTS=$(echo "${RCLONEOPTS}" | sed 's/--delete-excluded//')
+    log_message "Configuration loaded successfully" "false"
+}
+
+# Enhanced error reporting function
+report_rclone_error() {
+    local exit_code=$1
+    local operation="$2"
+    
+    case $exit_code in
+        0) log_message "${operation} completed successfully" "true" ;;
+        1) log_message "${operation} failed: Syntax or usage error" "true" "ERROR" ;;
+        2) log_message "${operation} failed: Error not otherwise categorized" "true" "ERROR" ;;
+        3) log_message "${operation} failed: Directory not found or permission denied" "true" "ERROR" ;;
+        4) log_message "${operation} failed: File not found" "true" "ERROR" ;;
+        5) log_message "${operation} failed: Temporary failure, retry may help" "true" "ERROR" ;;
+        6) log_message "${operation} failed: Less serious errors (e.g. partly transferred)" "true" "WARN" ;;
+        7) log_message "${operation} failed: Fatal error - rclone giving up" "true" "ERROR" ;;
+        8) log_message "${operation} failed: Transfer exceeded - limits exceeded" "true" "ERROR" ;;
+        9) log_message "${operation} failed: Operation failed - no retry" "true" "ERROR" ;;
+        *) log_message "${operation} failed with unknown error code: $exit_code" "true" "ERROR" ;;
+    esac
+}
+
+# Enhanced rclone execution function with better error handling
+execute_rclone_with_error_handling() {
+    local method="$1"
+    local source="$2"
+    local dest="$3"
+    shift 3
+    local extra_opts=("$@")
+    
+    log_message "About to execute: rclone ${method} ${extra_opts[*]} ${source} ${dest}" "false"
+    
+    # Use a temporary file to capture stderr while allowing stdout (progress) to display
+    local stderr_file="/tmp/rclone_stderr_$$"
+    
+    # Execute rclone with real-time progress display
+    # stdout goes to terminal (shows progress), stderr goes to temp file for logging
+    rclone "${method}" "${extra_opts[@]}" "${source}" "${dest}" 2>"$stderr_file"
+    local rclone_exit_code=$?
+    
+    # Log any stderr output for debugging
+    if [ -s "$stderr_file" ]; then
+        while IFS= read -r line; do
+            log_message "rclone stderr: $line" "false"
+        done < "$stderr_file"
+    fi
+    
+    # Clean up
+    rm -f "$stderr_file"
+    
+    return $rclone_exit_code
+}
+
+# PART 1: Game saves restore function
+# Restores game saves from cloud storage
+restore_game_saves() {
+    log_message "====================================" "true"
+    log_message "STARTING GAME SAVES RESTORE" "true"
+    log_message "====================================" "true"
+    
+    log_message "Starting restore from ${REMOTENAME}${SYNCPATH} to ${RESTOREPATH}"
+    log_message "Restore started at $(date)" "false"
+    
+    # Check if remote path exists before attempting restore
+    log_message "Checking if remote path exists: ${REMOTENAME}${SYNCPATH}" "false"
+    rclone lsd "${REMOTENAME}${SYNCPATH}" > /dev/null 2>&1
+    local remote_check_status=$?
+    if [ $remote_check_status -ne 0 ]; then
+        log_message "Remote path ${REMOTENAME}${SYNCPATH} is not accessible (exit code: $remote_check_status)" "true" "ERROR"
+        report_rclone_error $remote_check_status "Remote path check"
+        return $remote_check_status
+    fi
+    
+    # Ensure local restore path exists
+    if [ ! -d "${RESTOREPATH}" ]; then
+        log_message "Creating local restore path: ${RESTOREPATH}" "false"
+        mkdir -p "${RESTOREPATH}"
+    fi
+    
+    # Set log level to DEBUG when INFO is selected for enhanced logging
+    local rclone_debug=""
+    local filtered_opts=("${RCLONE_OPTS_ARRAY[@]}")
+    
+    # Add debug logging if LOG_LEVEL is INFO
+    if [ "${LOG_LEVEL}" == "INFO" ]; then
+        rclone_debug="--log-level"
+    fi
+
+    # Build the complete options array
+    local all_opts=()
+    if [ ${#filtered_opts[@]} -gt 0 ]; then
+        all_opts+=("${filtered_opts[@]}")
+    else
+        all_opts+=(
+            "--progress"
+            "--log-file" "/var/log/cloud_sync.log"
+            "--filter-from" "/storage/.config/cloud_sync-rules.txt"
+        )
+    fi
+
+    # Add debug logging if enabled
+    if [ -n "$rclone_debug" ]; then
+        all_opts+=("$rclone_debug" "INFO")
+    fi    # Add exclusions
+    all_opts+=(
+        "--exclude=${BACKUPFOLDER}/**"
+        "--exclude=backups/**"
+        "--exclude=bios/**"
+    )
+    
+    # Execute rclone with enhanced error handling
+    execute_rclone_with_error_handling \
+        "${RESTOREMETHOD}" \
+        "${REMOTENAME}${SYNCPATH}/" \
+        "${RESTOREPATH}/" \
+        "${all_opts[@]}"
+    
+    RESTORE_STATUS=$?
+    
+    # Report the result with detailed error information
+    report_rclone_error $RESTORE_STATUS "Game saves restore"
+    
+    return $RESTORE_STATUS
+}
+
+# PART 2: System backup file restore function
+# Restores system backup files from cloud storage
+# Only runs when BACKUPFILE_RESTORE_OPTION is set to "yes"
+restore_system_files() {
+    echo
+    log_message "====================================" "true"
+    log_message "STARTING SYSTEM BACKUP FILE RESTORE" "true"
+    log_message "====================================" "true"
+    
+    if [ "${BACKUPFILE_RESTORE_OPTION}" == "yes" ]; then
+        # Verify remote backup directory has content before attempting restore
+        log_message "Checking remote backup directory: ${REMOTENAME}${SYNCPATH_BACKUP}" "false"
+        REMOTE_FILES=$(rclone ls ${REMOTENAME}${SYNCPATH_BACKUP}/ 2>/dev/null)
+        local remote_ls_status=$?
+        
+        if [ $remote_ls_status -ne 0 ]; then
+            log_message "Failed to access remote backup directory (exit code: $remote_ls_status)" "true" "ERROR"
+            report_rclone_error $remote_ls_status "Remote backup directory check"
+            return $remote_ls_status
+        fi
+        
+        if [ -z "${REMOTE_FILES}" ]; then
+            log_message "There are no system backup files to restore" "true" "WARN"
+            return 1
+        fi
+        
+        log_message "Starting restore of system backup files from ${REMOTENAME}${SYNCPATH_BACKUP} to ${BACKUPFOLDER}"
+        log_message "System backup file restore started at $(date)" "false"
+        
+        # Ensure local target directory exists before attempting restore
+        mkdir -p ${BACKUPFOLDER}
+        
+        # Build options array for system backup restore
+        local backup_opts=(
+            "--progress"
+            "--log-file" "/var/log/cloud_sync.log"
+            "--filter-from" "/storage/.config/cloud_sync-rules.txt"
+            "--log-level" "INFO"
+            "--include" "/backup/*.zip"
+            "--include" "backup/*.zip"
+            "--stats-one-line"
+        )
+        
+        # Check if the rclone version supports the terminal width flag
+        if rclone help | grep -q progress-terminal-width; then
+            backup_opts+=("--progress-terminal-width=80")
+        fi
+        
+        # Execute system backup restore with enhanced error handling
+        execute_rclone_with_error_handling \
+            "${RESTOREMETHOD}" \
+            "${REMOTENAME}${SYNCPATH_BACKUP}/" \
+            "${BACKUPFOLDER}/" \
+            "${backup_opts[@]}"
+        
+        RESTORE_SYSTEM_STATUS=$?
+        report_rclone_error $RESTORE_SYSTEM_STATUS "System backup file restore"
+        
+        return $RESTORE_SYSTEM_STATUS
+    else
+        log_message "System backup file restore skipped (BACKUPFILE_RESTORE_OPTION is not set to 'yes')" "true"
+        RESTORE_SYSTEM_STATUS=0
+    fi
+    
+    return $RESTORE_SYSTEM_STATUS
+}
+
+# Main script execution
+main() {
+    check_rclone_config
+    check_internet
+    load_config
+    
+    # Define locations for source and remote
+    # Note: This assumes at least one remote is configured and the first one should be used
+    REMOTENAME=`rclone listremotes | head -1`
+    
+    # Begin main script operations with user-friendly header
+    log_message "=> ${OS_NAME} CLOUD RESTORE UTILITY\n"
+    
+    # Execute Part 1: Game saves restore
+    # This performs the primary save file restoration operation using the configured method
+    restore_game_saves
+    RESTORE_STATUS=$?
+    
+    # Add a pause for better visual separation between operations
+    sleep 2
+    
+    # Execute Part 2: System restore
+    # This restores system backup files (zip files) if enabled in configuration
+    restore_system_files
+    RESTORE_SYSTEM_STATUS=$?
+    
+    # Create empty missing system directories if removed during restore
+    # Only necessary when using sync method which can delete files
+    if [ "${RESTOREMETHOD}" == "sync" ]; then
+        log_message "Creating empty missing system directories" "true"
+        systemd-tmpfiles --create /usr/config/system-dirs.conf
+    fi
+    
+    # Add a pause before summary
+    sleep 2
+    
+    # Add a line break for better visual separation
+    echo
+    
+    # Provide final summary of all operations
+    log_message "====================================" "true"
+    log_message "RESTORE SUMMARY:" "true"
+    log_message "Game saves restore: $([ $RESTORE_STATUS -eq 0 ] && echo 'SUCCESS' || echo 'COMPLETED WITH ERRORS')" "true"
+    [ "${BACKUPFILE_RESTORE_OPTION}" == "yes" ] && log_message "System backup file restore: $([ $RESTORE_SYSTEM_STATUS -eq 0 ] && echo 'SUCCESS' || echo 'COMPLETED WITH ERRORS')" "true"
+    log_message "Log file: ${LOG_FILE}" "true"
+    log_message "====================================" "true"
+    
+    # Add a final pause before exiting
+    sleep 3
+    
+    # Use the game saves restore status as the overall exit code
+    clean_exit ${RESTORE_STATUS}
+}
+
+# Set up signal trap to handle user interruption gracefully
+trap 'log_message "Script interrupted by user" "false" "WARN"; clean_exit 130' INT TERM
+
+# Start script execution
+main

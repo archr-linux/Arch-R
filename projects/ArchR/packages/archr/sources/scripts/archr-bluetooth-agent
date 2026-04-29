@@ -1,0 +1,570 @@
+#!/usr/bin/python
+
+from __future__ import absolute_import, print_function
+
+from optparse import OptionParser, make_option
+import asyncio
+import dbussy as dbus
+import ravel
+import time
+import os
+import logging
+import signal
+import atexit
+
+# Constants and global variables
+AGENT_INTERFACE = 'org.bluez.Agent1'
+CONTROL_FILE = "/run/bt_discovery_control"
+AGENT_STATUS_FILE = "/run/bt_agent_status"
+LOG_FILE = "/var/log/bluetooth-agent.log"
+
+gadapter = None
+gdiscovering = False
+gdevices = {}
+glisting_mode = False
+glisting_devs = {}
+gbus = None
+g_shutdown_future = None
+
+# Configure logging
+logging.basicConfig(
+    filename=LOG_FILE,
+    level=logging.DEBUG,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+
+def bool2str(val, valiftrue, valiffalse):
+    return valiftrue if val else valiffalse
+
+def logging_status(msg):
+    try:
+        with open("/run/bt_status", "w") as file:
+            file.write(msg + "\n")
+    except Exception as e:
+        logging.error(f"Failed to write status: {e}")
+
+def prop2str(p):
+    val = p
+    if isinstance(p, (tuple, list)) and len(p) == 2 and isinstance(p[0], dbus.DBUS.Signature):
+        val = p[1]
+
+    if isinstance(val, bytes):
+        return val.decode('UTF-8', 'replace')
+
+    return val
+
+def getDevName(properties):
+    if "Name" in properties and "Address" in properties and "Icon" in properties:
+        return f"{prop2str(properties['Name'])} ({prop2str(properties['Address'])}, {prop2str(properties['Icon'])})"
+    if "Name" in properties and "Address" in properties:
+        return f"{prop2str(properties['Name'])} ({prop2str(properties['Address'])})"
+    if "Name" in properties:
+        return prop2str(properties["Name"])
+    if "Address" in properties:
+        return prop2str(properties["Address"])
+    return "unknown"
+
+def getShortDevName(properties):
+    if "Name" in properties:
+        return prop2str(properties["Name"])
+    if "Address" in properties:
+        return prop2str(properties["Address"])
+    return "unknown"
+
+def propertiesToStr(properties):
+    result = ""
+    for p in properties:
+        if p not in ["ServiceData", "RSSI", "UUIDs", "Adapter", "AddressType",
+                       "Alias", "Bonded", "ServicesResolved", "ManufacturerData",
+                       "AdvertisingFlags"]:
+            if result != "":
+                result = result + ", "
+
+            val = prop2str(properties[p])
+
+            result = result + "{}={}".format(p, str(val))
+    return result
+
+def getDevAddressNameType(properties):
+    if "Address" not in properties:
+        return None, None, None
+
+    vaddr = prop2str(properties["Address"])
+    vname = prop2str(properties["Name"]) if "Name" in properties else None
+    vtype = prop2str(properties["Icon"]) if "Icon" in properties else None
+
+    return vaddr, vname, vtype
+
+def listing_dev_event(path, properties, adding):
+    global glisting_devs
+
+    if (path in glisting_devs and adding) or (path not in glisting_devs and not adding):
+        return
+
+    if adding:
+        glisting_devs[path] = True
+    else:
+        del glisting_devs[path]
+
+    try:
+        devaddress, devname, devtype = getDevAddressNameType(properties)
+
+        # Skip writing to file if the device address is None
+        if devaddress is None:
+            logging.debug(f"Skipping device with None address at path: {path}")
+            return
+
+        with open("/run/bt_listing", "a") as file:
+            file.write(f'<device id="{devaddress}" name="{devname}" '
+                       f'status="{"added" if adding else "removed"}" '
+                       f'type="{icon2basicname(devtype)}" />\n')
+    except Exception as e:
+        logging.error(f"Failed to write listing event: {e}")
+
+def icon2basicname(icon):
+    if icon is None:
+        return "unknown"
+    if icon == "input-gaming":
+        return "joystick"
+    if icon.startswith("audio-"):
+        return "audio"
+    return icon
+
+# Define the DBus signal handlers
+async def interfaces_added(path, interfaces):
+    global gdevices
+    global glisting_mode
+
+    if "org.bluez.Device1" not in interfaces:
+        return
+    if not interfaces["org.bluez.Device1"]:
+        return
+
+    properties = interfaces["org.bluez.Device1"]
+
+    if path in gdevices:
+        gdevices[path] = merge2dicts(gdevices[path], properties)
+    else:
+        gdevices[path] = properties
+
+    logging.info("Interface added: {}".format(propertiesToStr(properties)))
+
+    if glisting_mode:
+        listing_dev_event(path, gdevices[path], True)
+
+    if "Address" in gdevices[path]:
+        await connect_device(path, prop2str(properties["Address"]), gdevices[path], False, getBluetoothWantedAddr())
+    else:
+        logging.info("No address. skip.")
+
+def interfaces_removed(path, interfaces):
+    global gdevices
+
+    if "org.bluez.Device1" not in interfaces:
+        return
+
+    if path in gdevices:
+        listing_dev_event(path, gdevices[path], False)
+        del gdevices[path]
+
+async def properties_changed(interface, changed, invalidated, path):
+    global gdevices
+    global glisting_mode
+
+    if interface != "org.bluez.Device1":
+        return
+
+    if path in gdevices:
+        gdevices[path] = merge2dicts(gdevices[path], changed)
+    else:
+        gdevices[path] = changed
+
+    if glisting_mode:
+        listing_dev_event(path, gdevices[path], True)
+
+    propstr = propertiesToStr(changed)
+    if propstr != "":
+        logging.info("Properties changed: {}".format(propstr))
+
+    if "Paired" in changed and changed["Paired"] == True:
+        await connect_device(path, gdevices[path]["Address"], gdevices[path], True, getBluetoothWantedAddr())
+        return
+
+    if "Connected" in changed:
+        if changed["Connected"] == True:
+            return
+        if changed["Connected"] == False:
+            logging.info("Skipping (property Connected changed to False)")
+            return
+
+    if "Address" in gdevices[path]:
+        await connect_device(path, prop2str(gdevices[path]["Address"]), gdevices[path], False, getBluetoothWantedAddr())
+
+def merge2dicts(d1, d2):
+    res = d1.copy()
+    res.update(d2)
+    return res
+
+def getBluetoothWantedAddr():
+    addrDevice = None
+    if os.path.isfile("/run/bt_device"):
+        with open("/run/bt_device", "r") as file:
+            addrDevice = file.read().strip()
+            if addrDevice == "":
+                addrDevice = None
+            logging.info("bt_dev: {}".format(addrDevice))
+    return addrDevice
+
+async def connect_device(path, address, properties, forceConnect, filter):
+    global gdiscovering
+    global gadapter
+
+    if not filter:
+        logging.info(f"skipping {address}. No filter.")
+        return
+
+    if "Trusted" not in properties or "Connected" not in properties:
+        logging.info(f"skipping {address}. Missing required properties.")
+        return
+
+    trusted = prop2str(properties["Trusted"])
+    paired = prop2str(properties["Paired"])
+    devName = getDevName(properties)
+    shortDevName = getShortDevName(properties)
+    connected = prop2str(properties["Connected"])
+
+    if "Icon" not in properties:
+        logging.info(f"Skipping device {devName} (no type)")
+        return
+
+    if not (filter == prop2str(properties["Address"]) or
+            (filter == "input" and prop2str(properties["Icon"]).startswith("input"))):
+        logging.info(f"Skipping device {devName} (not {filter})")
+        return
+
+    logging.info(f"Event for {devName} (paired={bool2str(paired, 'paired', 'not paired')}, "
+                 f"trusted={bool2str(trusted, 'trusted', 'untrusted')}, "
+                 f"connected={bool2str(connected, 'connected', 'disconnected')})")
+
+    if paired and trusted and connected:
+        logging.info(f"Skipping already connected device {devName}")
+        return
+
+    if not paired and not connected and gdiscovering:
+        await doPairing(path, devName, shortDevName)
+
+    if not trusted and (gdiscovering or forceConnect):
+        await doTrusting(path, devName, shortDevName)
+
+    if not connected or forceConnect:
+        await doConnect(path, devName, shortDevName)
+
+async def check_discovery_control():
+    try:
+        if os.path.exists(CONTROL_FILE):
+            with open(CONTROL_FILE, "r") as f:
+                command = f.read().strip()
+
+            try:
+                os.remove(CONTROL_FILE)
+            except Exception as e:
+                logging.error(f"Failed to remove control file: {e}")
+
+            if command == "start":
+                await handle_start_discovery()
+            elif command == "stop":
+                await handle_stop_discovery()
+    except Exception as e:
+        logging.error(f"Error in check_discovery_control: {e}")
+    return True
+
+async def handle_start_discovery():
+    global gdiscovering, gadapter, glisting_mode, glisting_devs, gdevices
+
+    if os.path.isfile("/run/bt_listing"):
+        glisting_mode = True
+        logging.info("Listing mode enabled")
+        glisting_devs = {}
+        for path in gdevices:
+            listing_dev_event(path, gdevices[path], True)
+
+    try:
+        if not gdiscovering:
+            gdiscovering = True
+            logging.info("Starting discovery")
+            await gadapter.StartDiscovery()
+    except Exception as e:
+        logging.error(f"Failed to start discovery: {e}")
+
+async def handle_stop_discovery():
+    global gdiscovering, gadapter, glisting_mode
+
+    if glisting_mode:
+        logging.info("Listing mode disabled")
+    glisting_mode = False
+
+    try:
+        if gdiscovering:
+            gdiscovering = False
+            logging.info("Stopping discovery")
+            await gadapter.StopDiscovery()
+    except Exception as e:
+        logging.error(f"Failed to stop discovery: {e}")
+
+async def doPairing(path, devName, shortDevName):
+    global gbus
+    logging.info(f"Pairing... ({devName})")
+    logging_status(f"Pairing {shortDevName}...")
+    try:
+        device_obj = gbus.get_proxy_object("org.bluez", path)
+        device_iface = await device_obj.get_async_interface("org.bluez.Device1")
+        await device_iface.Pair()
+    except Exception as e:
+        logging.error(f"Pairing failed ({devName}): {e}")
+        logging_status(f"Pairing failed ({shortDevName})")
+
+async def doTrusting(path, devName, shortDevName):
+    global gbus
+    logging.info(f"Trusting ({devName})")
+    logging_status(f"Trusting {shortDevName}...")
+    try:
+        device_obj = gbus.get_proxy_object("org.bluez", path)
+        device_iface = await device_obj.get_async_interface("org.bluez.Device1")
+        device_iface.Trusted = True
+        await ravel.set_prop_flush(device_iface)
+    except Exception as e:
+        logging.error(f"Trusting failed ({devName}): {e}")
+        logging_status(f"Trusting failed ({shortDevName})")
+
+async def doConnect(path, devName, shortDevName):
+    global gadapter, gdiscovering, gbus
+
+    try:
+        if gdiscovering:
+            logging.info("Stopping discovery for connection")
+            await gadapter.StopDiscovery()
+
+        device_obj = gbus.get_proxy_object("org.bluez", path)
+        device_iface = await device_obj.get_async_interface("org.bluez.Device1")
+
+        for attempt in range(5):
+            try:
+                logging.info(f"Connecting... ({devName}) attempt {attempt + 1}")
+                logging_status(f"Connecting {shortDevName}...")
+                await device_iface.Connect()
+                logging.info(f"Connected successfully ({devName})")
+                logging_status(f"Connected successfully ({shortDevName})")
+                break
+            except Exception as e:
+                logging.error(f"Connection attempt {attempt + 1} failed: {e}")
+                if attempt < 4:
+                    await asyncio.sleep(1)
+                else:
+                    logging_status(f"Connection failed. Giving up. ({shortDevName})")
+    finally:
+        if gdiscovering:
+            logging.info("Restarting discovery")
+            try:
+                await gadapter.StartDiscovery()
+            except Exception as e:
+                logging.error(f"Failed to restart discovery: {e}")
+
+@ravel.interface(ravel.INTERFACE.SERVER, name=AGENT_INTERFACE)
+class Agent:
+    def __init__(self):
+        self.exit_on_release = True
+
+    def set_exit_on_release(self, exit_on_release):
+        self.exit_on_release = exit_on_release
+
+    @ravel.method(in_signature="", out_signature="")
+    def Release(self):
+        global g_shutdown_future
+        logging.info("Agent Release")
+        if self.exit_on_release and g_shutdown_future:
+            g_shutdown_future.set_result(None)
+
+    @ravel.method(in_signature="os", out_signature="")
+    def AuthorizeService(self, device, uuid):
+        logging.info("Agent AuthorizeService")
+
+    @ravel.method(in_signature="o", out_signature="s")
+    def RequestPinCode(self, device):
+        logging.info(f"RequestPinCode ({device})")
+        return "0000"
+
+    @ravel.method(in_signature="o", out_signature="u")
+    def RequestPasskey(self, device):
+        logging.info(f"RequestPasskey ({device})")
+        return 0
+
+    @ravel.method(in_signature="ouq", out_signature="")
+    def DisplayPasskey(self, device, passkey, entered):
+        logging.info(f"DisplayPasskey ({device}, {passkey:06d} entered {entered})")
+
+    @ravel.method(in_signature="os", out_signature="")
+    def DisplayPinCode(self, device, pincode):
+        logging.info(f"DisplayPinCode ({device}, {pincode})")
+
+    @ravel.method(in_signature="ou", out_signature="")
+    def RequestConfirmation(self, device, passkey):
+        logging.info("Agent RequestConfirmation")
+        return
+
+    @ravel.method(in_signature="o", out_signature="")
+    def RequestAuthorization(self, device):
+        logging.info("Agent RequestAuthorization")
+        return
+
+    @ravel.method(in_signature="", out_signature="")
+    def Cancel(self):
+        logging.info("Agent Cancel")
+
+def cleanup():
+    try:
+        if os.path.exists(AGENT_STATUS_FILE):
+            os.remove(AGENT_STATUS_FILE)
+    except Exception as e:
+        logging.error(f"Cleanup failed: {e}")
+
+def write_status():
+    try:
+        with open(AGENT_STATUS_FILE, "w") as f:
+            f.write(str(os.getpid()))
+    except Exception as e:
+        logging.error(f"Failed to write status file: {e}")
+        return False
+    return True
+
+async def find_adapter(bus, dev_id=None):
+    adapter_path = None
+    if dev_id:
+        adapter_path = f"/org/bluez/{dev_id}"
+    else:
+        try:
+            obj_manager_proxy = bus.get_proxy_object("org.bluez", "/")
+            obj_manager_iface = await obj_manager_proxy.get_async_interface(dbus.DBUSX.INTERFACE_OBJECT_MANAGER)
+            managed_objects = await obj_manager_iface.GetManagedObjects()
+
+            for path, interfaces in managed_objects[0].items():
+                if "org.bluez.Adapter1" in interfaces:
+                    adapter_path = path
+                    break
+        except Exception as e:
+            logging.error(f"Failed to find adapter via ObjectManager: {e}")
+            return None
+
+    if not adapter_path:
+        return None
+
+    logging.info(f"Using adapter at {adapter_path}")
+    adapter_obj = bus.get_proxy_object("org.bluez", adapter_path)
+    return await adapter_obj.get_async_interface("org.bluez.Adapter1")
+
+async def discovery_control_loop():
+    """ Replaces GLib.timeout_add(500, check_discovery_control) """
+    while True:
+        try:
+            await check_discovery_control()
+        except Exception as e:
+            logging.error(f"Error in discovery_control_loop: {e}")
+        await asyncio.sleep(0.5)
+
+@ravel.signal(in_signature="oa{sa{sv}}")
+async def interfaces_added_wrapper(path, interfaces_and_properties, bus=None):
+    """ Wrapper to call the original async handler """
+    try:
+        await interfaces_added(path, interfaces_and_properties)
+    except Exception as e:
+        logging.error(f"Error in interfaces_added_wrapper: {e}")
+
+@ravel.signal(in_signature="oas")
+def interfaces_removed_wrapper(path, interfaces, bus=None):
+    """ Wrapper to call the original handler """
+    try:
+        interfaces_removed(path, interfaces)
+    except Exception as e:
+        logging.error(f"Error in interfaces_removed_wrapper: {e}")
+
+@ravel.signal(in_signature="sa{sv}as", message_keyword="message")
+async def properties_changed_wrapper(interface_name, changed_properties, invalidated_properties, message=None):
+    """ Wrapper to filter for Device1 and call the original async handler """
+    if interface_name == "org.bluez.Device1":
+        try:
+            await properties_changed(interface_name, changed_properties, invalidated_properties, message.path)
+        except Exception as e:
+            logging.error(f"Error in properties_changed_wrapper: {e}")
+
+
+async def main():
+    global gbus, gadapter, g_shutdown_future
+
+    atexit.register(cleanup)
+
+    option_list = [
+        make_option("-i", "--device", action="store", type="string", dest="dev_id")
+    ]
+    parser = OptionParser(option_list=option_list)
+    options, args = parser.parse_args()
+
+    gbus = await ravel.system_bus_async()
+
+    gbus.listen_objects_added(interfaces_added_wrapper)
+    gbus.listen_objects_removed(interfaces_removed_wrapper)
+
+    gbus.listen_propchanged(
+        path="/",
+        fallback=True,
+        interface="org.bluez.Device1",
+        func=properties_changed_wrapper
+    )
+
+    agentpath = "/archr/agent"
+    agent = Agent()
+    gbus.register(path=agentpath, interface=agent, fallback=False)
+
+    try:
+        agent_manager_obj = gbus.get_proxy_object("org.bluez", "/org/bluez")
+        manager = await agent_manager_obj.get_async_interface("org.bluez.AgentManager1")
+        await manager.RegisterAgent(agentpath, "NoInputNoOutput")
+        await manager.RequestDefaultAgent(agentpath)
+        logging.info("Agent registered")
+    except Exception as e:
+        logging.error(f"Failed to register agent: {e}")
+        raise
+
+    if not write_status():
+        raise Exception("Failed to write status file")
+
+    logging.info("Waiting for Bluetooth adapter...")
+    await asyncio.sleep(5)
+    gadapter = await find_adapter(gbus, options.dev_id)
+
+    if not gadapter:
+        raise Exception("No bluetooth adapter found")
+
+    logging.info("Adapter initialized")
+
+    discovery_task = asyncio.create_task(discovery_control_loop())
+
+    g_shutdown_future = asyncio.Future()
+    await g_shutdown_future
+
+    discovery_task.cancel()
+    try:
+        await discovery_task
+    except asyncio.CancelledError:
+        pass
+
+    logging.info("Shutdown future triggered, main loop terminating.")
+
+
+if __name__ == '__main__':
+    try:
+        asyncio.run(main())
+    except Exception as e:
+        logging.error(f"Fatal error: {e}", exc_info=True)
+    finally:
+        logging.error("Agent terminated")
+        cleanup()

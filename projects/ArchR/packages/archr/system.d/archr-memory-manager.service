@@ -1,0 +1,17 @@
+[Unit]
+Description=ArchR Memory Manager
+After=local-fs.target
+DefaultDependencies=no
+Conflicts=shutdown.target
+Before=shutdown.target
+
+[Service]
+Environment=HOME=/storage
+Type=oneshot
+ExecStart=/usr/bin/archr-memory-manager --setup
+ExecReload=/usr/bin/archr-memory-manager --reload
+ExecStop=/usr/bin/archr-memory-manager --stop
+RemainAfterExit=yes
+
+[Install]
+WantedBy=basic.target

@@ -1,0 +1,15 @@
+[Unit]
+Description=Volume button service
+After=headphones.service
+RequiresMountsFor=/storage
+Before=archr.target
+StartLimitIntervalSec=0
+
+[Service]
+Environment=HOME=/storage
+ExecStart=/usr/bin/input_sense
+Restart=always
+RestartSec=1
+
+[Install]
+WantedBy=multi-user.target

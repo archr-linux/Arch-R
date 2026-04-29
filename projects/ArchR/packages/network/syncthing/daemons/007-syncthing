@@ -1,0 +1,4 @@
+STATE=$(get_setting syncthing.enabled)
+SVC="syncthing"
+CONF="syncthing.conf"
+DAEMONS=("syncthing")

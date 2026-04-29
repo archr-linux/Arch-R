@@ -1,0 +1,80 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2009-2014 Stephan Raue (stephan@openelec.tv)
+# Copyright (C) 2018-2022 Team LibreELEC (https://libreelec.tv)
+# Copyright (C) 2022 JELOS (https://github.com/JustEnoughLinuxOS)
+# Copyright (C) 2024-present ArchR (https://github.com/archr-linux/Arch-R)
+
+. /etc/os-release
+
+# If /etc/machine-id is a broken symlink (storage not mounted), create a real file
+if [ -L /etc/machine-id ] && [ ! -e /etc/machine-id ]; then
+  rm -f /etc/machine-id
+  touch /etc/machine-id
+fi
+
+# remove old machine-id file
+[[ -f "/storage/.cache/machine-id" ]] && rm /storage/.cache/machine-id
+
+# Use local file if /storage is not mounted yet
+if mountpoint -q /storage 2>/dev/null; then
+  MACHINEIDFILE=/storage/.cache/systemd-machine-id
+else
+  MACHINEIDFILE=/etc/machine-id
+fi
+
+# For first boot detection systemd may have overmounted the file
+# We should prefer the current machine-id over freshy generated UUID
+CURMACHINEID="$(cat ${MACHINEIDFILE} 2>/dev/null)"
+umount ${MACHINEIDFILE} >/dev/null 2>&1
+mkdir -p $(dirname ${MACHINEIDFILE})
+STOREDMACHINEID="$(cat ${MACHINEIDFILE} 2>/dev/null)"
+
+# when possible, generate a consistent systemd-machine-id from unique bytes of hardware
+case "${HW_DEVICE}" in
+  H700) UID_FILE="/sys/bus/nvmem/devices/sunxi-sid0/nvmem";;
+  RK3326|RK3566|RK3588) UID_FILE="/sys/bus/nvmem/devices/rockchip-otp0/nvmem";;
+  RK3399) UID_FILE="/sys/bus/nvmem/devices/rockchip-efuse0/nvmem";;
+  S922X) UID_FILE="/sys/bus/platform/devices/secure-monitor/serial";;
+  SM8250|SM8550) UID_FILE="/sys/devices/soc0/serial_number";;
+esac
+
+# Fallback if file does not exist to generated UUID
+[ ! -e "${UID_FILE}" ] && UID_FILE=
+
+# When we have a usable UID_FILE, just use md5 of it as a machine id and finish
+if [ -s "${UID_FILE}" ]; then
+  MACHINEID=($(md5sum "${UID_FILE}"))
+  if [[ $? == 0 ]]; then
+    if [[ "${MACHINEID}" == "${STOREDMACHINEID}" ]]; then
+      # Already stored, no change needed
+      true
+    else
+      # Write the calculated machine id
+      echo ${MACHINEID} > ${MACHINEIDFILE}
+    fi
+    exit 0
+  fi
+fi
+
+# If we are here, an attempt to use hardware unique bytes failed.
+# Fall back to initially generating and then keeping a UUID
+
+# test systemd-machine-id exists and is 32 hex chars or generate a new uuid
+MACHINEID="${CURMACHINEID}"
+[ "${#MACHINEID}" != "32" ] && MACHINEID=
+[[ "${MACHINEID//[a-f0-9]/}" != "" ]] && MACHINEID=
+
+# If after all checks MACHINEID is still defined, we have a valid ID
+if [ -n "${MACHINEID}" ]; then
+  if [[ "${CURMACHINEID}" == "${STOREDMACHINEID}" ]]; then
+    # Already stored, no change needed
+    true
+  else
+    # persist temporary machine id from overmounted file
+    echo ${MACHINEID} > ${MACHINEIDFILE}
+  fi
+else
+  # generate and persist uuid
+  /usr/bin/dbus-uuidgen > ${MACHINEIDFILE}
+fi

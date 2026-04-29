@@ -1,0 +1,44 @@
+################################################################################
+# setup build defaults
+################################################################################
+
+  # Project FLAGS
+    PROJECT_CFLAGS=""
+
+  # Root filesystem type (ext4 for ArchR, squashfs for legacy)
+    ROOTFS_TYPE="ext4"
+
+  # SquashFS compression method (gzip / lzo / xz) - only used when ROOTFS_TYPE=squashfs
+    SQUASHFS_COMPRESSION="lzo"
+
+################################################################################
+# setup project defaults
+################################################################################
+
+  # OpenGL(X) implementation to use (no / mesa)
+    OPENGL="mesa"
+
+  # OpenGL-ES implementation to use (no / mesa)
+    OPENGLES="mesa"
+
+  # Displayserver to use (no / wl)
+    DISPLAYSERVER="no"
+
+  # Windowmanager to use (none / weston)
+    WINDOWMANAGER="none"
+
+  # Xorg Graphic drivers to use (all / i915,i965,r200,r300,r600,nvidia)
+  # Space separated list is supported,
+  # e.g. GRAPHIC_DRIVERS="i915 i965 r300 r600 radeonsi nvidia"
+    GRAPHIC_DRIVERS=""
+
+  # Additional Firmware to use ( )
+  # Space separated list is supported,
+  # e.g. FIRMWARE=""
+    FIRMWARE=""
+
+  # Additional packages to install
+    ADDITIONAL_PACKAGES=""
+
+  # Satisfy legacy build dependencies
+    SWAP_SUPPORT="yes"

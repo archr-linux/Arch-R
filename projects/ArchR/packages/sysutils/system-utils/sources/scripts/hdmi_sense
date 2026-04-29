@@ -1,0 +1,54 @@
+#!/bin/bash
+
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+
+. /etc/profile
+
+TMP_STATUS="/run/hdmi-status.last"
+CURRENT_STATE=""
+
+for HDMI in /sys/class/drm/card*/card*-HDMI-A-[0-9]/status
+do
+  HDMI_STATE=$(<${HDMI})
+  case "${HDMI_STATE}" in
+    connected)
+      DEFAULT_SINK=$(pactl list short sinks | awk '/hdmi/ {print $2; exit}')
+      CURRENT_STATE="${HDMI_STATE}"
+      break
+      ;;
+    disconnected)
+      CURRENT_STATE="${HDMI_STATE}"
+      break
+      ;;
+  esac
+done
+
+if [ -z "${DEFAULT_SINK}" ]
+then
+  DEFAULT_ID=$(pactl list short cards | awk '! /hdmi/ {print $1; exit}')
+  DEFAULT_SINK=$(pactl list short sinks | awk '! /hdmi/ {print $2; exit}')
+
+  if [ ! -z "${DEFAULT_SINK}" ]
+  then
+    ### Set the default sink ignoring HDMI
+    pactl set-default-sink ${DEFAULT_SINK}
+    pactl set-default-source ${DEFAULT_SINK}.monitor
+  fi
+
+  if [ ! -z "${DEVICE_PIPEWIRE_PROFILE}" ]
+  then
+    pactl set-card-profile ${DEFAULT_ID} ${DEVICE_PIPEWIRE_PROFILE}
+  fi
+
+fi
+
+pactl set-default-sink ${DEFAULT_SINK}
+# Save the HDMI port connection status to avoid duplicate handling.
+# The udev event can be triggered multiple times, so we skip if the status hasn't changed.
+[ -z "${CURRENT_STATE}" ] && exit 0
+if [ -f "${TMP_STATUS}" ]; then
+    LAST=$(cat "${TMP_STATUS}")
+    [ "${LAST}" = "${CURRENT_STATE}" ] && exit 0
+fi
+echo "${CURRENT_STATE}" > "${TMP_STATUS}"
