@@ -19,6 +19,8 @@
 
 #include <video/display_timing.h>
 #include <video/mipi_display.h>
+#include <video/of_display_timing.h>
+#include <video/videomode.h>
 
 #include <drm/drm_mipi_dsi.h>
 #include <drm/drm_modes.h>
@@ -73,6 +75,8 @@ struct generic_panel {
     struct generic_panel_size size;
     struct generic_panel_mode *modes;
     struct generic_panel_init_seq *iseq;
+    struct display_timing *timings;
+    uint32_t num_timings;
 
     enum drm_panel_orientation orientation;
     bool prepared;
@@ -489,6 +493,30 @@ disable_vdd:
 /* drm_display_mode template without clock as it is variable */
 static const struct drm_display_mode mode_template = { };
 
+static unsigned int panel_simple_get_timings_modes(struct generic_panel *ctx,
+						   struct drm_connector *connector)
+{
+	struct drm_display_mode *mode;
+	const struct display_timing *dt = ctx->timings;
+	struct videomode vm;
+
+	videomode_from_timing(dt, &vm);
+	mode = drm_mode_create(connector->dev);
+	if (!mode) {
+		dev_err(ctx->dev, "failed to add mode %ux%u\n",
+			dt->hactive.typ, dt->vactive.typ);
+		return -EINVAL;
+	}
+
+	drm_display_mode_from_videomode(&vm, mode);
+
+	mode->type |= DRM_MODE_TYPE_DRIVER;
+	mode->type |= DRM_MODE_TYPE_PREFERRED;
+
+	drm_mode_probed_add(connector, mode);
+
+	return 0;
+}
 
 static int generic_panel_get_modes(struct drm_panel *panel,
                 struct drm_connector *connector)
@@ -497,6 +525,13 @@ static int generic_panel_get_modes(struct drm_panel *panel,
     struct drm_display_mode mode_tmp;
     struct drm_display_mode *mode;
     struct generic_panel_mode *genmode = ctx->modes;
+    int ret;
+
+    if (ctx->num_timings) {
+	ret = panel_simple_get_timings_modes(ctx, connector);
+	if (ret)
+		return ret;
+    }
 
     while (genmode) {
         dev_dbg(ctx->dev, "gen mode %d %dx%d\n", genmode->clock, genmode->horizontal[1], genmode->vertical[1]);
@@ -532,7 +567,7 @@ static int generic_panel_get_modes(struct drm_panel *panel,
         drm_mode_set_name(mode);
 
         mode->type = DRM_MODE_TYPE_DRIVER;
-        if (genmode->is_default) { mode->type |= DRM_MODE_TYPE_PREFERRED; };
+        if (genmode->is_default && !ctx->num_timings) { mode->type |= DRM_MODE_TYPE_PREFERRED; };
 
         drm_mode_probed_add(connector, mode);
 
@@ -570,6 +605,8 @@ static int generic_panel_probe(struct mipi_dsi_device *dsi)
 {
     struct device *dev = &dsi->dev;
     struct generic_panel *ctx;
+    struct display_timing dt = {0};
+    struct display_timing *timing;
     int ret;
 
     ctx = devm_kzalloc(dev, sizeof(*ctx), GFP_KERNEL);
@@ -608,6 +645,17 @@ static int generic_panel_probe(struct mipi_dsi_device *dsi)
     if (ret < 0) {
         dev_err(dev, "%pOF: failed to get orientation %d\n", dev->of_node, ret);
         return ret;
+    }
+
+    if (!of_get_display_timing(dev->of_node, "panel-timing", &dt)) {
+    	timing = devm_kzalloc(dev, sizeof(*timing), GFP_KERNEL);
+    	if (!timing)
+    		return -ENOMEM;
+    	memcpy(timing, &dt, sizeof(*timing));
+    	ctx->timings = timing;
+    	ctx->num_timings = 1;
+    } else {
+	    dev_dbg(dev, "no panel-timing node, using mode lines only\n");
     }
 
     mipi_dsi_set_drvdata(dsi, ctx);
