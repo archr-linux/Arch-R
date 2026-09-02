@@ -33,7 +33,10 @@ ENV{DEVTYPE}!="usb_interface", GOTO="rtl8188eus_end"
 ATTRS{idVendor}=="0bda", ATTRS{idProduct}=="0179", GOTO="rtl8188eus_swap"
 ATTRS{idVendor}=="0bda", ATTRS{idProduct}=="8179", GOTO="rtl8188eus_swap"
 ATTRS{idVendor}=="0bda", ATTRS{idProduct}=="8189", GOTO="rtl8188eus_swap"
-ATTRS{idVendor}=="7392", ATTRS{idProduct}=="7811", GOTO="rtl8188eus_swap"
+# 7392:7811 removed: field dmesg (issue #19, 2026-07-09) shows Edimax
+# EW-7811Un units with this ID carrying an RTL8188CU die — the swap rips
+# them off rtl8xxxu (which drives them fine) and 8188eu can't take over,
+# killing the dongle. VID:PID does not identify the chip for this entry.
 ATTRS{idVendor}=="056e", ATTRS{idProduct}=="4008", GOTO="rtl8188eus_swap"
 GOTO="rtl8188eus_end"
 
