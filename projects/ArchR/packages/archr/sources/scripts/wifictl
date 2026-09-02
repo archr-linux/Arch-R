@@ -59,12 +59,16 @@ wait_for_wifi() {
   # auto-picked (root-caused live on Soysauce 2026-08-12). If the user
   # never configured wifi.country, learn it from the country IEs the
   # neighbouring APs broadcast (scan dump only reads cached results, so
-  # it doesn't fight iwd for the radio) and persist the answer.
+  # it doesn't fight iwd for the radio). The learned value is applied
+  # for this session only, never persisted: beacons are unauthenticated
+  # attacker-influenced input, so a spoofed Country IE must not be able
+  # to change the stored regulatory config — re-deriving each boot
+  # closes the window as soon as the rogue AP is gone. Only an explicit
+  # user-configured wifi.country is ever persisted (via the settings UI).
   if [ -z "${COUNTRY}" ]; then
     COUNTRY=$(iw dev "${WIFI_DEV}" scan dump 2>/dev/null | \
               grep -oE 'Country: [A-Z]{2}' | sort | uniq -c | sort -rn | \
               head -1 | grep -oE '[A-Z]{2}$')
-    [ -n "${COUNTRY}" ] && set_setting wifi.country "${COUNTRY}"
   fi
   [ -n "${COUNTRY}" ] && iw reg set "${COUNTRY}" 2>/dev/null
 }
