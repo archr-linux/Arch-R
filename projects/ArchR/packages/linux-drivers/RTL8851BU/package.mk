@@ -13,9 +13,12 @@ PKG_IS_KERNEL_PKG="yes"
 pre_make_target() {
   unset LDFLAGS
 
-  # Switch platform for cross-compilation
-  sed -i 's/CONFIG_PLATFORM_I386_PC = y/CONFIG_PLATFORM_I386_PC = n/' ${PKG_BUILD}/Makefile
-  sed -i 's/CONFIG_PLATFORM_ARM64_PC = n/CONFIG_PLATFORM_ARM64_PC = y/' ${PKG_BUILD}/Makefile
+  # Keep the Makefile's default CONFIG_PLATFORM_I386_PC=y block: it is the
+  # only platform block in this tree and just sets -DCONFIG_LITTLE_ENDIAN
+  # (ARCH/CROSS_COMPILE are passed on the command line, so nothing x86
+  # leaks in). There is no CONFIG_PLATFORM_ARM64_PC in this Makefile —
+  # disabling I386_PC left no platform selected and broke the build with
+  # '#error "Must be LITTLE/BIG Endian Host"'.
 }
 
 make_target() {
