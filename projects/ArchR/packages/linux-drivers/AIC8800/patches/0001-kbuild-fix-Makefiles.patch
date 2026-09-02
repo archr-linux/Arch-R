@@ -1,0 +1,73 @@
+From: ROCKNIX <https://github.com/ROCKNIX>
+Subject: [PATCH] aic8800-usb: kbuild-friendly Makefiles + /lib/firmware
+
+Out-of-tree build uses $(MAKE) -C $(kernel) M=$(src) modules; guard
+standalone rules with KERNELRELEASE (rk915 pattern).  Use /lib/firmware
+on target.
+
+--- a/Makefile	2026-02-16 13:22:01.000000000 +0800
++++ b/Makefile	2026-04-10 21:23:53.209360130 +0800
+@@ -11,6 +11,10 @@
+ export CONFIG_WOWLAN = n
+ ###################################
+ 
++ifneq ($(KERNELRELEASE),)
++
++else
++
+ ########## platform support list ##########
+ export CONFIG_PLATFORM_ROCKCHIP = n
+ export CONFIG_PLATFORM_ALLWINNER = n
+@@ -87,3 +91,4 @@
+ 	cd aic_load_fw/;make clean;cd ..
+ 	cd aic8800_fdrv/;make clean;cd ..
+ 	rm -rf modules.order Module.symvers .modules.order.cmd .Module.symvers.cmd .tmp_versions/
++endif
+--- a/aic8800_fdrv/Makefile	2026-02-16 13:22:01.000000000 +0800
++++ b/aic8800_fdrv/Makefile	2026-04-10 21:23:53.209360130 +0800
+@@ -31,7 +31,7 @@
+ #
+ # DEBUG OPTIONS
+ CONFIG_RWNX_UM_HELPER_DFLT ?= "/dini/dini_bin/rwnx_umh.sh"
+-CONFIG_AIC_FW_PATH = "/vendor/etc/firmware"
++CONFIG_AIC_FW_PATH = "/lib/firmware"
+ export CONFIG_AIC_FW_PATH
+ 
+ #
+@@ -344,6 +344,11 @@
+ ccflags-$(CONFIG_POWER_LIMIT) += -DCONFIG_POWER_LIMIT
+ ccflags-$(CONFIG_EXT_FEM_8800DCDW) += -DCONFIG_EXT_FEM_8800DCDW
+ ccflags-$(CONFIG_WOWLAN) += -DCONFIG_WOWLAN
++
++ifneq ($(KERNELRELEASE),)
++
++else
++
+ MAKEFLAGS +=-j$(shell nproc)
+ 
+ # Platform support list
+@@ -411,3 +416,4 @@
+ clean:
+ 	rm -rf *.o *.ko *.o.* *.mod.* modules.* Module.* .a* .o* .*.o.* *.mod .tmp* .cache.mk .modules.order.cmd .Module.symvers.cmd
+ 
++endif
+--- a/aic_load_fw/Makefile	2026-02-16 13:22:01.000000000 +0800
++++ b/aic_load_fw/Makefile	2026-04-10 21:23:53.209360130 +0800
+@@ -67,6 +67,12 @@
+ 
+ 
+ 
++ifneq ($(KERNELRELEASE),)
++ifeq ($(CONFIG_PLATFORM_ROCKCHIP), y)
++ccflags-$(CONFIG_PLATFORM_ROCKCHIP) += -DCONFIG_PLATFORM_ROCKCHIP
++endif
++else
++
+ ifeq ($(CONFIG_PLATFORM_ROCKCHIP), y)
+ ccflags-$(CONFIG_PLATFORM_ROCKCHIP) += -DCONFIG_PLATFORM_ROCKCHIP
+ #KDIR := /home/yaya/E/Rockchip/3229/Android7/RK3229_ANDROID7.1_v1.01_20170914/rk3229_Android7.1_v1.01_xml0914/kernel
+@@ -122,3 +128,4 @@
+ 
+ clean:
+ 	rm -rf *.o *.ko *.o.* *.mod.* modules.* Module.* .a* .o* .*.o.* *.mod .tmp* .cache.mk .modules.order.cmd .Module.symvers.cmd
++endif

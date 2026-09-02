@@ -1,0 +1,29 @@
+From: ROCKNIX <https://github.com/ROCKNIX>
+Subject: [PATCH] aic8800-usb: default aicwf_dbg_level to LOGERROR only
+
+Disables AICWFDBG(LOGINFO) and other verbose levels at module load.
+Re-enable at runtime: modprobe ... aicwf_dbg_level=3 (WLAN) or
+aicwf_dbg_level=31 (full).  See aicwf_debug.h bit masks.
+
+--- a/aic8800_fdrv/rwnx_main.c	2026-04-10 21:57:45.908977317 +0800
++++ b/aic8800_fdrv/rwnx_main.c	2026-04-10 21:57:45.908977317 +0800
+@@ -545,7 +545,7 @@
+ struct semaphore aicwf_deinit_sem;
+ atomic_t aicwf_deinit_atomic;
+ 
+-int aicwf_dbg_level = LOGERROR|LOGINFO;
++int aicwf_dbg_level = LOGERROR;
+ module_param(aicwf_dbg_level, int, 0660);
+ #ifdef CONFIG_DYNAMIC_PWR
+ int dynamic_pwr = 1;
+--- a/aic_load_fw/aic_bluetooth_main.c	2026-04-10 21:57:45.908977317 +0800
++++ b/aic_load_fw/aic_bluetooth_main.c	2026-04-10 21:57:45.912977312 +0800
+@@ -20,7 +20,7 @@
+ char paringid[100];
+ int n_para = 1;
+ int ble_scan_wakeup_reboot_time = 1000;
+-int aicwf_dbg_level = LOGERROR|LOGINFO|LOGDEBUG|LOGTRACE;
++int aicwf_dbg_level = LOGERROR;
+ int flash_erase_len = 0x400000;
+ uint32_t ad_data_filter_mask = 0;
+ uint32_t gpio_num = 2;//default select gpiob2 for fw_wakeup_host

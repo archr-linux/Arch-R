@@ -1,39 +1,43 @@
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (C) 2026-present ArchR (https://github.com/archr-linux/Arch-R)
 
+# Driver source adopted from the AveyondFly fork (field-validated on RK3326
+# clones running the same 6.12 kernel); replaces the previous friddle/
+# arch-aic8800-6.12 tree. We keep our USB mode-switch handling on top: the
+# AIC8800DC ships in u-disk mode (a69c:5721/5722), which the driver's own
+# ID table does not cover — without the eject + re-enumeration dance the
+# WLAN function never appears.
 PKG_NAME="AIC8800"
-PKG_VERSION="1018f17a629c638acc1a01df19e3f2146e7b4f5c"
+PKG_VERSION="b6ba4cbacf9657caecce26c2426880c5bb485266"
+PKG_SHA256="889aef7279e586bb145dbd891a1f3c1f51139839e3578705760a164e3004a920"
 PKG_LICENSE="GPL"
-PKG_SITE="https://github.com/friddle/arch-aic8800-6.12"
-PKG_URL="${PKG_SITE}.git"
-PKG_LONGDESC="AICsemi AIC8800 USB WiFi+BT driver and firmware"
-PKG_TOOLCHAIN="make"
+PKG_SITE="https://github.com/AveyondFly/aic8800-usb"
+PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
+PKG_LONGDESC="AIC8800 USB WiFi/BT out-of-tree driver (aic_load_fw_usb + aic8800_fdrv_usb)"
+PKG_TOOLCHAIN="manual"
 PKG_IS_KERNEL_PKG="yes"
 
 pre_make_target() {
   unset LDFLAGS
-
-  # Switch platform from Ubuntu to manual cross-compilation
-  sed -i 's/CONFIG_PLATFORM_UBUNTU ?= y/CONFIG_PLATFORM_UBUNTU ?= n/' \
-    ${PKG_BUILD}/drivers/aic8800/Makefile
 }
 
 make_target() {
-  cd ${PKG_BUILD}/drivers/aic8800
-  make V=1 \
-       ARCH=${TARGET_KERNEL_ARCH} \
-       KDIR=$(kernel_path) \
-       CROSS_COMPILE=${TARGET_KERNEL_PREFIX}
+  kernel_make -C $(kernel_path) M=${PKG_BUILD} modules
 }
 
 makeinstall_target() {
-  mkdir -p ${INSTALL}/$(get_full_module_dir)/kernel/drivers/net/wireless/
-    find ${PKG_BUILD}/drivers/aic8800 -name "*.ko" \
-      -exec cp {} ${INSTALL}/$(get_full_module_dir)/kernel/drivers/net/wireless/ \;
+  mkdir -p ${INSTALL}/$(get_full_module_dir)/${PKG_NAME}
+  cp ${PKG_BUILD}/aic_load_fw/aic_load_fw_usb.ko \
+     ${PKG_BUILD}/aic8800_fdrv/aic8800_fdrv_usb.ko \
+     ${INSTALL}/$(get_full_module_dir)/${PKG_NAME}
 
-  # Install firmware to kernel-overlays (build system symlinks /usr/lib/firmware there)
+  # Firmware is bundled in the driver repo
   mkdir -p ${INSTALL}/$(get_full_firmware_dir)/aic8800DC
-    cp -r ${PKG_BUILD}/fw/aic8800DC/* ${INSTALL}/$(get_full_firmware_dir)/aic8800DC/
+  cp -a ${PKG_BUILD}/aic8800DC/. ${INSTALL}/$(get_full_firmware_dir)/aic8800DC/
+
+  # Firmware loader must be ready before the WLAN driver probes
+  mkdir -p ${INSTALL}/usr/lib/modprobe.d
+  cp ${PKG_DIR}/modprobe.d/aic8800-usb.conf ${INSTALL}/usr/lib/modprobe.d/
 
   # Install AIC8800 USB mode switch script and udev rule
   mkdir -p ${INSTALL}/usr/lib/udev/rules.d
