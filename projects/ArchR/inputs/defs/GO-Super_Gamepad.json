@@ -10,8 +10,8 @@
   "retroarch": {
     "input_device": "GO-Super Gamepad",
     "input_driver": "udev",
-    "input_vendor_id": "0000",
-    "input_product_id": "1100",
+    "input_vendor_id": "0",
+    "input_product_id": "4352",
     "input_b_btn": "0",
     "input_a_btn": "1",
     "input_x_btn": "2",
