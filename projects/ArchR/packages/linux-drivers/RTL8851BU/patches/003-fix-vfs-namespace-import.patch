@@ -1,0 +1,24 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ROCKNIX <https://github.com/ROCKNIX/distribution>
+Date: Fri, 29 May 2026 00:00:00 +0000
+Subject: [PATCH] Import VFS namespace for kernel_write/kernel_read/filp_open
+
+Rockchip/Android GKI kernels export filp_open, kernel_read and kernel_write
+into the VFS_internal namespace. modpost rejects the module without an
+explicit import.
+
+--- a/os_dep/linux/os_intfs.c
++++ b/os_dep/linux/os_intfs.c
+@@ -19,6 +19,12 @@ MODULE_LICENSE("GPL");
+ MODULE_DESCRIPTION("Realtek Wireless Lan Driver");
+ MODULE_AUTHOR("Realtek Semiconductor Corp.");
+ MODULE_VERSION(DRIVERVERSION);
++/*
++ * Required on Rockchip/Android GKI kernels (e.g. 5.10.x vendor trees).
++ */
++#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0) && LINUX_VERSION_CODE < KERNEL_VERSION(6, 13, 0))
++MODULE_IMPORT_NS(VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver);
++#endif
+ 
+ int netdev_open(struct net_device *pnetdev);
+ static int netdev_close(struct net_device *pnetdev);

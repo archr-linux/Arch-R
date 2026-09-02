@@ -1,0 +1,11 @@
+--- a/include/drv_conf.h
++++ b/include/drv_conf.h
+@@ -712,8 +712,4 @@
+ */
+ #define RTW_WKARD_TRIGGER_FRAME_PARSER
+ 
+-#if !defined(strlcpy)
+-#define strlcpy(a, b, c) strscpy(a, b, c)
+-#endif
+-
+ #endif /* __DRV_CONF_H__ */
