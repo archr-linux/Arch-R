@@ -151,17 +151,17 @@
            p = positive direction, n = negative direction
            report value = (real_adc_data * tuning_value) / 100
          */
-        abs_x-p-tuning = <280>;
-        abs_x-n-tuning = <280>;
+        abs_x-p-tuning = <300>;
+        abs_x-n-tuning = <300>;
 
-        abs_y-p-tuning = <280>;
-        abs_y-n-tuning = <280>;
+        abs_y-p-tuning = <300>;
+        abs_y-n-tuning = <300>;
 
-        abs_rx-p-tuning = <280>;
-        abs_rx-n-tuning = <280>;
+        abs_rx-p-tuning = <300>;
+        abs_rx-n-tuning = <300>;
 
-        abs_ry-p-tuning = <280>;
-        abs_ry-n-tuning = <280>;
+        abs_ry-p-tuning = <350>;
+        abs_ry-n-tuning = <300>;
 
         /* poll device interval (ms), adc read interval */
         poll-interval = <10>;
