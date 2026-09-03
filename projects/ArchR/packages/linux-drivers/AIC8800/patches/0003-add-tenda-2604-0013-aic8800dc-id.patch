@@ -1,0 +1,59 @@
+From: ArchR
+Subject: [PATCH] fdrv: probe Tenda-branded AIC8800DC dongles (2604:0013)
+
+Field capture on an R36S Soysauce (ArchR issue #19 family): after the
+u-disk eject, this dongle re-enumerates as 2604:0013 with product
+string "AIC8800DC" instead of the vendor a69c:88dc ID, so the fdrv
+never probes it and no wlan interface appears. 0x2604 is Tenda's USB
+vendor ID; these are rebadged AIC8800DC sticks. Add the ID to the
+device table and map it to the existing DC path in chipmatch. The DC
+firmware upload already lives in the fdrv (aicwf_compat_8800dc), so
+the loader table needs no change.
+
+--- a/aic8800_fdrv/aicwf_usb.h
++++ b/aic8800_fdrv/aicwf_usb.h
+@@ -16,6 +16,7 @@
+ /* USB Device ID */
+ #define USB_VENDOR_ID_AIC                0xA69C
+ #define USB_VENDOR_ID_AIC_V2             0x368B
++#define USB_VENDOR_ID_TENDA              0x2604
+
+ #ifndef CONFIG_USB_BT
+ #define USB_PRODUCT_ID_AIC8800          0x8800
+@@ -26,6 +27,7 @@
+ #define USB_PRODUCT_ID_AIC8800D41       0x8d41
+ #define USB_PRODUCT_ID_AIC8800D81X2     0x8d91
+ #define USB_PRODUCT_ID_AIC8800D89X2     0x8d99
++#define USB_PRODUCT_ID_TENDA_AIC8800DC  0x0013
+ #else
+ #define USB_PRODUCT_ID_AIC8801          0x8801
+ #define USB_PRODUCT_ID_AIC8800DC        0x88dc
+@@ -34,6 +36,7 @@
+ #define USB_PRODUCT_ID_AIC8800D41       0x8d41
+ #define USB_PRODUCT_ID_AIC8800D81X2     0x8d91
+ #define USB_PRODUCT_ID_AIC8800D89X2     0x8d99
++#define USB_PRODUCT_ID_TENDA_AIC8800DC  0x0013
+ #endif
+
+ enum AICWF_IC{
+--- a/aic8800_fdrv/aicwf_usb.c
++++ b/aic8800_fdrv/aicwf_usb.c
+@@ -2336,6 +2336,10 @@ static int aicwf_usb_chipmatch(struct aic_usb_dev *usb_dev, u16_l vid, u16_l pid
+ 	}else if(pid == USB_PRODUCT_ID_AIC8800DC){
+ 		usb_dev->chipid = PRODUCT_ID_AIC8800DC;
+ 		AICWFDBG(LOGINFO, "%s USE AIC8800DC\r\n", __func__);
++		return 0;
++	}else if(vid == USB_VENDOR_ID_TENDA && pid == USB_PRODUCT_ID_TENDA_AIC8800DC){
++		usb_dev->chipid = PRODUCT_ID_AIC8800DC;
++		AICWFDBG(LOGINFO, "%s USE AIC8800DC (Tenda 2604:0013)\r\n", __func__);
+ 		return 0;
+ 	}else if(pid == USB_PRODUCT_ID_AIC8800DW){
+ 		usb_dev->chipid = PRODUCT_ID_AIC8800DW;
+@@ -2636,6 +2640,7 @@ static struct usb_device_id aicwf_usb_id_table[] = {
+     {USB_DEVICE_AND_INTERFACE_INFO(USB_VENDOR_ID_AIC, USB_PRODUCT_ID_AIC8800D41, 0xff, 0xff, 0xff)},
+     {USB_DEVICE_AND_INTERFACE_INFO(USB_VENDOR_ID_AIC, USB_PRODUCT_ID_AIC8800DC, 0xff, 0xff, 0xff)},
+     {USB_DEVICE(USB_VENDOR_ID_AIC, USB_PRODUCT_ID_AIC8800DW)},
++    {USB_DEVICE_AND_INTERFACE_INFO(USB_VENDOR_ID_TENDA, USB_PRODUCT_ID_TENDA_AIC8800DC, 0xff, 0xff, 0xff)},
+     {USB_DEVICE_AND_INTERFACE_INFO(USB_VENDOR_ID_AIC_V2, USB_PRODUCT_ID_AIC8800D81X2, 0xff, 0xff, 0xff)},
+     {USB_DEVICE(USB_VENDOR_ID_AIC_V2, USB_PRODUCT_ID_AIC8800D89X2)},
+ #endif
