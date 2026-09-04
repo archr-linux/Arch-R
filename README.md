@@ -56,6 +56,14 @@ The image build pipeline descends from the LibreELEC family of embedded build sy
 
 Panel overlays are not baked into the images. Generate the overlay for your exact motherboard revision at the online generator, https://arch-r.io/overlay-generator/ (pick your board, or upload the stock `dtb` from the SD card that shipped with the device), then copy the resulting file to `overlays/mipi-panel.dtbo` on the boot partition. The Arch R Flasher can also generate and install the overlay during flashing. The `/flash/overlays/` folder on a fresh install contains a `README.txt` with the same instructions.
 
+If the online generator cannot load (it downloads an 8 MB WebAssembly runtime first), the same generator is published as an offline terminal script: https://arch-r.io/archr-dtbo-offline.zip (about 100 KB, Python 3.5+ only, no `pip`, no network). Extract it, open a terminal in the folder and run:
+
+```bash
+python3 archr_dtbo.py rk3326-r36s-linux.dtb SDORIG -o mipi-panel.dtbo
+```
+
+First argument: your stock `dtb`. Second: the option string for the console, `SDORIG` (R36S Original), `SDCLONE` (R36S Clone) or `SDORIG-NAm` (R36S Soysauce), with extra flags appended by a dash (`SDCLONE-LSi`). On Windows the command is `python`. Full instructions: https://arch-r.io/docs/installation#panel-overlay-generator
+
 ## Quick Start
 
 Download the latest images from [Releases](https://github.com/archr-linux/Arch-R/releases):
