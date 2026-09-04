@@ -46,30 +46,71 @@ makeinstall_target() {
   # Mode switch script with USB reset fallback
   cat > ${INSTALL}/usr/bin/aic8800-modeswitch << 'SCRIPT'
 #!/bin/sh
-# AIC8800 USB mode switch: eject mass storage to activate WiFi mode
-# If re-enumeration fails, reset the USB port
+# AIC8800 USB mode switch: the dongle ships as a u-disk (a69c:5721/5722);
+# ejecting it makes it drop off the bus and come back as the WLAN
+# function. On the RK3326's dwc2 controller that re-enumeration often
+# wedges: the port loops on "device descriptor read, error -71/-110"
+# and never recovers on its own. The only thing observed to clear it is
+# a full unbind/rebind of the dwc2 platform driver, after which the
+# dongle enumerates cleanly in WLAN mode (verified twice on a Soysauce
+# with a Tenda AIC8800DC, serial capture 2026-09-03).
 DEV="$1"
 [ -z "$DEV" ] && exit 0
 
+# The re-enumerated WLAN function is what we wait for - not a wlan
+# netdev, which needs the driver to also probe successfully. Any AIC
+# vendor ID or a Tenda rebadge on the bus, minus the u-disk PIDs.
+wlan_function_present() {
+  for d in /sys/bus/usb/devices/*/idVendor; do
+    dir=$(dirname "$d")
+    vid=$(cat "$d" 2>/dev/null)
+    pid=$(cat "$dir/idProduct" 2>/dev/null)
+    case "$vid:$pid" in
+      a69c:5721|a69c:5722) ;;
+      a69c:*|368b:*|2604:0013) return 0 ;;
+    esac
+  done
+  return 1
+}
+
+# Wait for the WLAN function to enumerate; bail early once it is there
+wait_wlan() {
+  for i in $(seq 1 "$1"); do
+    wlan_function_present && return 0
+    sleep 1
+  done
+  return 1
+}
+
 # Eject the mass storage device
 eject "/dev/$DEV" 2>/dev/null
+wait_wlan 10 && exit 0
 
-# Wait for WiFi mode to enumerate
-for i in $(seq 1 10); do
-  sleep 1
-  # Check if a wireless interface appeared
-  ls /sys/class/net/wlan* >/dev/null 2>&1 && exit 0
+# Re-enumeration wedged. Bounce the OTG controller: unbind/rebind the
+# dwc2 platform driver so the host port starts from a clean state.
+ctrl=""
+for c in /sys/bus/platform/drivers/dwc2/*.usb; do
+  [ -e "$c" ] && ctrl=$(basename "$c") && break
 done
+if [ -n "$ctrl" ]; then
+  for attempt in 1 2; do
+    echo "$ctrl" > /sys/bus/platform/drivers/dwc2/unbind 2>/dev/null
+    sleep 2
+    echo "$ctrl" > /sys/bus/platform/drivers/dwc2/bind 2>/dev/null
+    wait_wlan 8 && exit 0
+  done
+fi
 
-# If WiFi didn't appear, try resetting the USB bus
+# Last resort: deauthorize/reauthorize whatever AIC device is left
 for usbdev in /sys/bus/usb/devices/*/authorized; do
   dir=$(dirname "$usbdev")
-  if grep -q "a69c" "$dir/idVendor" 2>/dev/null; then
-    echo 0 > "$usbdev" 2>/dev/null
-    sleep 1
-    echo 1 > "$usbdev" 2>/dev/null
-    break
-  fi
+  case "$(cat "$dir/idVendor" 2>/dev/null)" in
+    a69c|368b|2604)
+      echo 0 > "$usbdev" 2>/dev/null
+      sleep 1
+      echo 1 > "$usbdev" 2>/dev/null
+      break ;;
+  esac
 done
 SCRIPT
   chmod +x ${INSTALL}/usr/bin/aic8800-modeswitch
