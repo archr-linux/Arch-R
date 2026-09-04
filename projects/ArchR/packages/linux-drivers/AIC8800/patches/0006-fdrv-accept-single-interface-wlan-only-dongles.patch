@@ -1,0 +1,32 @@
+From: ArchR
+Subject: [PATCH] fdrv: accept WLAN-only dongles that expose a single interface
+
+With CONFIG_USB_BT the probe insisted on bNumInterfaces == 3 (WLAN plus
+the two Bluetooth interfaces) and, when it saw anything else, silently
+reclassified an AIC8800DC as an AIC8800DW. The Tenda 2604:0013 rebadge
+is WLAN-only: after the u-disk mode switch it enumerates with exactly
+one configuration and one vendor-specific interface, iInterface "Wlan"
+(read off the device: bNumConfigurations 1, bNumInterfaces 1). So every
+probe took the downgrade path and logged "AIC8800DC change to
+AIC8800DW".
+
+Accept one interface as well. A single-interface device is a perfectly
+valid combo part that simply has no Bluetooth function exposed, and the
+interface descriptor check right below still rejects anything that is
+not the vendor-specific WLAN interface, so nothing is loosened for
+genuinely unsupported layouts.
+
+Same condition used by the aic8800d80 legacy-mcu1 tree, which targets
+this chip revision (chip_id=7, chip_mcu_id=1) specifically.
+
+--- a/aic8800_fdrv/aicwf_usb.c
++++ b/aic8800_fdrv/aicwf_usb.c
+@@ -2139,7 +2139,7 @@
+
+     /* Check interface number */
+ #ifdef CONFIG_USB_BT
+-    if (usb->actconfig->desc.bNumInterfaces != 3)
++    if (usb->actconfig->desc.bNumInterfaces != 1 && usb->actconfig->desc.bNumInterfaces != 3)
+ #else
+     if (usb->actconfig->desc.bNumInterfaces != 1)
+ #endif

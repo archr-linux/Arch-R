@@ -66,8 +66,8 @@ wlan_function_present() {
     vid=$(cat "$d" 2>/dev/null)
     pid=$(cat "$dir/idProduct" 2>/dev/null)
     case "$vid:$pid" in
-      a69c:5721|a69c:5722) ;;
-      a69c:*|368b:*|2604:0013) return 0 ;;
+      a69c:5721|a69c:5722|a69c:5723|a69c:5725|a69c:5726|a69c:5727|a69c:572a|a69c:5730) ;;
+      a69c:*|368b:*|2604:*) return 0 ;;
     esac
   done
   return 1
@@ -116,8 +116,18 @@ SCRIPT
   chmod +x ${INSTALL}/usr/bin/aic8800-modeswitch
 
   # udev rule triggers mode switch script
+  # u-disk product IDs taken from the vendor's own aic.rules (Tenda
+  # wifi6-adapter-linux-driver V1.0.1.10): 5721 plus the tendaudisk v1-v6
+  # rebadges. 5722 is not in the vendor list but is what our field units
+  # enumerate as, so it stays.
   cat > ${INSTALL}/usr/lib/udev/rules.d/99-aic8800.rules << 'RULES'
 KERNEL=="sd*", ATTRS{idVendor}=="a69c", ATTRS{idProduct}=="5721", SYMLINK+="aicudisk", RUN+="/usr/bin/aic8800-modeswitch %k"
 KERNEL=="sd*", ATTRS{idVendor}=="a69c", ATTRS{idProduct}=="5722", SYMLINK+="aicudisk", RUN+="/usr/bin/aic8800-modeswitch %k"
+KERNEL=="sd*", ATTRS{idVendor}=="a69c", ATTRS{idProduct}=="5723", SYMLINK+="aicudisk", RUN+="/usr/bin/aic8800-modeswitch %k"
+KERNEL=="sd*", ATTRS{idVendor}=="a69c", ATTRS{idProduct}=="5725", SYMLINK+="aicudisk", RUN+="/usr/bin/aic8800-modeswitch %k"
+KERNEL=="sd*", ATTRS{idVendor}=="a69c", ATTRS{idProduct}=="5726", SYMLINK+="aicudisk", RUN+="/usr/bin/aic8800-modeswitch %k"
+KERNEL=="sd*", ATTRS{idVendor}=="a69c", ATTRS{idProduct}=="5727", SYMLINK+="aicudisk", RUN+="/usr/bin/aic8800-modeswitch %k"
+KERNEL=="sd*", ATTRS{idVendor}=="a69c", ATTRS{idProduct}=="572a", SYMLINK+="aicudisk", RUN+="/usr/bin/aic8800-modeswitch %k"
+KERNEL=="sd*", ATTRS{idVendor}=="a69c", ATTRS{idProduct}=="5730", SYMLINK+="aicudisk", RUN+="/usr/bin/aic8800-modeswitch %k"
 RULES
 }
