@@ -366,10 +366,19 @@ if [ "${1}" = "release" -o "${1}" = "mkimage" -o "${1}" = "noobs" ]; then
     UUID_STORAGE="$(uuidgen)"
     UUID_ROOT="$(uuidgen)"
 
+    # SUBDEVICES is computed while distributions/*/config/functions is sourced,
+    # which happens before config/path puts the toolchain on PATH. On a host
+    # without its own xmlstarlet the query fails, the error is swallowed, and
+    # the variable ends up empty, which silently collapses a multi-variant
+    # release into a single unsuffixed image. Ask again now that PATH is whole.
+    SUBDEVICES="$(xmlstarlet sel -t -m "//archr/${DEVICE}/*[@mkimage_options]" -v "name()" -n "${PROJECT_DIR}/${PROJECT}/config.xml" 2>/dev/null | tr '\n' ' ')"
+
     if [ -n "${SUBDEVICES}" ]; then
       for SUBDEVICE in ${SUBDEVICES}; do
         do_mkimage "${IMAGE_NAME}"
       done
+    elif grep -q "mkimage_options" "${PROJECT_DIR}/${PROJECT}/config.xml"; then
+      die "config.xml declares mkimage_options but no subdevice resolved for ${DEVICE}. Refusing to write a single unsuffixed image." 1
     else
       do_mkimage
     fi
