@@ -174,7 +174,7 @@ case "${DISTRO}" in
       dep_map+=(
         [g++]=g++
         [mkfontscale]=xorg-mkfontscale
-        [mkfontdir]=xorg-mkfontdir
+        [mkfontdir]=xorg-mkfontscale
         [bdftopcf]=xorg-bdftopcf
         [xsltproc]=libxslt
         [java]=jdk8-openjdk
