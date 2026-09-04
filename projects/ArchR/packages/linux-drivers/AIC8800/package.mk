@@ -35,6 +35,14 @@ makeinstall_target() {
   mkdir -p ${INSTALL}/$(get_full_firmware_dir)/aic8800DC
   cp -a ${PKG_BUILD}/aic8800DC/. ${INSTALL}/$(get_full_firmware_dir)/aic8800DC/
 
+  # ...then overlay the vendor's own blobs on top. The AveyondFly tree carries
+  # an older firmware build: 6 of the 8 files an 8800DC u02 actually loads
+  # differ from Tenda's 1.0.1.10 release, and that driver/firmware mismatch is
+  # the best remaining explanation for the wedged USB enumeration (-71) and the
+  # LMAC timeouts on dwc2. The driver stays AveyondFly's; only firmware moves.
+  # See firmware/README.md for provenance and the per-file md5 table.
+  cp -a ${PKG_DIR}/firmware/aic8800DC/. ${INSTALL}/$(get_full_firmware_dir)/aic8800DC/
+
   # Firmware loader must be ready before the WLAN driver probes
   mkdir -p ${INSTALL}/usr/lib/modprobe.d
   cp ${PKG_DIR}/modprobe.d/aic8800-usb.conf ${INSTALL}/usr/lib/modprobe.d/
