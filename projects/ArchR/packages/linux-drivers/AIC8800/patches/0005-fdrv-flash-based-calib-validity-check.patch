@@ -1,0 +1,129 @@
+From: ArchR
+Subject: [PATCH] fdrv: read the 8800DC calibration validity from flash on MCU-id parts
+
+The Tenda 2604:0013 rebadge (chip_id=7, chip_sub_id=1, chip_mcu_id=1)
+never finishes probe. aicwf_dpd_calib_8800dc() starts by asking
+aicwf_misc_ram_valid_check_8800dc() whether a calibration is already
+present, and that helper unconditionally reads the RF misc ram pointer
+at cfg_base(0x10164)+0x14 = 0x10178. On this variant that word is never
+published by the boot ROM and the read wedges the LMAC: captured live
+over serial on an R36S Soysauce, 2026-09-04, the dongle answers
+"rf misc ram[0x10178] rd fail: -32" and every later command times out
+with -110, so the DPD calibration, the misc-ram init and the whole
+firmware bring-up fail behind it.
+
+These parts carry an embedded flash, and the calibration validity lives
+there instead of in RAM. The official Tenda driver (V1.0.1.10, release
+2025_1018) has an extra branch for exactly this case: when chip_mcu_id
+is set it reads the boot argc word at 0x1220f0, and, if that does not
+already flag the calibration as applied, derives the dpd info address
+from the flash size register at 0x40038030 (0xfe004 plus 0x4100000 /
+0x4300000 / 0x4700000 depending on the 0x15 / 0x16 / 0x18 size code)
+and takes bit 7 of that word as the validity flag. The problematic
+0x10178 read is never issued. Port that branch, keeping the existing
+RAM path byte-for-byte for chip_mcu_id == 0 so native AIC dongles and
+the RF test mode are unaffected.
+
+The same source also gates a flash cache-window enable on chip_mcu_id
+in system_config_8800dc() (set bit 0 of 0x40100020). That write is what
+makes the flash-mapped dpd info address readable, so it comes along;
+it is likewise a no-op for chip_mcu_id == 0.
+
+This supersedes 0004-fdrv-survive-dpd-calib-failure.patch, which only
+worked around the symptom by skipping the calibration entirely. With
+the validity check answering from flash, the calibration is correctly
+reported as already done and the normal code path is taken.
+
+--- a/aic8800_fdrv/aicwf_compat_8800dc.c
++++ b/aic8800_fdrv/aicwf_compat_8800dc.c
+@@ -3037,10 +3037,59 @@
+     uint32_t misc_ram_addr;
+     uint32_t ram_base_addr, ram_word_cnt;
+     uint32_t bit_mask[4];
++    uint32_t dpd_info_read_addr = 0xfe004;
++    uint32_t boot_argc_read_addr = 0x1220f0;
++    uint32_t flash_size_mem_addr = 0x40038030;
++    uint8_t flash_size = 0;
+     int i;
+     if (valid_out) {
+         *valid_out = 0;
+     }
++    if (chip_mcu_id) {
++        /* Flash-backed 8800DC variant: this boot ROM never publishes the
++         * RF misc ram pointer at cfg_base+0x14, and reading that word
++         * wedges the LMAC. Take the calibration validity from the boot
++         * argc word and from the flash copy instead. */
++        ret = rwnx_send_dbg_mem_read_req(rwnx_hw, boot_argc_read_addr, &cfm);
++        if (ret) {
++            AICWFDBG(LOGERROR, "boot argc [0x%x] rd fail: %d\n", boot_argc_read_addr, ret);
++            return ret;
++        }
++        AICWFDBG(LOGINFO, "boot argc %x\n", cfm.memdata);
++        if (cfm.memdata & 0x10) {
++            if (valid_out) {
++                *valid_out = 1;
++            }
++            return ret;
++        }
++        ret = rwnx_send_dbg_mem_read_req(rwnx_hw, flash_size_mem_addr, &cfm);
++        if (ret) {
++            AICWFDBG(LOGERROR, "flash size[0x%x] rd fail: %d\n", flash_size_mem_addr, ret);
++            return ret;
++        }
++        flash_size = cfm.memdata & 0xff;
++        AICWFDBG(LOGINFO, "flash size %x\n", flash_size);
++        if (flash_size == 0x16) {
++            dpd_info_read_addr += 0x4300000;
++        } else if (flash_size == 0x15) {
++            dpd_info_read_addr += 0x4100000;
++        } else if (flash_size == 0x18) {
++            dpd_info_read_addr += 0x4700000;
++        } else {
++            dpd_info_read_addr += 0x4100000;
++        }
++        ret = rwnx_send_dbg_mem_read_req(rwnx_hw, dpd_info_read_addr, &cfm);
++        if (ret) {
++            AICWFDBG(LOGERROR, "dpd info [0x%x] rd fail: %d\n", dpd_info_read_addr, ret);
++            return ret;
++        }
++        if (cfm.memdata & (1 << 7)) {
++            if (valid_out) {
++                *valid_out = 1;
++            }
++        }
++        return ret;
++    }
+     if (testmode == FW_RFTEST_MODE) {
+ 	    uint32_t vect1 = 0;
+ 	    uint32_t vect2 = 0;
+@@ -3598,6 +3647,7 @@
+     array3_tbl_t p_syscfg_msk_tbl;
+     int ret, cnt;
+     const u32 mem_addr = 0x40500000;
++    const u32 cache_mem_addr = 0x40100020;
+     struct dbg_mem_read_cfm rd_mem_addr_cfm;
+ 
+     ret = rwnx_send_dbg_mem_read_req(rwnx_hw, mem_addr, &rd_mem_addr_cfm);
+@@ -3611,6 +3661,22 @@
+         chip_mcu_id = 1;
+     }
+ 
++    if (chip_mcu_id) {
++        /* Map/enable the flash cache window so the calibration validity
++         * check can read the flash-backed dpd info. */
++        ret = rwnx_send_dbg_mem_read_req(rwnx_hw, cache_mem_addr, &rd_mem_addr_cfm);
++        if (ret) {
++            AICWFDBG(LOGERROR, "%x rd fail: %d\n", cache_mem_addr, ret);
++            return;
++        }
++        rd_mem_addr_cfm.memdata |= 0x01;
++        ret = rwnx_send_dbg_mem_write_req(rwnx_hw, cache_mem_addr, rd_mem_addr_cfm.memdata);
++        if (ret) {
++            AICWFDBG(LOGERROR, "%x write fail: %d\n", cache_mem_addr, ret);
++            return;
++        }
++    }
++
+     ret = rwnx_send_dbg_mem_read_req(rwnx_hw, 0x00000020, &rd_mem_addr_cfm);
+     if (ret) {
+ 		AICWFDBG(LOGERROR, "[0x00000020] rd fail: %d\n", ret);
