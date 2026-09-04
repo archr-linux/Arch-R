@@ -88,17 +88,17 @@ wait_wlan 10 && exit 0
 
 # Re-enumeration wedged. Bounce the OTG controller: unbind/rebind the
 # dwc2 platform driver so the host port starts from a clean state.
+# Exactly one cycle - a second bounce takes the dongle off the bus
+# altogether and only a physical replug brings it back.
 ctrl=""
 for c in /sys/bus/platform/drivers/dwc2/*.usb; do
   [ -e "$c" ] && ctrl=$(basename "$c") && break
 done
 if [ -n "$ctrl" ]; then
-  for attempt in 1 2; do
-    echo "$ctrl" > /sys/bus/platform/drivers/dwc2/unbind 2>/dev/null
-    sleep 2
-    echo "$ctrl" > /sys/bus/platform/drivers/dwc2/bind 2>/dev/null
-    wait_wlan 8 && exit 0
-  done
+  echo "$ctrl" > /sys/bus/platform/drivers/dwc2/unbind 2>/dev/null
+  sleep 2
+  echo "$ctrl" > /sys/bus/platform/drivers/dwc2/bind 2>/dev/null
+  wait_wlan 12 && exit 0
 fi
 
 # Last resort: deauthorize/reauthorize whatever AIC device is left
