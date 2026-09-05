@@ -100,28 +100,54 @@ connect_wifi() {
     fi
   fi
 
-  # iwd codifica caracteres não-imprimíveis e alguns metacaracteres do
-  # SSID como =XX no nome do .psk (man iwd.network "Network file names").
-  # Sem isso, redes com espaços, +, /, etc. no SSID têm o arquivo
-  # gravado em um nome que iwd não procura, e o iwctl cai em prompt
-  # interativo aguardando a passphrase — sintoma visível como "trava".
-  # encode_iwd_name implementa a transformação canônica.
+  # Nome do arquivo de perfil, conforme storage_get_network_file_path()
+  # em src/storage.c do iwd e o man iwd.network, seção "Network file
+  # names". A regra tem duas partes, e a versão anterior errava as duas:
+  #
+  #   1. O conjunto aceito cru é letras, dígitos, "-", "_" e espaço. O
+  #      ponto NÃO entra, e o espaço entra. A versão anterior tratava o
+  #      ponto como seguro e escapava o espaço, invertendo os dois.
+  #   2. Quando algum caractere fica de fora, o iwd não escapa caractere
+  #      a caractere; ele codifica o SSID INTEIRO em hexadecimal
+  #      minúsculo e prefixa com um único "=". A versão anterior fazia
+  #      escape por caractere no estilo "=XX", que o iwd nunca gera nem
+  #      sabe ler.
+  #
+  # O efeito do item 1, observado no R36S em 2026-09-04 numa rede chamada
+  # "ntoskrnl.exe": o arquivo saía como "ntoskrnl.exe.psk", a leitura no
+  # iwd corta no PRIMEIRO ponto, tenta interpretar "exe.psk" como tipo de
+  # segurança, não reconhece e descarta o perfil inteiro. A rede sumia de
+  # known-networks, o iwctl connect caía em prompt interativo de
+  # passphrase e, sem TTY, o usuário via só um erro genérico no ES.
   encode_iwd_name() {
+    if printf '%s' "$1" | LC_ALL=C grep -qE '^[A-Za-z0-9_ -]+$'; then
+      printf '%s' "$1"
+    else
+      printf '=%s' "$(printf '%s' "$1" | od -An -tx1 | tr -d ' \n')"
+    fi
+  }
+
+  # Nome que a versão anterior teria gerado. Serve só para apagar perfis
+  # órfãos de quem já tem o bug gravado em disco: o iwd os ignora, mas
+  # eles guardam a passphrase em texto claro. Nunca contêm "/", porque a
+  # regra antiga escapava a barra como =2F.
+  legacy_iwd_name() {
     printf '%s' "$1" | awk '
-      BEGIN { for (i = 0; i < 256; i++) byteToChar[sprintf("%c", i)] = sprintf("%02x", i) }
+      BEGIN { for (i = 0; i < 256; i++) bc[sprintf("%c", i)] = sprintf("%02X", i) }
       {
         out = ""
         n = length($0)
         for (i = 1; i <= n; i++) {
           c = substr($0, i, 1)
-          # iwd allows: letters, digits, ".", "-", "_". Outros = hex.
           if (c ~ /[A-Za-z0-9._-]/) out = out c
-          else out = out "=" toupper(byteToChar[c])
+          else out = out "=" bc[c]
         }
         print out
       }'
   }
+
   IWD_NAME=$(encode_iwd_name "${SSID}")
+  IWD_NAME_LEGACY=$(legacy_iwd_name "${SSID}")
 
   # Create iwd network profile for persistent connection
   IWD_DIR="/var/lib/iwd"
@@ -130,6 +156,9 @@ connect_wifi() {
   # (caso usuário mude entre rede aberta e PSK, ou troque a senha — sem
   # o rm o iwd pode preferir o profile antigo conflitante).
   rm -f "${IWD_DIR}/${IWD_NAME}.psk" "${IWD_DIR}/${IWD_NAME}.open" 2>/dev/null
+  if [ "${IWD_NAME_LEGACY}" != "${IWD_NAME}" ]; then
+    rm -f "${IWD_DIR}/${IWD_NAME_LEGACY}.psk" "${IWD_DIR}/${IWD_NAME_LEGACY}.open" 2>/dev/null
+  fi
   if [ -n "${PSK}" ]; then
     # umask 077 antes do printf garante que o profile (com a senha em
     # texto) não fique world-readable em /var/lib/iwd.
@@ -188,17 +217,15 @@ create_adhoc() {
 
   # Heredoc com EOF não-quoted permitia que um $ na senha disparasse
   # expansão de variável bash; agora montamos o profile com printf %s
-  # para preservar a passphrase byte-a-byte. AP filename usa o mesmo
-  # encoding de connect_wifi.
-  IWD_NAME=$(printf '%s' "${SSID}" | awk '
-    BEGIN { for (i = 0; i < 256; i++) bc[sprintf("%c", i)] = sprintf("%02x", i) }
-    { out=""; n=length($0)
-      for (i = 1; i <= n; i++) {
-        c = substr($0, i, 1)
-        if (c ~ /[A-Za-z0-9._-]/) out = out c
-        else out = out "=" toupper(bc[c])
-      }
-      print out }')
+  # para preservar a passphrase byte-a-byte.
+  #
+  # O nome do arquivo aqui é o SSID CRU, sem codificação nenhuma. Perfil
+  # de AP não passa pela mesma regra dos perfis de estação: o iwd monta o
+  # caminho com storage_get_path("ap/%s.ap", ssid) em src/ap.c. Antes
+  # gravávamos com o nome codificado e chamávamos start-profile com o
+  # nome cru logo abaixo, então qualquer SSID que a codificação alterasse
+  # produzia um arquivo que o iwd nunca ia procurar.
+  IWD_NAME="${SSID}"
 
   mkdir -p "${IWD_AP_CFG_DIR}"
   ( umask 077
@@ -218,19 +245,21 @@ create_adhoc() {
 
 destroy_adhoc() {
   iwctl ap ${WIFI_DEV} stop 2>/dev/null
-  # Apaga ambos os possíveis nomes (versão antiga sem encoding + nova
-  # com encoding) para não deixar profile órfão depois do upgrade.
+  # O nome correto é o SSID cru, que é o que o iwd procura. O segundo rm
+  # limpa o arquivo com nome codificado que versões anteriores gravavam.
   rm -f "${IWD_AP_CFG_DIR}/${SSID}.ap" 2>/dev/null
-  IWD_NAME=$(printf '%s' "${SSID}" | awk '
-    BEGIN { for (i = 0; i < 256; i++) bc[sprintf("%c", i)] = sprintf("%02x", i) }
+  IWD_NAME_LEGACY=$(printf '%s' "${SSID}" | awk '
+    BEGIN { for (i = 0; i < 256; i++) bc[sprintf("%c", i)] = sprintf("%02X", i) }
     { out=""; n=length($0)
       for (i = 1; i <= n; i++) {
         c = substr($0, i, 1)
         if (c ~ /[A-Za-z0-9._-]/) out = out c
-        else out = out "=" toupper(bc[c])
+        else out = out "=" bc[c]
       }
       print out }')
-  rm -f "${IWD_AP_CFG_DIR}/${IWD_NAME}.ap" 2>/dev/null
+  if [ "${IWD_NAME_LEGACY}" != "${SSID}" ]; then
+    rm -f "${IWD_AP_CFG_DIR}/${IWD_NAME_LEGACY}.ap" 2>/dev/null
+  fi
 }
 
 has_ap_mode() {
