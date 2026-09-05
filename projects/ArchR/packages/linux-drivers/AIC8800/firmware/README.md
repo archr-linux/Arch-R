@@ -25,11 +25,23 @@ carrega, 6 divergiam do release oficial:
 Só `fw_adid_8800dc_u02.bin` e `lmacfw_rf_8800dc.bin` já eram idênticos. Os
 arquivos de texto (`aic_userconfig_*`, `aic_powerlimit_*`) também já batiam.
 
-Esse descasamento entre driver e firmware é o candidato mais plausível para a
-instabilidade de enumeração USB (`device descriptor read, error -71`) e para os
-timeouts de LMAC observados no RK3326. O conjunto oficial já foi carregado com
-sucesso pelo driver do AveyondFly neste hardware: o `AICWFDBG` imprimiu
-`md5:bfd8ea1d...` e `md5:7b5fde60...` e o `wlan0` subiu normalmente.
+Usar o firmware do próprio fabricante junto do driver que o acompanha é o
+arranjo certo por si só, e o conjunto oficial carrega sem problema neste
+hardware: o `AICWFDBG` imprimiu `md5:bfd8ea1d...` e `md5:7b5fde60...` e o
+`wlan0` subiu normalmente.
+
+O que este alinhamento **não** faz é resolver o `device descriptor read,
+error -71`. A primeira suposição registrada aqui era essa, e o boot de
+2026-09-04 com o firmware oficial já instalado mostrou que ela é insustentável.
+O log do console coloca os seis `-71` na reenumeração que segue o mode switch de
+u-disk para WLAN, e o `aic_load_fw_usb` só se registra depois disso. Nenhum byte
+de firmware chegou ao chip quando os erros acontecem, então o firmware não pode
+tê-los causado. A causa está no dwc2 durante a reenumeração, não aqui.
+
+O sistema se recupera sozinho: depois de cinco tentativas e um `unable to
+enumerate USB device`, o controlador dwc2 é removido e reprobado, e aí o dongle
+enumera limpo como `2604:0013`. Nesse mesmo boot não houve nenhum timeout de
+LMAC, mas eles sempre foram intermitentes, então um boot não serve de prova.
 
 ## O que isto não resolve
 
