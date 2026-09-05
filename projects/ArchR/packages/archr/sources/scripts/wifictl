@@ -159,13 +159,50 @@ connect_wifi() {
   if [ "${IWD_NAME_LEGACY}" != "${IWD_NAME}" ]; then
     rm -f "${IWD_DIR}/${IWD_NAME_LEGACY}.psk" "${IWD_DIR}/${IWD_NAME_LEGACY}.open" 2>/dev/null
   fi
-  if [ -n "${PSK}" ]; then
-    # umask 077 antes do printf garante que o profile (com a senha em
-    # texto) não fique world-readable em /var/lib/iwd.
-    ( umask 077; printf '[Security]\nPassphrase=%s\n' "${PSK}" > "${IWD_DIR}/${IWD_NAME}.psk" )
-  else
-    printf '[Security]\n' > "${IWD_DIR}/${IWD_NAME}.open"
-  fi
+  # Gravar e apagar o profile são funções porque o caminho de rede oculta,
+  # mais abaixo, precisa fazer as duas coisas depois desta etapa.
+  write_iwd_profile() {
+    # Rede corporativa 802.1X: o perfil precisa de método EAP, identidade
+    # e às vezes certificado da CA, campos que a tela de Wi-Fi do ES não
+    # coleta. Quem usa esse tipo de rede coloca o arquivo à mão em
+    # /storage/.cache/iwd/<nome>.8021x, e o iwd o encontra sozinho:
+    # known_networks_find() casa por SSID E tipo de segurança, e o tipo
+    # vem do RSN IE que o AP anuncia, não do que gravamos aqui.
+    #
+    # Nesse caso não gravamos .psk nem .open. O arquivo seria ignorado
+    # pelo iwd de qualquer forma, e só serviria para deixar uma senha em
+    # texto claro no disco sem utilidade nenhuma.
+    if [ -f "${IWD_DIR}/${IWD_NAME}.8021x" ]; then
+      echo "wifictl: perfil 802.1X existente para '${SSID}', mantido como está" >&2
+      return 0
+    fi
+    if [ -n "${PSK}" ]; then
+      # umask 077 antes do printf garante que o profile (com a senha em
+      # texto) não fique world-readable em /var/lib/iwd.
+      ( umask 077; printf '[Security]\nPassphrase=%s\n' "${PSK}" > "${IWD_DIR}/${IWD_NAME}.psk" )
+    else
+      printf '[Security]\n' > "${IWD_DIR}/${IWD_NAME}.open"
+    fi
+  }
+
+  remove_iwd_profile() {
+    rm -f "${IWD_DIR}/${IWD_NAME}.psk" "${IWD_DIR}/${IWD_NAME}.open" 2>/dev/null
+  }
+
+  # Verdadeiro só quando a estação está associada à rede que foi pedida.
+  # "State: connected" sozinho não serve: se a estação já estava em outra
+  # rede, o teste daria sucesso falso.
+  connected_to_target() {
+    local show state net
+    show=$(iwctl station ${WIFI_DEV} show 2>/dev/null)
+    state=$(printf '%s\n' "${show}" | awk '/^[[:space:]]*State[[:space:]]/ {print $NF}')
+    net=$(printf '%s\n' "${show}" | sed -n 's/^[[:space:]]*Connected network[[:space:]]*//p')
+    net="${net#"${net%%[![:space:]]*}"}"
+    net="${net%"${net##*[![:space:]]}"}"
+    [ "${state}" = "connected" ] && [ "${net}" = "${SSID}" ]
+  }
+
+  write_iwd_profile
 
   # Scan até o SSID aparecer na lista do iwd. O sleep fixo de 2s falhava
   # em dongles USB lentos (o iwctl connect retorna "network not found" se
@@ -188,7 +225,50 @@ connect_wifi() {
   CONNECT_LOG="/var/log/wifictl.log"
   {
     echo "== $(date '+%F %T') connect ssid='${SSID}' dev=${WIFI_DEV} seen_in_scan=${SSID_SEEN}"
-    iwctl station ${WIFI_DEV} connect "${SSID}" 2>&1
+    if [ "${SSID_SEEN}" = "1" ]; then
+      # --dont-ask é o que evita a pior falha possível aqui. Sem ele, se
+      # o iwd não aceitar o profile por qualquer motivo, o iwctl pede a
+      # passphrase pelo stdin; wifictl não tem TTY, então em vez de um
+      # erro o usuário recebe um travamento até o timeout.
+      iwctl --dont-ask station ${WIFI_DEV} connect "${SSID}" 2>&1
+    else
+      # A rede não apareceu em ~12s de varredura, e o caso provável é
+      # rede oculta. Para essas o connect comum não serve: um AP oculto
+      # só responde a probe request dirigida, com o SSID exato dentro, e
+      # o iwd só monta essa probe em ConnectHiddenNetwork
+      # (src/station.c). O Hidden=true do profile não substitui isso;
+      # ele apenas torna a varredura periódica ativa, ainda com SSID
+      # curinga, que um AP oculto ignora.
+      #
+      # ConnectHiddenNetwork recusa com "already provisioned" quando a
+      # rede já é conhecida, então o profile recém-gravado precisa sair
+      # da frente, e o iwd precisa de um instante para perceber via
+      # inotify. Dando certo, o próprio iwd regrava o profile, já com
+      # Hidden=true, e as reconexões seguintes funcionam sozinhas.
+      #
+      # A passphrase vai por argumento porque connect-hidden não lê
+      # profile nenhum. Ela fica visível em ps durante a chamada. O
+      # aparelho roda tudo como root e não é multiusuário, mas o dado
+      # é esse e não vale escondê-lo.
+      echo "== não vista na varredura, tentando como rede oculta"
+      remove_iwd_profile
+      sleep 1
+      if [ -n "${PSK}" ]; then
+        iwctl --passphrase "${PSK}" --dont-ask \
+          station ${WIFI_DEV} connect-hidden "${SSID}" 2>&1
+      else
+        iwctl --dont-ask station ${WIFI_DEV} connect-hidden "${SSID}" 2>&1
+      fi
+      # Se a rede não era oculta e sim uma varredura que simplesmente
+      # não a alcançou, o connect-hidden falha. Restaura o profile e
+      # tenta o caminho comum antes de desistir.
+      if ! connected_to_target; then
+        echo "== connect-hidden não pegou, voltando ao connect comum"
+        write_iwd_profile
+        sleep 1
+        iwctl --dont-ask station ${WIFI_DEV} connect "${SSID}" 2>&1
+      fi
+    fi
   } >> "${CONNECT_LOG}"
 
   # Wait for connection. O "state=connected" sozinho não basta: se a
