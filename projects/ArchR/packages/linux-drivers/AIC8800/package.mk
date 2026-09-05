@@ -37,9 +37,15 @@ makeinstall_target() {
 
   # ...then overlay the vendor's own blobs on top. The AveyondFly tree carries
   # an older firmware build: 6 of the 8 files an 8800DC u02 actually loads
-  # differ from Tenda's 1.0.1.10 release, and that driver/firmware mismatch is
-  # the best remaining explanation for the wedged USB enumeration (-71) and the
-  # LMAC timeouts on dwc2. The driver stays AveyondFly's; only firmware moves.
+  # differ from Tenda's 1.0.1.10 release. Running the manufacturer's firmware
+  # under the driver that shipped with it is the right pairing on its own; that
+  # is the whole reason, and it is enough. The driver stays AveyondFly's.
+  #
+  # It does NOT fix the "device descriptor read, error -71". That was the
+  # original guess and the 2026-09-04 boot disproved it: the six -71 all land in
+  # the re-enumeration after the u-disk to WLAN mode switch, before
+  # aic_load_fw_usb even registers, so no firmware byte had reached the chip
+  # yet. That fault is in dwc2, not here.
   # See firmware/README.md for provenance and the per-file md5 table.
   cp -a ${PKG_DIR}/firmware/aic8800DC/. ${INSTALL}/$(get_full_firmware_dir)/aic8800DC/
 
