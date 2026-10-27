@@ -69,7 +69,7 @@ PKG_MESON_OPTS_TARGET="--libdir=/usr/lib \
                        -Dtimedated=true \
                        -Dtimesyncd=true \
                        -Dfirstboot=false \
-                       -Drandomseed=false \
+                       -Drandomseed=true \
                        -Dbacklight=false \
                        -Dvconsole=false \
                        -Dquotacheck=false \
