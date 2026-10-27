@@ -1,0 +1,76 @@
+fdrv: new set_monitor_channel signature from 6.12.114
+
+Linux 6.12.114 picked up the cfg80211 change that passes the
+net_device to set_monitor_channel, which mainline only has from 6.13.
+Lower the version guards for that callback and its private-command
+callers so the driver builds against 6.12.114 and newer.
+
+diff --color -ru a/aic8800_fdrv/aic_priv_cmd.c b/aic8800_fdrv/aic_priv_cmd.c
+--- a/aic8800_fdrv/aic_priv_cmd.c
++++ b/aic8800_fdrv/aic_priv_cmd.c
+@@ -1714,7 +1714,7 @@
+ 
+ }
+ #endif//CONFIG_SET_VENDOR_EXTENSION_IE
+-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 13, 0))
++#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 114))
+ int rwnx_cfg80211_set_monitor_channel_(struct wiphy *wiphy, struct net_device *dev,
+                                              struct cfg80211_chan_def *chandef);
+ #else
+@@ -1722,7 +1722,7 @@
+                                              struct cfg80211_chan_def *chandef);
+ #endif
+ int rwnx_atoi2(char *value, int c_len);
+-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 13, 0))
++#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 114))
+ void set_mon_chan(struct rwnx_vif *vif, struct net_device *dev, char *parameter)
+ #else
+ void set_mon_chan(struct rwnx_vif *vif, char *parameter)
+@@ -1749,7 +1749,7 @@
+     chandef->center_freq1 = chandef->chan->center_freq;
+     chandef->center_freq2 = 0;
+ 
+-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 13, 0))
++#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 114))
+     rwnx_cfg80211_set_monitor_channel_(vif->rwnx_hw->wiphy, dev, chandef);
+ #else
+     rwnx_cfg80211_set_monitor_channel_(vif->rwnx_hw->wiphy, chandef);
+@@ -2011,7 +2011,7 @@
+ 	    char *set_parameter;
+         skip = strlen(CMD_SET_MON_FREQ) + 1;
+ 		set_parameter = command + skip;
+-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 13, 0))
++#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 114))
+ 	    set_mon_chan(vif, net, set_parameter);
+ #else
+ 	    set_mon_chan(vif, set_parameter);
+diff --color -ru a/aic8800_fdrv/rwnx_main.c b/aic8800_fdrv/rwnx_main.c
+--- a/aic8800_fdrv/rwnx_main.c
++++ b/aic8800_fdrv/rwnx_main.c
+@@ -4166,7 +4166,7 @@
+ }
+ #endif
+ 
+-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 13, 0))
++#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 114))
+ static int rwnx_cfg80211_set_monitor_channel(struct wiphy *wiphy, struct net_device *dev,
+                                              struct cfg80211_chan_def *chandef)
+ #else
+@@ -4226,7 +4226,7 @@
+ }
+ 
+ 
+-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 13, 0))
++#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 114))
+ int rwnx_cfg80211_set_monitor_channel_(struct wiphy *wiphy,
+                                              struct net_device *dev,
+                                              struct cfg80211_chan_def *chandef)
+@@ -4714,7 +4714,7 @@
+     if (rwnx_vif->vif_index == rwnx_hw->monitor_vif)
+     {
+         //retrieve channel from firmware
+-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 13, 0))
++#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 114))
+         rwnx_cfg80211_set_monitor_channel(wiphy, wdev->netdev, NULL);
+ #else
+         rwnx_cfg80211_set_monitor_channel(wiphy, NULL);

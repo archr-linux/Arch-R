@@ -1,0 +1,77 @@
+rk915: use the struct syscore API
+
+Linux 6.12.114 picked up the syscore rework from newer kernels:
+syscore_ops callbacks now take a void *data argument and drivers
+register a struct syscore with register_syscore() instead of calling
+register_syscore_ops(). Port the host suspend hook to that API.
+
+diff -ru a/inc/wow.h b/inc/wow.h
+--- a/inc/wow.h
++++ b/inc/wow.h
+@@ -11,7 +11,7 @@
+ #define _WOW_H_
+ #include <linux/syscore_ops.h>
+ 
+-extern struct syscore_ops host_syscore_ops;
++extern struct syscore host_syscore_ops;
+ 
+ void wow_enable_irq_wake(void);
+ void wow_disable_irq_wake(void);
+diff -ru a/src/hal.c b/src/hal.c
+--- a/src/hal.c
++++ b/src/hal.c
+@@ -1501,7 +1501,7 @@
+ static int cleanup_all_resources(void)
+ {
+ 	unregister_pm_notifier(&hpriv->pm_notifier);
+-	unregister_syscore_ops(&host_syscore_ops);
++	unregister_syscore(&host_syscore_ops);
+ 
+ 	/* Free private structure
+ 	kfree(hpriv);
+@@ -1608,7 +1608,7 @@
+ 	hpriv->pm_notifier.notifier_call = rk915_pm_notifier;
+ 	register_pm_notifier(&hpriv->pm_notifier);
+ 
+-	register_syscore_ops(&host_syscore_ops);
++	register_syscore(&host_syscore_ops);
+ 	if (_rpu_umac_if_init(&main_dir_entry) < 0) {
+ 		RPU_ERROR_HAL("%s: wlan_init failed\n", hal_name);
+ 		err = -ENOMEM;
+@@ -1630,7 +1630,7 @@
+ error2:
+ 	if (hpriv->rx_wkq != NULL)
+ 		destroy_workqueue(hpriv->rx_wkq);
+-	unregister_syscore_ops(&host_syscore_ops);
++	unregister_syscore(&host_syscore_ops);
+ 	unregister_pm_notifier(&hpriv->pm_notifier);
+ error1:
+ #ifdef TX_USE_THREAD
+diff -ru a/src/wow.c b/src/wow.c
+--- a/src/wow.c
++++ b/src/wow.c
+@@ -14,10 +14,13 @@
+ #ifdef CONFIG_PM
+ 
+ unsigned char img_suspend_status;
+-static int host_suspend(void);
+-struct syscore_ops host_syscore_ops = {
++static int host_suspend(void *data);
++static const struct syscore_ops host_syscore_ops_impl = {
+ 	.suspend = host_suspend,
+ };
++struct syscore host_syscore_ops = {
++	.ops = &host_syscore_ops_impl,
++};
+ 
+ #if 0
+ static int wait_for_econ_ps_cfg(struct img_priv *priv)
+@@ -250,7 +253,7 @@
+ }
+ 
+ 
+-static int host_suspend(void)
++static int host_suspend(void *data)
+ {
+ 	/*if ((img_suspend_status == 1) && (rx_interrupt_status == 1)) {
+ 		RPU_ERROR_UMACIF("%s: Interrupt raised during Suspend, cancel suspend",

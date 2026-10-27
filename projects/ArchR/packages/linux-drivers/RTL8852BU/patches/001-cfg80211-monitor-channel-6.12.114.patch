@@ -1,0 +1,18 @@
+RTL8852BU: support the monitor channel callback in Linux 6.12.114
+
+Linux 6.12.114 backported the cfg80211 change from 6.13 that passes a
+net_device to set_monitor_channel. Lower only the version guard for that
+callback to 6.12.114, leaving unrelated API guards unchanged.
+
+diff -ru a/os_dep/linux/ioctl_cfg80211.c b/os_dep/linux/ioctl_cfg80211.c
+--- a/os_dep/linux/ioctl_cfg80211.c
++++ b/os_dep/linux/ioctl_cfg80211.c
+@@ -6858,7 +6858,7 @@
+ #endif /* (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 8, 0)) */
+ 
+ static int cfg80211_rtw_set_monitor_channel(struct wiphy *wiphy
+-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 13, 0))
++#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 114))
+ 	, struct net_device *dev
+ #endif
+ #if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 8, 0))
