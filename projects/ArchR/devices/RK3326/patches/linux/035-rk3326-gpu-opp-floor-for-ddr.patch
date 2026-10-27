@@ -1,0 +1,49 @@
+From: Douglas Teles <dga.teles@gmail.com>
+Date: Mon, 26 Oct 2026 20:30:00 -0300
+Subject: [PATCH] arm64: dts: px30: keep the GPU OPP floor at 1.1V
+
+vdd_logic is shared between the Mali-G31 and the DDR controller. With
+the TPL training the DDR at 666MHz, panfrost's devfreq lowering the rail
+to 950mV at idle corrupts memory: on an R36S original every panfrost boot
+ended in an oops in an unrelated task (an "undefined instruction" on a
+valid opcode, captured through pstore/ramoops), then a hang or a reset.
+mali_kbase keeps the rail at 1.1V, so libmali never showed it.
+
+Raise the 200/300/400MHz OPPs to 1.1V. Verified on the same unit: with
+this table panfrost binds, devfreq runs through hundreds of transitions
+and the kernel log stays clean.
+---
+--- a/arch/arm64/boot/dts/rockchip/px30.dtsi
++++ b/arch/arm64/boot/dts/rockchip/px30.dtsi
+@@ -1108,17 +1108,28 @@
+ 	gpu_opp_table: opp-table-1 {
+ 		compatible = "operating-points-v2";
+ 
++		/*
++		 * The GPU has no rail of its own: mali-supply is vdd_logic,
++		 * which also feeds the bus and the DDR controller. Our TPL
++		 * trains the DDR at 666MHz, and below 1.1V the logic rail no
++		 * longer holds it: panfrost's devfreq dropping to the stock
++		 * 950mV at idle corrupted memory on an R36S original (bogus
++		 * "undefined instruction" oopses in unrelated tasks, then a
++		 * hang or a reset). mali_kbase never lowers the rail, which is
++		 * why only panfrost tripped on it. Keep the low OPPs at the
++		 * voltage the system already runs at under libmali.
++		 */
+ 		opp-200000000 {
+ 			opp-hz = /bits/ 64 <200000000>;
+-			opp-microvolt = <950000>;
++			opp-microvolt = <1100000>;
+ 		};
+ 		opp-300000000 {
+ 			opp-hz = /bits/ 64 <300000000>;
+-			opp-microvolt = <975000>;
++			opp-microvolt = <1100000>;
+ 		};
+ 		opp-400000000 {
+ 			opp-hz = /bits/ 64 <400000000>;
+-			opp-microvolt = <1050000>;
++			opp-microvolt = <1100000>;
+ 		};
+ 		opp-560000000 {
+ 			opp-hz = /bits/ 64 <560000000>;
