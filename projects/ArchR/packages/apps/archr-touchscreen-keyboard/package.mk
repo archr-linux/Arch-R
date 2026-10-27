@@ -17,6 +17,5 @@ makeinstall_target() {
   chmod 0755 ${INSTALL}/usr/bin/*
 }
 
-post_install() {
-  enable_service touchkeyboard.service
-}
+# Not enabled at boot: udev.d/80-touchkeyboard.rules starts it when a
+# touchscreen shows up, so devices without one never load it.

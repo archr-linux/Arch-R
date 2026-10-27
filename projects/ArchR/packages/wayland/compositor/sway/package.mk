@@ -64,6 +64,5 @@ post_makeinstall_target() {
   esac
 }
 
-post_install() {
-  enable_service sway-touch.service
-}
+# Not enabled at boot: udev.d/80-sway-touch.rules starts it when a
+# touchscreen shows up, so devices without one never load it.

@@ -1,0 +1,3 @@
+# Map the touchscreen to its output only on devices that have one. The
+# service used to start on every boot just to find out there was none.
+ACTION=="add", SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_INPUT_TOUCHSCREEN}=="1", TAG+="systemd", ENV{SYSTEMD_WANTS}+="sway-touch.service"

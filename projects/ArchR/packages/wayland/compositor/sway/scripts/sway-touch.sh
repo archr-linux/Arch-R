@@ -4,7 +4,7 @@
 
 . /etc/profile
 
-if [ ${DEVICE_HAS_TOUCHSCREEN} = 'true' ]; then
+if [ "${DEVICE_HAS_TOUCHSCREEN}" = 'true' ]; then
 
 # Identify touchscreen controller
 TRIES=0

@@ -1,0 +1,3 @@
+# Start the on-screen keyboard only on devices that have a touchscreen.
+# It used to start on every boot and exit when there was none.
+ACTION=="add", SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_INPUT_TOUCHSCREEN}=="1", TAG+="systemd", ENV{SYSTEMD_WANTS}+="touchkeyboard.service"
