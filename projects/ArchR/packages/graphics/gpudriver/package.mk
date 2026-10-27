@@ -11,16 +11,21 @@ PKG_TOOLCHAIN="manual"
 PKG_LONGDESC="GPU driver util for switching between panfrost / panthor and libmali / libmali-vulkan"
 
 post_makeinstall_target() {
-  # Install OUTSIDE /usr/bin while the panfrost path is still unreliable
-  # on RK3326 clones. EmulationStation surfaces the GPU DRIVER selector
-  # only when `/usr/bin/gpudriver` exists (see es-app GuiMenu.cpp), so
-  # placing it under /usr/lib/archr/ hides the picker without removing
-  # any boot-time functionality — the autostart hook (003-gpudriver)
-  # calls this binary by full path. Move back to /usr/bin/gpudriver
-  # once panfrost on the Mali-G31 path stops hanging the kernel.
-  mkdir -p "${INSTALL}/usr/lib/archr/"
-  cp -v "${PKG_BUILD}/bin/gpudriver" "${INSTALL}/usr/lib/archr/"
-  GPUDRIVER_BIN="${INSTALL}/usr/lib/archr/gpudriver"
+  # Installed as /usr/bin/gpudriver. EmulationStation surfaces the GPU
+  # DRIVER selector only when that exact path exists (see es-app
+  # GuiMenu.cpp), so the location IS the feature flag. It lived under
+  # /usr/lib/archr/ for a while to hide the picker while the panfrost
+  # probe could still hang the kernel on RK3326 clones; the guards that
+  # made hiding unnecessary are all in the script now: the
+  # /storage/.config/gpudriver.attempting sentinel written with
+  # oflag=sync forces libmali on the boot after a crash, the async
+  # modprobe with a bind poll survives a blocked probe, and gpu_is_bound
+  # falls back to the other driver when the requested one does not
+  # attach. libmali stays the default. Anything else that shells out to
+  # the tool (the 075-mangohud-supported quirk) also expects /usr/bin.
+  mkdir -p "${INSTALL}/usr/bin/"
+  cp -v "${PKG_BUILD}/bin/gpudriver" "${INSTALL}/usr/bin/"
+  GPUDRIVER_BIN="${INSTALL}/usr/bin/gpudriver"
 
   # set the correct mesa pan kernel driver module based on device
   case ${DEVICE} in
