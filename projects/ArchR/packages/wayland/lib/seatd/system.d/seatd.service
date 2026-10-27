@@ -1,7 +1,6 @@
 [Unit]
 Description=Seat Management Daemon
 Before=graphical.target sway.service
-After=multi-user.target
 ConditionKernelCommandLine=!installer
 
 [Service]

@@ -23,7 +23,12 @@ if [ "${UIMODE}" = "1" ]; then
     set_setting desktop.enabled "0"
 else
     cp $SWAY_CONFIG_KIOSK $SWAY_HOME/config
-    systemctl unmask essway.service
+    # Only unmask when a desktop session left it masked. An unconditional
+    # unmask reloads systemd on every boot: 1.2s idle, ~4s under the
+    # parallel autostart load, and the UI waits for this script.
+    if [ -L /etc/systemd/system/essway.service ]; then
+        systemctl unmask essway.service
+    fi
 fi
 # get the card number, this may not be a safe way to derive it...
 card_no=$(ls /sys/class/drm/ | grep -E "DP|HDMI|DSI" | head -n 1 | cut -b 5)

@@ -5,7 +5,12 @@ Description=ArchR user autostart script
 # já está coberto pelo After=graphical.target abaixo (sway é o
 # display-manager.service do graphical.target).
 Before=emustation.service
-After=network.target graphical.target userconfig.service
+# Only what the scripts need: /storage config (userconfig) on top of the
+# implicit basic.target. Waiting for network.target and graphical.target
+# held the UI behind iwd, connman, sshd and the rest of multi-user.target
+# (~6s on an R36S) for nothing: the UI is started by this script, and
+# 099-networkservices only starts services, it never needs a link up.
+After=userconfig.service
 
 [Service]
 Type=oneshot

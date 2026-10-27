@@ -88,28 +88,60 @@ trace_step "archr-automount"
 tocon "Starting storage services..."
 systemctl start archr-automount
 
-### Run common start scripts in two phases:
+### Run common start scripts in three phases:
 ###   Phase A: 001-setup runs FIRST (gate). It creates /tmp/cache, the
 ###     runtime dir, /storage/.config/profile.d, runs chksysconfig
 ###     verify and sort_settings. Other scripts depend on these
 ###     directories/settings being ready.
-###   Phase B: everything else runs concurrently. Each script touches a
-###     different domain (display, audio, network, GPU, joypad, etc.)
-###     and set_setting/get_setting serialize themselves via
-###     wait_lock + J_CONF_LOCK, so concurrent writes are safe.
+###   Phase B: everything the UI needs, concurrently. Each script touches
+###     a different domain and set_setting/get_setting serialize
+###     themselves via wait_lock + J_CONF_LOCK, so concurrent writes are
+###     safe. The UI starts as soon as this phase is done.
+###   Phase C: the scripts in DEFERRED_SCRIPTS, started after the UI.
+###     None of them writes anything sway or EmulationStation reads at
+###     startup (network daemons, bluetooth, LEDs, rumble, USB gadget,
+###     logging, pacman db...). Holding the UI for them cost the slowest
+###     one of the lot on every boot. A script missing from this list
+###     stays in phase B, so a new script never leaves the boot path
+###     unnoticed.
 GATE_SCRIPT="/usr/lib/autostart/common/001-setup"
+DEFERRED_SCRIPTS=" 003-logging 004-seed-pacmandb 007-rootpw 008-perfmode
+  009-bluetooth 009-sleepmode 010-moonlight 010-pico8 010-uimode 020-rumble
+  020-set_audio_latency 055-hdmi-check 081-usbgadget 095-turbo-mode
+  096-powerled 098-deviceutils 099-networkservices 999-export "
+DEFERRED_LIST=" $(echo ${DEFERRED_SCRIPTS}) "
+# 111-sway-init reads DEVICE_HAS_DUAL_SCREEN, which 080-dual_screen_mode
+# writes; run them as a chain instead of racing each other.
+CHAIN_FIRST="080-dual_screen_mode"
+CHAIN_SECOND="111-sway-init"
+
+run_common() {
+  log "Run ${1}"
+  trace_step "common:${1}"
+  "${1}" 2>&1 >>${BOOTLOG}
+  log "Done ${1}"
+}
+
 if [ -x "${GATE_SCRIPT}" ]; then
   log "Run ${GATE_SCRIPT}"
   trace_step "common:${GATE_SCRIPT}"
   "${GATE_SCRIPT}" 2>&1 >>${BOOTLOG}
 fi
 
-for script in /usr/lib/autostart/common/*; do
+COMMON="/usr/lib/autostart/common"
+( [ -x "${COMMON}/${CHAIN_FIRST}" ] && run_common "${COMMON}/${CHAIN_FIRST}"
+  [ -x "${COMMON}/${CHAIN_SECOND}" ] && run_common "${COMMON}/${CHAIN_SECOND}" ) &
+DEFERRED=()
+for script in ${COMMON}/*; do
+  name="${script##*/}"
   [ "${script}" = "${GATE_SCRIPT}" ] && continue
+  [ "${name}" = "${CHAIN_FIRST}" ] || [ "${name}" = "${CHAIN_SECOND}" ] && continue
   [ -x "${script}" ] || continue
-  log "Run ${script}"
-  trace_step "common:${script}"
-  ( "${script}" 2>&1 >>${BOOTLOG}; log "Done ${script}" ) &
+  if [[ "${DEFERRED_LIST}" == *" ${name} "* ]]; then
+    DEFERRED+=("${script}")
+    continue
+  fi
+  run_common "${script}" &
 done
 wait
 
@@ -150,6 +182,17 @@ rm /var/lock/start.games 2>&1 >>${BOOTLOG}
 touch /var/lock/start.games 2>&1 >>${BOOTLOG}
 log "Starting ${UI_SERVICE}..."
 systemctl start ${UI_SERVICE} 2>&1 >>${BOOTLOG} &
+
+### Phase C: what the UI does not need, now that it is on its way. At
+### the lowest CPU and I/O priority: EmulationStation is reading its
+### themes and gamelists off the SD card right now, and at normal
+### priority this phase made it take ~3s longer to show its window.
+for script in "${DEFERRED[@]}"; do
+  ( renice -n 19 -p ${BASHPID} >/dev/null 2>&1
+    ionice -c 3 -p ${BASHPID} >/dev/null 2>&1
+    run_common "${script}" ) &
+done
+wait
 
 DEVICE_CPU_GOVERNOR=$(get_setting system.cpugovernor)
 ${DEVICE_CPU_GOVERNOR} 2>&1 >>${BOOTLOG}

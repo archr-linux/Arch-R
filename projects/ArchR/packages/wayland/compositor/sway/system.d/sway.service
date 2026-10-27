@@ -1,7 +1,10 @@
 [Unit]
 Description=Sway Wayland Compositor
 Before=graphical.target
-After=multi-user.target archr-automount.service
+# seatd hands sway the DRM and input devices; nothing in multi-user.target
+# is needed to draw the UI, so don't wait for it.
+Wants=seatd.service
+After=seatd.service archr-automount.service
 RequiresMountsFor=/storage
 ConditionKernelCommandLine=!installer
 
