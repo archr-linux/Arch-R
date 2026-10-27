@@ -165,8 +165,10 @@ case ${VPLUGIN} in
         SET_PARAMS+=" --gfx mupen64plus-video-rice${SIMPLESUFFIX}.so"
     ;;
     *)
-        # glide64mk2 is the plugin that holds full speed on RK3326
-        SET_PARAMS+=" --gfx mupen64plus-video-glide64mk2${SIMPLESUFFIX}.so"
+        # GLideN64 on its performance profile: Super Mario 64 at 114% speed
+        # unthrottled on an R36S (glide64mk2 did 110%), and it draws what
+        # glide64mk2 drops, e.g. Mario Kart 64's title screen and item icons.
+        SET_PARAMS+=" --gfx mupen64plus-video-GLideN64${SIMPLESUFFIX}.so"
     ;;
 esac
 
