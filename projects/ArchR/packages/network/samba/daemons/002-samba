@@ -1,7 +1,9 @@
 STATE=$(get_setting samba.enabled)
 SVC="samba"
 CONF="smb.conf"
-DAEMONS=("nmbd" "smbd")
+# wsdd2 only announces the shares, so it follows samba instead of
+# starting on every boot
+DAEMONS=("nmbd" "smbd" "wsdd2")
 
 mkdir -p /run/${SVC}
 ln -s /etc/${SVC}/${CONF} /run/${SVC}/${CONF}

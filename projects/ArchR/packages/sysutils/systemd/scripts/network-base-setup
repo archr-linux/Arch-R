@@ -10,8 +10,14 @@ MID="$(cat /storage/.cache/systemd-machine-id 2>/dev/null)"
 [ -z "${MID}" ] && MID="$(cat /etc/machine-id 2>/dev/null)"
 [ -n "${MID}" ] && HOSTNAME="${HOSTNAME}-$(echo "${MID}" | cut -c1-4)"
 echo ${HOSTNAME} >/proc/sys/kernel/hostname
-hostnamectl --transient hostname ${HOSTNAME}
-avahi-set-host-name ${HOSTNAME}
+# The line above already is the transient hostname; going through
+# hostnamectl also bus-activated systemd-hostnamed, and avahi-set-host-name
+# bus-activated avahi, on a boot where D-Bus is not even up yet: this unit
+# took ~4s and held connman (and so Wi-Fi) back. A running avahi still
+# needs telling; one started later reads the kernel hostname by itself.
+if systemctl is-active --quiet avahi-daemon.service; then
+  avahi-set-host-name ${HOSTNAME}
+fi
 
 rm -f /run/archr/hosts
 if [ -f /storage/.config/hosts.conf ]; then

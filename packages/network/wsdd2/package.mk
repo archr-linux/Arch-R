@@ -11,6 +11,6 @@ PKG_DEPENDS_TARGET="make:host gcc:host"
 PKG_LONGDESC="WSD/LLMNR Discovery/Name Service Daemon"
 PKG_BUILD_FLAGS="+size"
 
-post_install() {
-  enable_service wsdd2.service
-}
+# Not enabled at boot: samba's daemon toggle starts and stops it with
+# nmbd/smbd. On its own it ran on every boot with samba off and failed
+# reading the samba config.
