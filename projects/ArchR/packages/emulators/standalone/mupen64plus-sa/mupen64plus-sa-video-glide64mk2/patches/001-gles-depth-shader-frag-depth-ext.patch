@@ -1,0 +1,35 @@
+--- a/src/Glitch64/OGLEScombiner.cpp
++++ b/src/Glitch64/OGLEScombiner.cpp
+@@ -332,13 +332,29 @@
+   // depth shader
+   fragment_depth_shader_object = glCreateShader(GL_FRAGMENT_SHADER);
+ 
+-  char s[128];
++  char s[160];
++  // GLSL ES 1.00 has no gl_FragDepth: the shader only compiles through
++  // GL_EXT_frag_depth, as gl_FragDepthEXT. Without that the depth program
++  // failed to link and every depth-buffer write drew nothing (missing
++  // elements in Mario Kart 64 on Mali-G31, both panfrost and libmali).
++  const char *gl_exts = (const char *)glGetString(GL_EXTENSIONS);
++  int has_frag_depth = gl_exts && strstr(gl_exts, "GL_EXT_frag_depth") != NULL;
++  // The #extension line has to follow #version, which ends the first
++  // line of the shared header.
++  const char *depth_ext = has_frag_depth ? "#extension GL_EXT_frag_depth : enable\n" : "";
++  const char *header_rest = strchr(fragment_shader_header, '\n') + 1;
++  int version_len = header_rest - fragment_shader_header;
+   // ZIGGY convert a 565 texture into depth component
+-  sprintf(s, "gl_FragDepth = dot(texture2D(texture0, vec2(gl_TexCoord[0])), vec4(31*64*32, 63*32, 31, 0))*%g + %g; \n", zscale/2/65535.0, 1-zscale/2);
++  sprintf(s, "%s = dot(texture2D(texture0, vec2(gl_TexCoord[0])), vec4(31*64*32, 63*32, 31, 0))*%g + %g; \n",
++          has_frag_depth ? "gl_FragDepthEXT" : "gl_FragDepth", zscale/2/65535.0, 1-zscale/2);
+   fragment_shader = (char*)malloc(strlen(fragment_shader_header)+
++    strlen(depth_ext)+
+     strlen(s)+
+     strlen(fragment_shader_end)+1);
+-  strcpy(fragment_shader, fragment_shader_header);
++  memcpy(fragment_shader, fragment_shader_header, version_len);
++  fragment_shader[version_len] = '\0';
++  strcat(fragment_shader, depth_ext);
++  strcat(fragment_shader, header_rest);
+   strcat(fragment_shader, s);
+   strcat(fragment_shader, fragment_shader_end);
+   glShaderSource(fragment_depth_shader_object, 1, (const GLchar**)&fragment_shader, NULL);
