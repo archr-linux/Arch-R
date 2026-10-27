@@ -251,7 +251,10 @@ get_devices() {
   local FOUNDKEYS=false
   local FOUNDJOY=false
   local FOUNDTOUCH=false
-  local RETRY=5
+  # Starting at the limit meant no retry at all: early in boot udev has
+  # not tagged the pad yet, the script found nothing, exited, and systemd
+  # restarted it a second later.
+  local RETRY=0
 
   while [ ${KJDEVS} = false ]; do
     for DEV in /dev/input/ev*
