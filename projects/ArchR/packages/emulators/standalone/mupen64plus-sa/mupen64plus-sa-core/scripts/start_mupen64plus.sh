@@ -56,7 +56,10 @@ fi
 if [ $(echo $1 | grep -i .zip | wc -l) -eq 1 ]; then
     # Unzip the game ROM if needed
     unzip -q -o "$1" -d ${TMP}
-    ROM=$(unzip -Zl -1 "$1")
+    # Find the cartridge by extension: the image ships BusyBox unzip, which
+    # has no zipinfo mode (-Z) to list the archive's member names.
+    ROM=$(find ${TMP} -maxdepth 1 -type f \( -iname '*.z64' -o -iname '*.n64' -o -iname '*.v64' \) | head -n 1)
+    ROM="${ROM##*/}"
 else
     cp "$1" ${TMP}
     ROM="${GAME}"
@@ -103,7 +106,7 @@ if [ "${ASPECT}" = "fullscreen" ]; then
     SET_PARAMS+=" --set Video-GLideN64[AspectRatio]=3"
     SET_PARAMS+=" --set Video-Glide64mk2[aspect]=2"
 else
-    if [ -z "${VPLUGIN}" ] || [ "${VPLUGIN}" = "rice" ]; then
+    if [ "${VPLUGIN}" = "rice" ]; then
         GAMEWIDTH=$(((SCREENHEIGHT * 4) / 3))
         SET_PARAMS+=" --set Video-General[ScreenWidth]=${GAMEWIDTH}"
     else
@@ -162,7 +165,8 @@ case ${VPLUGIN} in
         SET_PARAMS+=" --gfx mupen64plus-video-rice${SIMPLESUFFIX}.so"
     ;;
     *)
-        SET_PARAMS+=" --gfx mupen64plus-video-rice${SIMPLESUFFIX}.so"
+        # glide64mk2 is the plugin that holds full speed on RK3326
+        SET_PARAMS+=" --gfx mupen64plus-video-glide64mk2${SIMPLESUFFIX}.so"
     ;;
 esac
 
@@ -171,11 +175,13 @@ case "${RSP}" in
     "parallel")
         SET_PARAMS+=" --rsp mupen64plus-rsp-parallel${SIMPLESUFFIX}.so"
     ;;
-    "hle")
-        SET_PARAMS+=" --rsp mupen64plus-rsp-hle${SIMPLESUFFIX}.so"
+    "cxd4")
+        SET_PARAMS+=" --rsp mupen64plus-rsp-cxd4${SIMPLESUFFIX}.so"
     ;;
     *)
-        SET_PARAMS+=" --rsp mupen64plus-rsp-cxd4${SIMPLESUFFIX}.so"
+        # HLE unless cxd4 is asked for: the low-level RSP costs speed the
+        # RK3326 does not have, and system.cfg already defaults to hle
+        SET_PARAMS+=" --rsp mupen64plus-rsp-hle${SIMPLESUFFIX}.so"
     ;;
 esac
 
@@ -186,8 +192,6 @@ SET_PARAMS+=" --audio mupen64plus-audio-sdl${SIMPLESUFFIX}.so"
 # Echo the command line options to the log for debugging
 echo ${SET_PARAMS}
 
-# Panfrost optimization: forcepack reduces draw call overhead on Mali-G31
-export PAN_MESA_DEBUG=forcepack
 export MESA_NO_ERROR=1
 
 ${EMUPERF} /usr/local/bin/mupen64plus${SIMPLESUFFIX} --configdir ${TMP} ${SET_PARAMS} "${TMP}/${ROM}"

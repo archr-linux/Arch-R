@@ -823,13 +823,29 @@ makeinstall_target() {
   add_es_system ngpc
 
   ### Nintendo 64
-  add_emu_core n64 retroarch mupen64plus_next true
+  # On RK3326 the standalone mupen64plus (glide64mk2 video, HLE RSP) holds
+  # full speed where RetroArch's mupen64plus_next does not: Super Mario 64
+  # measured 100% speed with 34% headroom standalone, against a 78% ceiling
+  # for mupen64plus_next even unthrottled. GPU driver and CPU clock made no
+  # difference to either, so the emulator choice is the whole gap.
+  case ${DEVICE} in
+    RK3326)
+      add_emu_core n64 mupen64plus mupen64plus-sa true
+      add_emu_core n64 retroarch mupen64plus_next false
+      ;;
+    *)
+      add_emu_core n64 retroarch mupen64plus_next true
+      ;;
+  esac
   if [ "${PREFER_GLES}" = "yes" ]; then
     # This core only has gles renderer
     add_emu_core n64 retroarch mupen64plus false
   fi
   add_emu_core n64 retroarch parallel_n64 false
-  add_emu_core n64 mupen64plus mupen64plus-sa false
+  case ${DEVICE} in
+    RK3326) ;;
+    *) add_emu_core n64 mupen64plus mupen64plus-sa false ;;
+  esac
   case ${DEVICE} in
     SDM845|SM8250|SM8550)
       add_emu_core n64 daedalusx64 daedalusx64-sa false

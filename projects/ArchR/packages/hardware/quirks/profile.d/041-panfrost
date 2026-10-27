@@ -8,9 +8,6 @@
 # autostart subshell that exited immediately, so the shader cache and Mesa
 # error-skip flags never reached emulator processes.
 
-# forcepack: pack vertex attributes; reduces draw call overhead on G31.
-export PAN_MESA_DEBUG=forcepack
-
 # Skip GL error checking — emulators don't query glGetError defensively.
 export MESA_NO_ERROR=1
 
