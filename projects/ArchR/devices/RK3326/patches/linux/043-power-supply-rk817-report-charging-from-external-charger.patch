@@ -1,0 +1,47 @@
+From: Douglas Teles <dga.teles@gmail.com>
+Date: Tue, 27 Oct 2026 18:00:00 -0300
+Subject: [PATCH] power: supply: rk817-battery: report charging from an
+ external charger
+
+The R36S and its clones charge the battery with a separate charger IC:
+the charge LED lights and the gauge measures 0.5 to 0.65 A flowing into
+the pack, but VBUS never reaches the RK817, so PLUG_IN_STS stays clear,
+the plug-in interrupt never fires and the RK817 charger reports
+CHRG_OFF. The battery status then reads "Not charging" while the pack
+is charging, and the UI never shows it.
+
+When the RK817 charger is off and unplugged but the averaged gauge
+current is at least 100 mA into the pack, report Charging.
+
+diff --color -ru a/drivers/power/supply/rk817_charger.c b/drivers/power/supply/rk817_charger.c
+--- a/drivers/power/supply/rk817_charger.c
++++ b/drivers/power/supply/rk817_charger.c
+@@ -486,6 +486,9 @@
+ 	rk817_bat_calib_cap(charger);
+ }
+ 
++/* Net charge current that means an external charger is feeding the pack. */
++#define RK817_EXT_CHRG_MIN_UA	100000
++
+ static int rk817_bat_get_prop(struct power_supply *ps,
+ 		enum power_supply_property prop,
+ 		union power_supply_propval *val)
+@@ -503,7 +506,17 @@
+ 		}
+ 		switch (charger->charge_status) {
+ 		case CHRG_OFF:
+-			val->intval = POWER_SUPPLY_STATUS_NOT_CHARGING;
++			/*
++			 * Some boards (R36S and clones) charge the pack with a
++			 * separate charger IC and never route VBUS to the
++			 * RK817, so its charger stays off while the gauge sees
++			 * the pack taking current.
++			 */
++			if (!charger->plugged_in &&
++			    charger->cur_avg_ua >= RK817_EXT_CHRG_MIN_UA)
++				val->intval = POWER_SUPPLY_STATUS_CHARGING;
++			else
++				val->intval = POWER_SUPPLY_STATUS_NOT_CHARGING;
+ 			break;
+ 		/*
+ 		 * Dead charge is documented, but not explained. I never
