@@ -2,14 +2,21 @@
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (C) 2022-present JELOS (https://github.com/JustEnoughLinuxOS)
 
-#Set mupen64-plus-sa config for R36S, can use same profile as OGS
+#Set mupen64-plus-sa config for R36S. Its own profile: the OGS one has the
+#hotkey on button 12, which is R3 here; the R36S Select is button 8.
 if [ ! -d "/storage/.config/mupen64plus" ]; then
     mkdir -p "/storage/.config/mupen64plus/"
         cp -r /usr/local/share/mupen64plus/mupen64plus.cfg* /storage/.config/mupen64plus/
 fi
-if [ -f "/storage/.config/mupen64plus/mupen64plus.cfg.ogs" ]; then
-  rm /storage/.config/mupen64plus/mupen64plus.cfg
-  mv /storage/.config/mupen64plus/mupen64plus.cfg.ogs /storage/.config/mupen64plus/mupen64plus.cfg
+if [ -f "/storage/.config/mupen64plus/mupen64plus.cfg.r36s" ]; then
+  rm -f /storage/.config/mupen64plus/mupen64plus.cfg
+  mv /storage/.config/mupen64plus/mupen64plus.cfg.r36s /storage/.config/mupen64plus/mupen64plus.cfg
+  rm -f /storage/.config/mupen64plus/mupen64plus.cfg.*
+fi
+#Configs copied from the OGS profile by older images: move the hotkeys to Select
+if grep -q '^Joy Mapping Stop = "J0B12/B13"' /storage/.config/mupen64plus/mupen64plus.cfg 2>/dev/null; then
+  sed -i -e 's|"J0B12/B13"|"J0B8/B9"|' -e 's|"J0B12/B14"|"J0B8/B7"|' -e 's|"J0B12/|"J0B8/|' \
+      /storage/.config/mupen64plus/mupen64plus.cfg
 fi
 
 #Set drastic-sa config for R36S (think it can use the same as RG20S)
