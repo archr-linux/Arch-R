@@ -321,7 +321,7 @@ connect_wifi() {
 # rede salva no cfg, limpa wifi.ssid/wifi.key, senão o boot
 # (099-networkservices) a reconectaria com a senha antiga.
 forget_wifi() {
-  local name legacy show net saved status=0
+  local name legacy show net status=0
 
   if [ -z "${SSID}" ]; then
     echo "wifictl: forget needs an SSID" >&2
@@ -345,10 +345,9 @@ forget_wifi() {
         "/var/lib/iwd/${name}.8021x" \
         "/var/lib/iwd/${legacy}.psk" "/var/lib/iwd/${legacy}.open" 2>/dev/null || status=$?
 
-  saved=$(get_setting wifi.ssid) || status=$?
-  if [ "${saved}" = "${SSID}" ]; then
-    del_setting wifi.ssid || status=$?
-    del_setting wifi.key || status=$?
+  if [ "$(get_setting wifi.ssid)" = "${SSID}" ]; then
+    del_setting wifi.ssid
+    del_setting wifi.key
     # del_setting's lock cleanup can mask a failed write.
     [ -z "$(get_setting wifi.ssid)$(get_setting wifi.key)" ] || status=1
   fi
