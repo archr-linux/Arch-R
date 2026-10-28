@@ -17,11 +17,12 @@ esac
 check_hardware_suspend_enabled() {
   local SUSPEND_MODE="$(get_setting system.suspendmode)"
 
-  if [[ "${SUSPEND_MODE}" != "off" ]]; then
-    return 0
-  else
-    return 1
-  fi
+  # Unset counts as off: the RK3326 quirk (030-suspend_mode) defaults to
+  # off, and only an explicit freeze/standby/mem means real suspend.
+  case "${SUSPEND_MODE}" in
+    ""|off) return 1 ;;
+    *) return 0 ;;
+  esac
 }
 
 check_hdmi_connected() {
