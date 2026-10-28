@@ -70,6 +70,7 @@ if [ ! -d "/storage/.config/locale" ]
 then
   tocon "Initializing language support..."
   rsync -a --delete /usr/config/locale/* /storage/.config/locale/ >/dev/null 2>&1
+  # EmulationStation looks for its translations in its own folder.
   if [ ! -L "/storage/.config/emulationstation/locale" ] &&
      [ -e "/usr/bin/emulationstation" ]
   then

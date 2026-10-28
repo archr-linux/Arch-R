@@ -101,8 +101,12 @@ fi
 ### Sync locale data
 tocon "Re-sync locale data..."
 rsync -a --delete /usr/config/locale/* /storage/.config/locale/ >>/var/log/configure.log 2>&1
-rm -rf /storage/.config/emulationstation/locale >>/var/log/configure.log 2>&1 ||:
-ln -sf /usr/share/locale /storage/.config/emulationstation/locale >>/var/log/configure.log 2>&1 ||:
+# EmulationStation looks for its translations in its own folder.
+if [ -e /usr/bin/emulationstation ]
+then
+  rm -rf /storage/.config/emulationstation/locale >>/var/log/configure.log 2>&1 ||:
+  ln -sf /usr/share/locale /storage/.config/emulationstation/locale >>/var/log/configure.log 2>&1 ||:
+fi
 
 ### Handle assets folder for ppsspp v1.20+ upgrade
 if [ ! -d "/storage/.config/ppsspp/assets/ui_images" ]

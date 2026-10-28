@@ -60,6 +60,19 @@ makeinstall_target() {
 EOF
   fi
 
+  ### Pre-generate the default locale (en_US.UTF-8): generating it on the
+  ### device takes a minute or two on RK3326, for about 1 MB here.
+  ### userconfig-setup copies it to /storage/.config/locale, where
+  ### archr-apply-locale generates any other language.
+  mkdir -p ${INSTALL}/usr/config/locale
+  I18NPATH=$(get_install_dir glibc)/usr/share/i18n/locales/ \
+    localedef --force --verbose --inputfile=en_US --charmap=UTF-8 \
+    ${INSTALL}/usr/config/locale/en_US.UTF-8 || true
+
+  ### archr-apply-locale writes the zone here.
+  mkdir -p ${INSTALL}/etc
+  ln -sf /storage/.cache/system_timezone ${INSTALL}/etc/timezone
+
   ### Compatibility links for ports
   ln -s /storage/roms ${INSTALL}/roms
 
@@ -160,6 +173,13 @@ EOF
 
 post_install() {
   ln -sf archr.target ${INSTALL}/usr/lib/systemd/system/default.target
+
+  ### Locales live on /storage (generated on the device for the chosen
+  ### language); glibc's default lookup, /usr/lib/locale, reaches them.
+  ### Image-only links, like before: pacman never owned them.
+  mkdir -p ${INSTALL}/usr/share ${INSTALL}/usr/lib
+  ln -sf /storage/.config/locale ${INSTALL}/usr/share/locale
+  ln -sf /usr/share/locale ${INSTALL}/usr/lib/locale
 
   if [ ! -d "${INSTALL}/usr/share" ]
   then

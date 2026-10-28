@@ -3,7 +3,7 @@
 
 PKG_NAME="emulationstation"
 PKG_VERSION="f25c4475a348f534de8ff724e9e42808b7a80a12"
-PKG_REV="2"
+PKG_REV="3"
 PKG_GIT_CLONE_BRANCH="master"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/archr-linux/emulationstation-next"
@@ -53,15 +53,9 @@ pre_configure_target() {
 }
 
 makeinstall_target() {
+  # ES's own translations. The locale data and its links belong to archr.
   mkdir -p ${INSTALL}/usr/config/locale
   cp -rf ${PKG_BUILD}/locale/lang/* ${INSTALL}/usr/config/locale/
-
-  # Pre-generate default (en_US.UTF-8) locale for lower-end devices to speed up first boot
-  # This saves a minute or two on RK3326 in a cost of about 1 MB of SYSTEM size
-  # Copy-paste of a locale generating part of es_settings script
-  I18NPATH=$(get_install_dir glibc)/usr/share/i18n/locales/ \
-    localedef --force --verbose --inputfile=en_US --charmap=UTF-8 \
-    ${INSTALL}/usr/config/locale/en_US.UTF-8 || true
 
   mkdir -p ${INSTALL}/usr/config/emulationstation/resources
   cp -rf ${PKG_BUILD}/resources/* ${INSTALL}/usr/config/emulationstation/resources/
@@ -91,8 +85,6 @@ makeinstall_target() {
   ln -sf /usr/share/archr/systems.cfg ${INSTALL}/usr/config/emulationstation/es_systems.cfg
   ln -sf /usr/share/archr/systems.cfg ${INSTALL}/etc/emulationstation/es_systems.cfg
 
-  ln -sf /storage/.cache/system_timezone ${INSTALL}/etc/timezone
-
   #Delete all vulkan options from es_features when vulkan is not present
   if [ ! "${VULKAN_SUPPORT}" = "yes" ]
     then
@@ -102,11 +94,5 @@ makeinstall_target() {
 
 
 post_install() {
-  mkdir -p ${INSTALL}/usr/share
-  ln -sf /storage/.config/locale ${INSTALL}/usr/share/locale
-
-  mkdir -p ${INSTALL}/usr/lib
-  ln -sf /usr/share/locale ${INSTALL}/usr/lib/locale
-
   ln -sf /usr/share/locale  ${INSTALL}/usr/config/emulationstation/locale
 }
