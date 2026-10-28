@@ -102,7 +102,6 @@ case "${1}" in
             ARCHIVEFILENAME="ARCHIVED_${OS_NAME}_BACKUP-${TODAY}.zip"
             mv "${BACKUPFILE}" "${BACKUPFOLDER}/${ARCHIVEFILENAME}"
         fi
-        [ -f "${BACKUPFILE}" ] && rm "${BACKUPFILE}"
         zip -9 -r "${WORKDIR}/backup.zip" \
         "${COMPRESSLOCATIONS[@]}" "${EXCLUDES[@]}" || exit $?
         if [ "${2}" != "--with-wifi" ] && \

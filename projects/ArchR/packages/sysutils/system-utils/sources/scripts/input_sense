@@ -111,8 +111,6 @@ HOTKEY_A_PRESSED=false
 HOTKEY_B_PRESSED=false
 HOTKEY_C_PRESSED=false
 
-FUNCTION_HOTKEY_A_EVENT='*('${BTN_HOTKEY_A_MODIFIER}'), value *'
-
 INPUT_PLUMBER_CHECK=$(grep -l "InputPlumber Keyboard" /sys/class/input/event*/device/name | sed -E 's#.*/(event[0-9]+).*#/dev/input/\1#')
 if [[ -n "${INPUT_PLUMBER_CHECK}" ]]; then
   ${DEBUG} && log $0 "InputPlumber detected, fixing face buttons."
@@ -131,6 +129,7 @@ press_event() {
   echo "*(${BTN}), value ${2:-1*}"
 }
 
+FUNCTION_HOTKEY_A_EVENT=$(press_event "${BTN_HOTKEY_A_MODIFIER}" '*')
 FUNCTION_HOTKEY_B_EVENT=$(press_event "${BTN_HOTKEY_B_MODIFIER}" '*')
 FUNCTION_HOTKEY_C_EVENT=$(press_event "${BTN_HOTKEY_C_MODIFIER}" '*')
 
