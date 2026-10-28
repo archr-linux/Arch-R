@@ -110,7 +110,7 @@ legacy_iwd_name() {
 # Do not wait for a stopped daemon; bound every client call, even if it stalls.
 iwctl() {
   pgrep -x iwd >/dev/null || return 1
-  timeout -k 1 5 iwctl "$@"
+  timeout -k 1 "${IWCTL_TIMEOUT:-5}" iwctl "$@"
 }
 
 # Wait for iwd to start and have a device available
@@ -252,7 +252,7 @@ connect_wifi() {
       # o iwd não aceitar o profile por qualquer motivo, o iwctl pede a
       # passphrase pelo stdin; wifictl não tem TTY, então em vez de um
       # erro o usuário recebe um travamento até o timeout.
-      iwctl --dont-ask station ${WIFI_DEV} connect "${SSID}" 2>&1
+      IWCTL_TIMEOUT=30 iwctl --dont-ask station ${WIFI_DEV} connect "${SSID}" 2>&1
     else
       # A rede não apareceu em ~12s de varredura, e o caso provável é
       # rede oculta. Para essas o connect comum não serve: um AP oculto
@@ -276,10 +276,10 @@ connect_wifi() {
       remove_iwd_profile
       sleep 1
       if [ -n "${PSK}" ]; then
-        iwctl --passphrase "${PSK}" --dont-ask \
+        IWCTL_TIMEOUT=30 iwctl --passphrase "${PSK}" --dont-ask \
           station ${WIFI_DEV} connect-hidden "${SSID}" 2>&1
       else
-        iwctl --dont-ask station ${WIFI_DEV} connect-hidden "${SSID}" 2>&1
+        IWCTL_TIMEOUT=30 iwctl --dont-ask station ${WIFI_DEV} connect-hidden "${SSID}" 2>&1
       fi
       # Se a rede não era oculta e sim uma varredura que simplesmente
       # não a alcançou, o connect-hidden falha. Restaura o profile e
@@ -288,7 +288,7 @@ connect_wifi() {
         echo "== connect-hidden não pegou, voltando ao connect comum"
         write_iwd_profile
         sleep 1
-        iwctl --dont-ask station ${WIFI_DEV} connect "${SSID}" 2>&1
+        IWCTL_TIMEOUT=30 iwctl --dont-ask station ${WIFI_DEV} connect "${SSID}" 2>&1
       fi
     fi
   } >> "${CONNECT_LOG}"
