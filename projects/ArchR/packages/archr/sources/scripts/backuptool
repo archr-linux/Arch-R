@@ -15,9 +15,21 @@
 #   /some/other/folder/file.name*
 # )
 
+usage() {
+    echo "Usage: ${0} {backup|restore} [--with-wifi]"
+    echo "  --with-wifi  Include saved iwd Wi-Fi credentials in backup or restore."
+    echo "               Backups are unencrypted and stored on the ROMs share."
+}
+
+if [ "$#" -gt 2 ] || { [ -n "${2}" ] && [ "${2}" != "--with-wifi" ]; }
+then
+    usage >&2
+    exit 1
+fi
+
 BACKUPFOLDER="/storage/roms/backup"
 BACKUPFILE="${BACKUPFOLDER}/${OS_NAME}_BACKUP.zip"
-mkdir -p ${BACKUPFOLDER}
+mkdir -p "${BACKUPFOLDER}"
 
 # Real paths, not the /storage/.emulationstation symlink: that link only
 # exists while EmulationStation is installed. WiFi is iwd, whose saved
@@ -28,17 +40,19 @@ DEFAULT=(
     /storage/.config/fancontrol.conf
     /storage/.config/backuptool.conf
     /var/lib/bluetooth/*
-    /storage/.cache/iwd/*
     /storage/.config/system/configs/system.cfg
     /storage/.config/ppsspp/*
     /storage/.config/retroarch/*
     /storage/.config/moonlight/*
     /storage/.config/game/*
-    ${ES_DIR}/es_*.cfg
-    ${ES_DIR}/scripts/*
-    ${ES_DIR}/themesettings/*
-    $(find ${ES_DIR}/themes/* -type d -maxdepth 0 -not -path "*es-theme-art-book-next" -not -path "*system-theme" 2>/dev/null)
+    "${ES_DIR}"/es_*.cfg
+    "${ES_DIR}"/scripts/*
+    "${ES_DIR}"/themesettings/*
 )
+while IFS= read -r -d '' THEME
+do
+    DEFAULT+=("${THEME}")
+done < <(find "${ES_DIR}/themes" -mindepth 1 -maxdepth 1 -type d -not -name es-theme-art-book-next -not -name system-theme -print0 2>/dev/null)
 
 if [ -e "/storage/.config/backuptool.conf" ]
 then
@@ -48,27 +62,39 @@ then
         WARN="Error loading custom backuptool configs. Using defaults."
         ${DEBUG} && echo "${WARN}"
         logger -t backuptool "${WARN}"
-        COMPRESSLOCATIONS=(${DEFAULT[@]})
+        COMPRESSLOCATIONS=("${DEFAULT[@]}")
     else
-        COMPRESSLOCATIONS=(${LOCATIONS[@]})
+        COMPRESSLOCATIONS=("${LOCATIONS[@]}")
     fi
 else
-    COMPRESSLOCATIONS=(${DEFAULT[@]})
+    COMPRESSLOCATIONS=("${DEFAULT[@]}")
+fi
+
+# Also exclude profiles when a custom location contains their parent directory.
+EXCLUDES=(-x 'storage/.cache/iwd' 'storage/.cache/iwd/*' 'var/lib/iwd' 'var/lib/iwd/*')
+if [ "${2}" = "--with-wifi" ]
+then
+    COMPRESSLOCATIONS+=(/storage/.cache/iwd/*)
+    EXCLUDES=()
 fi
 
 case "${1}" in
     "restore")
-        unzip -o ${BACKUPFILE} -d /
+        unzip -o "${BACKUPFILE}" -d / "${EXCLUDES[@]}"
     ;;
     "backup")
-        if [ -f ${BACKUPFILE} ]
+        if [ -f "${BACKUPFILE}" ]
         then
             TODAY=`date +%y-%m-%d_%H_%M_%S`
             ARCHIVEFILENAME="ARCHIVED_${OS_NAME}_BACKUP-${TODAY}.zip"
-            mv ${BACKUPFILE} "${BACKUPFOLDER}/${ARCHIVEFILENAME}"
+            mv "${BACKUPFILE}" "${BACKUPFOLDER}/${ARCHIVEFILENAME}"
         fi
         [ -f "${BACKUPFILE}" ] && rm "${BACKUPFILE}"
-        zip -9 -r ${BACKUPFILE} \
-        ${COMPRESSLOCATIONS[@]}
+        zip -9 -r "${BACKUPFILE}" \
+        "${COMPRESSLOCATIONS[@]}" "${EXCLUDES[@]}"
+    ;;
+    *)
+        usage >&2
+        exit 1
     ;;
 esac
