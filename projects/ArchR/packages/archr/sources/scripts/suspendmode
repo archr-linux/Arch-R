@@ -6,31 +6,50 @@
 
 REQUESTED_MODE="${*}"
 SUSPEND_MODE=$(get_setting system.suspendmode)
+SLEEP_CONF="/storage/.config/sleep.conf.d/sleep.conf"
 
 if [ ! "${REQUESTED_MODE}" = "${SUSPEND_MODE}" ]; then
-  cat <<EOF >/storage/.config/sleep.conf.d/sleep.conf
+  # A free-form mode becomes SuspendState= verbatim: accept only states
+  # the kernel offers, before anything is touched.
+  case ${REQUESTED_MODE} in
+    off|freeze|standby|mem|default) ;;
+    *)
+      for STATE in ${REQUESTED_MODE:-none}; do
+        if [ "${STATE}" = "disk" ] || ! grep -qw -- "${STATE}" /sys/power/state 2>/dev/null; then
+          echo "suspendmode: unsupported mode '${REQUESTED_MODE}'" >&2
+          exit 2
+        fi
+      done
+      ;;
+  esac
+
+  # Keep the current config so a failed change can be undone. The PID
+  # suffix matters: "default" re-enters this script through the quirk.
+  RC=0
+  cp -f "${SLEEP_CONF}" "${SLEEP_CONF}.prev.$$" 2>/dev/null
+  cat <<EOF >${SLEEP_CONF} || RC=1
 [Sleep]
 EOF
   case ${REQUESTED_MODE} in
     off)
-      cat <<EOF >>/storage/.config/sleep.conf.d/sleep.conf
+      cat <<EOF >>${SLEEP_CONF} || RC=1
 AllowSuspend=no
 EOF
       ;;
     freeze)
-      cat <<EOF >>/storage/.config/sleep.conf.d/sleep.conf
+      cat <<EOF >>${SLEEP_CONF} || RC=1
 AllowSuspend=yes
 SuspendState=freeze standby mem
 EOF
       ;;
     standby)
-      cat <<EOF >>/storage/.config/sleep.conf.d/sleep.conf
+      cat <<EOF >>${SLEEP_CONF} || RC=1
 AllowSuspend=yes
 SuspendState=standby mem freeze
 EOF
       ;;
     mem)
-      cat <<EOF >>/storage/.config/sleep.conf.d/sleep.conf
+      cat <<EOF >>${SLEEP_CONF} || RC=1
 AllowSuspend=yes
 SuspendState=mem standby freeze
 EOF
@@ -38,18 +57,30 @@ EOF
     default)
       del_setting system.suspendmode
       if [ -e "/usr/lib/autostart/quirks/devices/${QUIRK_DEVICE}/030-suspend_mode" ]; then
-        "/usr/lib/autostart/quirks/devices/${QUIRK_DEVICE}/030-suspend_mode"
+        "/usr/lib/autostart/quirks/devices/${QUIRK_DEVICE}/030-suspend_mode" || RC=1
       elif [ -e "/usr/lib/autostart/quirks/platforms/${HW_DEVICE}/030-suspend_mode" ]; then
-        "/usr/lib/autostart/quirks/platforms/${HW_DEVICE}/030-suspend_mode"
+        "/usr/lib/autostart/quirks/platforms/${HW_DEVICE}/030-suspend_mode" || RC=1
       fi
       ;;
     *)
-      cat <<EOF >>/storage/.config/sleep.conf.d/sleep.conf
+      cat <<EOF >>${SLEEP_CONF} || RC=1
 AllowSuspend=yes
 SuspendState=${REQUESTED_MODE}
 EOF
       ;;
   esac
+  [ ${RC} = 0 ] && systemctl restart systemd-logind || RC=1
+  if [ ${RC} != 0 ]; then
+    # Nothing new is persisted: restore the previous config and key.
+    if [ -f "${SLEEP_CONF}.prev.$$" ]; then
+      mv -f "${SLEEP_CONF}.prev.$$" "${SLEEP_CONF}"
+    else
+      rm -f "${SLEEP_CONF}"
+    fi
+    [ -n "${SUSPEND_MODE}" ] && set_setting system.suspendmode "${SUSPEND_MODE}"
+    echo "suspendmode: could not apply '${REQUESTED_MODE}'" >&2
+    exit 1
+  fi
+  rm -f "${SLEEP_CONF}.prev.$$"
   set_setting system.suspendmode ${1}
-  systemctl restart systemd-logind
 fi
