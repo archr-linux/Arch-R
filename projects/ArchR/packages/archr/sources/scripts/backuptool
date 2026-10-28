@@ -45,6 +45,7 @@ DEFAULT=(
     /storage/.config/retroarch/*
     /storage/.config/moonlight/*
     /storage/.config/game/*
+    /storage/.config/archr-launcher/*
     "${ES_DIR}"/es_*.cfg
     "${ES_DIR}"/scripts/*
     "${ES_DIR}"/themesettings/*

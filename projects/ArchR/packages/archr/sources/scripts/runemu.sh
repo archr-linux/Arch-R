@@ -41,7 +41,6 @@ GAMEFOLDER="${ROMNAME//${BASEROMNAME}}"
 
 ### Define the variables used throughout the script
 BLUETOOTH_STATE=$(get_setting controllers.bluetooth.enabled)
-ES_CONFIG="/storage/.emulationstation/es_settings.cfg"
 VERBOSE=false
 LOG_DIRECTORY="/var/log"
 LOG_FILE="exec.log"
