@@ -465,23 +465,35 @@ function set_cheevos() {
     fi
 }
 
+# runemu.sh exports NETPLAY_SESSION_* for a session started with explicit
+# flags (--connect IP, --port N, --nick NAME, --spectate, --mitm-session ID;
+# the relay session only goes on the RetroArch command line). Session values
+# win; the saved global.netplay.* keys are the fallback for callers that
+# pass no address. A session mode enables netplay for this run even when
+# the saved netplay switch is off.
 function set_netplay() {
     USE_NETPLAY=$(game_setting "netplay")
-    if [ "${USE_NETPLAY}" = 1 ]
+    if [ "${USE_NETPLAY}" = 1 ] || [ -n "${NETPLAY_SESSION_MODE}" ]
     then
         add_setting "none" "savestate_auto_load" "false"
         add_setting "none" "savestate_auto_save" "false"
         add_setting "retroachievements.hardcore" "cheevos_hardcore_mode_enable" "false"
-        add_setting "global.netplay.nickname" "netplay_nickname"
+        if [ -n "${NETPLAY_SESSION_NICK}" ]
+        then
+            add_setting "none" "netplay_nickname" "${NETPLAY_SESSION_NICK}"
+        else
+            add_setting "global.netplay.nickname" "netplay_nickname"
+        fi
         add_setting "global.netplay.password" "netplay_password"
         add_setting "netplay_public_announce" "netplay_public_announce"
         local NETPLAY_MODE=$(game_setting "netplay.mode")
-        local NETPLAY_PORT=$(game_setting "global.netplay.port")
+        local NETPLAY_PORT="${NETPLAY_SESSION_PORT:-$(game_setting "global.netplay.port")}"
         case ${NETPLAY_MODE} in
             host)
                 add_setting "none" "netplay_mode" "false"
                 add_setting "none" "netplay_client_swap_input" "false"
-                add_setting "global.netplay.port" "netplay_ip_port" "${NETPLAY_PORT}"
+                # "none": add_setting ignores an explicit value when given a key.
+                add_setting "none" "netplay_ip_port" "${NETPLAY_PORT}"
                 case ${CORE} in
                     gambatte)
                         log "Configuring gameboy link server."
@@ -534,8 +546,14 @@ EOF
                 esac
             ;;
             client)
-                local NETPLAY_HOST_IP=$(get_setting global.netplay.host)
-                add_setting "global.netplay.port" "${NETPLAY_PORT}"
+                local NETPLAY_HOST_IP="${NETPLAY_SESSION_HOST:-$(get_setting global.netplay.host)}"
+                add_setting "none" "netplay_ip_port" "${NETPLAY_PORT}"
+                if [ "${NETPLAY_SESSION_SPECTATE}" = 1 ]
+                then
+                    add_setting "none" "netplay_start_as_spectator" "true"
+                else
+                    add_setting "none" "netplay_start_as_spectator" "false"
+                fi
                 if [ ! -z "${NETPLAY_HOST_IP}" ]
                 then
                     add_setting "none" "netplay_ip_address" "${NETPLAY_HOST_IP}"
@@ -597,12 +615,12 @@ tgbdual_audio_output = "Game Boy #${PLAYER}"
 EOF
                             add_setting "none" "netplay_mode" "true"
                             add_setting "none" "netplay_client_swap_input" "true"
-                            echo -n " --connect ${NETPLAY_HOST_IP}"
+                            echo -n " --connect ${NETPLAY_HOST_IP}${NETPLAY_PORT:+ --port ${NETPLAY_PORT}}${NETPLAY_SESSION_MITM:+ --mitm-session=${NETPLAY_SESSION_MITM}}"
                         ;;
                         *)
                             add_setting "none" "netplay_mode" "true"
                             add_setting "none" "netplay_client_swap_input" "true"
-                            echo -n " --connect ${NETPLAY_HOST_IP}"
+                            echo -n " --connect ${NETPLAY_HOST_IP}${NETPLAY_PORT:+ --port ${NETPLAY_PORT}}${NETPLAY_SESSION_MITM:+ --mitm-session=${NETPLAY_SESSION_MITM}}"
                         ;;
                     esac
                 fi
