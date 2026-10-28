@@ -1,6 +1,74 @@
 #!/usr/bin/python3
 
+# Usage:
+#   iwd_get-networks            one SSID per line, strongest first
+#   iwd_get-networks --detail   one network per line, strongest first:
+#                               ssid<TAB>security<TAB>signal<TAB>connected<TAB>known
+#
+# --detail fields:
+#   ssid       backslash, tab, newline and CR escaped as \\ \t \n \r
+#   security   open | wep | wpa2 | wpa3 | 8021x
+#   signal     0-100, from the RSSI iwd reports (-100 dBm = 0, -50 dBm = 100)
+#   connected  1 when the station is associated to it, else 0
+#   known      1 when iwd has a saved profile for it, else 0
+#
+# iwd's Network.Type says "psk" for both WPA2 and WPA3, so a psk network
+# is reported as wpa3 only when the cached scan (iw scan dump) shows its
+# APs advertising SAE and no PSK; mixed WPA2/WPA3 APs stay wpa2, since
+# a WPA2 passphrase is what the user types either way.
+#
+# The plain call keeps its old contract (exit 0 even on failure); with
+# --detail a failure to talk to iwd exits 1.
+
+import re
+import subprocess
 import sys
+
+DETAIL = len(sys.argv) > 1 and sys.argv[1] == "--detail"
+
+
+def escape(ssid):
+    return (ssid.replace("\\", "\\\\").replace("\t", "\\t")
+                .replace("\n", "\\n").replace("\r", "\\r"))
+
+
+def signal_percent(rssi):
+    # iwd hands out 100 * dBm
+    dbm = rssi / 100
+    return max(0, min(100, int(round(2 * (dbm + 100)))))
+
+
+def iw_unescape(text):
+    # iw prints non-printable bytes, backslash and edge spaces as \xNN
+    raw = re.sub(rb"\\x([0-9a-fA-F]{2})",
+                 lambda m: bytes([int(m.group(1), 16)]),
+                 text.encode("utf-8", "surrogateescape"))
+    return raw.decode("utf-8", "replace")
+
+
+def sae_only_ssids(dev):
+    # SSIDs whose every AP in the cached scan announces SAE without PSK
+    try:
+        dump = subprocess.run(["iw", "dev", dev, "scan", "dump"],
+                              capture_output=True, text=True,
+                              errors="surrogateescape", timeout=5).stdout
+    except Exception:
+        return set()
+    akm = {}
+    ssid = None
+    for line in dump.splitlines():
+        if line.startswith("BSS "):
+            ssid = None
+            continue
+        stripped = line.strip()
+        if stripped.startswith("SSID: ") and ssid is None:
+            ssid = iw_unescape(stripped[6:])
+            akm.setdefault(ssid, [])
+        elif stripped.startswith("* Authentication suites:") and ssid is not None:
+            akm[ssid].append(stripped.split(":", 1)[1].split())
+    return {s for s, bsses in akm.items()
+            if bsses and all("SAE" in a and "PSK" not in a for a in bsses)}
+
 
 try:
     import ravel
@@ -20,11 +88,33 @@ try:
     # Get the station interface
     station = gbus.get_proxy_object("net.connman.iwd", station_path).get_interface("net.connman.iwd.Station")
 
-    # Get the sorted network list and print the SSID for each one
-    for path, _ in station.GetOrderedNetworks()[0]:
-        ssid = objects[path]['net.connman.iwd.Network']['Name'][1]
-        if ssid:
-            print(ssid)
+    if not DETAIL:
+        # Get the sorted network list and print the SSID for each one
+        for path, _ in station.GetOrderedNetworks()[0]:
+            ssid = objects[path]['net.connman.iwd.Network']['Name'][1]
+            if ssid:
+                print(ssid)
+        sys.exit(0)
 
+    dev = objects[station_path].get('net.connman.iwd.Device', {}).get('Name', (None, None))[1]
+    wpa3 = sae_only_ssids(dev) if dev else set()
+
+    for path, rssi in station.GetOrderedNetworks()[0]:
+        props = objects[path]['net.connman.iwd.Network']
+        ssid = props['Name'][1]
+        if not ssid:
+            continue
+        kind = props.get('Type', (None, ''))[1]
+        if kind == 'psk':
+            security = 'wpa3' if ssid in wpa3 else 'wpa2'
+        else:
+            security = kind or 'open'
+        connected = 1 if props.get('Connected', (None, False))[1] else 0
+        known = 1 if 'KnownNetwork' in props else 0
+        print("%s\t%s\t%d\t%d\t%d" % (escape(ssid), security,
+                                      signal_percent(rssi), connected, known))
+
+except SystemExit:
+    raise
 except Exception:
-    sys.exit(0)
+    sys.exit(1 if DETAIL else 0)
