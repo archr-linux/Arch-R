@@ -107,20 +107,40 @@ write_dtbo() {
     return ${rc}
 }
 
-# Select overlay $2 for setting $1 and rewrite extlinux.conf. If either
-# step fails, put the previous selection back and exit non-zero.
+# Select overlay $2 for setting $1 and rewrite extlinux.conf. A checked
+# snapshot of extlinux.conf is taken first; if the setting cannot be
+# saved nothing else is touched, and if the rewrite fails the previous
+# setting and the snapshot are put back. Exits non-zero on failure.
 apply_overlay() {
+    EXTLINUX=/flash/extlinux/extlinux.conf
     prev=$(get_setting $1)
-    if set_setting $1 $2 && write_dtbo; then
+    snap=$(mktemp) && cp -f "$EXTLINUX" "$snap" || {
+        rm -f "$snap"
+        echo "Could not snapshot $EXTLINUX, nothing changed"
+        exit 1
+    }
+    if ! set_setting $1 $2; then
+        rm -f "$snap"
+        echo "Could not save overlay setting: $2"
+        exit 1
+    fi
+    if write_dtbo; then
+        rm -f "$snap"
         exit 0
     fi
+    echo "Could not apply overlay: $2"
     if [ -n "$prev" ]; then
         set_setting $1 "$prev"
     else
         del_setting $1
+    fi || echo "Could not restore setting $1"
+    if ! cmp -s "$snap" "$EXTLINUX"; then
+        mount -o remount,rw /flash
+        cp -f "$snap" "$EXTLINUX" && cmp -s "$snap" "$EXTLINUX" ||
+            echo "Could not restore $EXTLINUX, previous copy kept in $snap"
+        mount -o remount,ro /flash || :
     fi
-    write_dtbo || echo "Could not restore the previous overlay configuration"
-    echo "Could not apply overlay: $2"
+    cmp -s "$snap" "$EXTLINUX" && rm -f "$snap"
     exit 1
 }
 
