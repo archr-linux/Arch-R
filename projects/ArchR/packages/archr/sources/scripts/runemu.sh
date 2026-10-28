@@ -65,7 +65,12 @@ for ((i = 1; i < ${#ARGV[@]}; i++)); do
         *) continue ;;
       esac
       [ "${ARG}" = "--connect" ] && NETPLAY_SESSION_MODE="client"
-      # A missing value (end of list or another flag) is not consumed.
+      # A missing value (end of list or another flag) is not consumed. An
+      # empty argument after --nick is its value: the saved nickname is used.
+      if [ "${ARG}" = "--nick" ] && [ $((i + 1)) -lt ${#ARGV[@]} ] && [ -z "${NEXT}" ]; then
+        i=$((i + 1))
+        continue
+      fi
       [ -n "${NEXT}" ] && [ "${NEXT#-}" = "${NEXT}" ] || continue
       i=$((i + 1))
       case "${ARG}" in
