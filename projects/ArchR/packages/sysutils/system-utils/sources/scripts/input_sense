@@ -239,6 +239,17 @@ FN_AB_ACTION_DOWN="$(get_setting key.function.ab.down)"
 [ -z "${FN_AB_ACTION_UP}" ]   && FN_AB_ACTION_UP="wifictl enable"
 [ -z "${FN_AB_ACTION_DOWN}" ] && FN_AB_ACTION_DOWN="wifictl disable"
 
+### Level pill (archr-osd), or a mako notification when it is not running.
+show_osd() {
+  local key=audio.volume label=Volume level
+  if [ "${1}" = brightness ]; then
+    key=display.brightness
+    label=Brightness
+  fi
+  level=$(get_setting "${key}")
+  archr-osd send "${1}" "${level}" 2>/dev/null || mako-notify "${label}: ${level}%"
+}
+
 ### Volume repeat function
 start_volume_repeat() {
     local direction=$1
@@ -248,6 +259,7 @@ start_volume_repeat() {
 
     # Initial volume adjustment
     volume ${direction}
+    show_osd volume
 
     # Start background process for repeating volume adjustments
     (
@@ -257,6 +269,7 @@ start_volume_repeat() {
             if { [ "${direction}" = "up" ] && [ "${VOLUME_UP_PRESSED}" = true ]; } || \
                { [ "${direction}" = "down" ] && [ "${VOLUME_DOWN_PRESSED}" = true ]; }; then
                 volume ${direction}
+                show_osd volume
                 sleep ${VOLUME_REPEAT_INTERVAL}
             else
                 break
@@ -307,16 +320,14 @@ execute_action() {
         ${DEBUG} && log $0 "FN_A (${FN_A_ACTION_UP})"
         ${FN_A_ACTION_UP}
         if [ "${FN_A_ACTION_UP}" == "brightness up" ]; then
-          CUR_BRIGHTNESS=$(get_setting "display.brightness")
-          /usr/bin/mako-notify "Brightness: ${CUR_BRIGHTNESS}%" -no-es
+          show_osd brightness
         fi
         ;;
       down)
         ${DEBUG} && log $0 "FN_A (${FN_A_ACTION_DOWN})"
         ${FN_A_ACTION_DOWN}
         if [ "${FN_A_ACTION_DOWN}" == "brightness down" ]; then
-          CUR_BRIGHTNESS=$(get_setting "display.brightness")
-          /usr/bin/mako-notify "Brightness: ${CUR_BRIGHTNESS}%" -no-es
+          show_osd brightness
         fi
         ;;
     esac
@@ -514,10 +525,6 @@ set +e
           ${DEBUG} && log $0 "Volume Up: Released"
           VOLUME_UP_PRESSED=false
           stop_volume_repeat
-          if [ "${FN_A_PRESSED}" = false ] && [ "${FN_B_PRESSED}" = false ]; then
-            CUR_VOLUME=$(get_setting "audio.volume")
-            /usr/bin/mako-notify "Volume: ${CUR_VOLUME}%" -no-es
-          fi
         fi
       ;;
       (${FUNCTION_VOLUME_DOWN_EVENT})
@@ -535,10 +542,6 @@ set +e
           ${DEBUG} && log $0 "Volume Down: Released"
           VOLUME_DOWN_PRESSED=false
           stop_volume_repeat
-          if [ "${FN_A_PRESSED}" = false ] && [ "${FN_B_PRESSED}" = false ]; then
-            CUR_VOLUME=$(get_setting "audio.volume")
-            /usr/bin/mako-notify "Volume: ${CUR_VOLUME}%" -no-es
-          fi
         fi
       ;;
       (${FUNCTION_POWER_PRESSED_EVENT})
@@ -596,28 +599,28 @@ set +e
         if [ "${FN_A_PRESSED}" = true ] && [ "${DPAD_EVENTS}" = true ] && ${HOTKEY_VOLUME_ENABLED}; then
           ${DEBUG} && log $0 "${FUNCTION_HOTKEY_DPAD_UP_EVENT}${FUNCTION_HOTKEY_HAT_UP_EVENT}: Volume Up"
           volume up
+          show_osd volume
         fi
       ;;
       (${FUNCTION_HOTKEY_DPAD_DOWN_EVENT}|${FUNCTION_HOTKEY_HAT_DOWN_EVENT})
         if [ "${FN_A_PRESSED}" = true ] && [ "${DPAD_EVENTS}" = true ] && ${HOTKEY_VOLUME_ENABLED}; then
           ${DEBUG} && log $0 "${FUNCTION_HOTKEY_DPAD_DOWN_EVENT}${FUNCTION_HOTKEY_HAT_DOWN_EVENT}: Volume Down"
           volume down
+          show_osd volume
         fi
       ;;
       (${FUNCTION_HOTKEY_DPAD_RIGHT_EVENT}|${FUNCTION_HOTKEY_HAT_RIGHT_EVENT})
         if [ "${FN_A_PRESSED}" = true ] && [ "${DPAD_EVENTS}" = true ] && ${HOTKEY_BRIGHTNESS_ENABLED}; then
           ${DEBUG} && log $0 "${FUNCTION_HOTKEY_DPAD_RIGHT_EVENT}${FUNCTION_HOTKEY_HAT_RIGHT_EVENT}: Brightness Up"
           brightness up
-          CUR_BRIGHTNESS=$(get_setting "display.brightness")
-          /usr/bin/mako-notify "Brightness: ${CUR_BRIGHTNESS}%" -no-es
+          show_osd brightness
         fi
       ;;
       (${FUNCTION_HOTKEY_DPAD_LEFT_EVENT}|${FUNCTION_HOTKEY_HAT_LEFT_EVENT})
         if [ "${FN_A_PRESSED}" = true ] && [ "${DPAD_EVENTS}" = true ] && ${HOTKEY_BRIGHTNESS_ENABLED}; then
           ${DEBUG} && log $0 "${FUNCTION_HOTKEY_DPAD_LEFT_EVENT}${FUNCTION_HOTKEY_HAT_LEFT_EVENT}: Brightness Down"
           brightness down
-          CUR_BRIGHTNESS=$(get_setting "display.brightness")
-          /usr/bin/mako-notify "Brightness: ${CUR_BRIGHTNESS}%" -no-es
+          show_osd brightness
         fi
       ;;
       (${FUNCTION_HOTKEY_TOUCH_EVENT})
