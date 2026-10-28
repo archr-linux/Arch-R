@@ -29,29 +29,54 @@ persist_driver() {
     sync
 }
 
+# Put key $1 back to value $2, or remove it when $2 is empty.
+restore_key() {
+  if [ -n "$2" ]; then
+    set_setting "$1" "$2"
+  else
+    del_setting "$1"
+  fi || log_event "could not restore $1=$2"
+}
+
 # Select the driver for the next boot. The overlay goes first and is read
-# back from extlinux.conf, so gpu.driver never points at a driver the
-# board cannot bring up; if persisting then fails, the previous key and
-# overlay are put back so the DT and the key stay in step.
+# back, so gpu.driver never points at a driver the board cannot bring up.
+# This transaction owns the rollback: it snapshots extlinux.conf and both
+# keys up front and, on any failure, puts them back verbatim (never by
+# re-running dtb_overlay, which rebuilds the file from settings).
 select_driver() {
-  local want=None prev="" prev_driver
+  local want=None prev_driver prev_overlay snap
+  local extlinux=/flash/extlinux/extlinux.conf
   prev_driver=$(get_setting ${GPU_DRIVER_SETTING_KEY})
-  [ "$1" = "panfrost" ] && want="${GPU_OVERLAY}"
-  if [ -z "${GPU_OVERLAY}" ] || {
-       prev=$(/usr/bin/dtb_overlay get driver-gpu) &&
-       /usr/bin/dtb_overlay set driver-gpu "${want}" >/dev/null &&
-       [ "$(/usr/bin/dtb_overlay get driver-gpu)" = "${want}" ]; }; then
+  if [ -z "${GPU_OVERLAY}" ]; then
     persist_driver "$1" && return 0
-    if [ -n "${prev_driver}" ]; then
-      set_setting ${GPU_DRIVER_SETTING_KEY} "${prev_driver}"
-    else
-      del_setting ${GPU_DRIVER_SETTING_KEY}
-    fi || log_event "could not restore ${GPU_DRIVER_SETTING_KEY}=${prev_driver}"
+    restore_key ${GPU_DRIVER_SETTING_KEY} "${prev_driver}"
+    return 1
   fi
-  if [ -n "${prev}" ]; then
-    /usr/bin/dtb_overlay set driver-gpu "${prev}" >/dev/null ||
-      log_event "could not restore overlay ${prev}"
+  [ "$1" = "panfrost" ] && want="${GPU_OVERLAY}"
+  prev_overlay=$(get_setting system.driver-gpu)
+  if ! snap=$(mktemp) || ! cp -f "${extlinux}" "${snap}"; then
+    rm -f "${snap}"
+    log_event "could not snapshot ${extlinux}, nothing changed"
+    return 1
   fi
+  if /usr/bin/dtb_overlay set driver-gpu "${want}" >/dev/null &&
+     [ "$(/usr/bin/dtb_overlay get driver-gpu)" = "${want}" ] &&
+     persist_driver "$1"; then
+    rm -f "${snap}"
+    return 0
+  fi
+  restore_key ${GPU_DRIVER_SETTING_KEY} "${prev_driver}"
+  restore_key system.driver-gpu "${prev_overlay}"
+  if ! cmp -s "${snap}" "${extlinux}"; then
+    mount -o remount,rw /flash
+    if ! { cp -f "${snap}" "${extlinux}" && cmp -s "${snap}" "${extlinux}"; }; then
+      log_event "could not restore ${extlinux}, previous copy kept in ${snap}"
+      mount -o remount,ro /flash || :
+      return 1
+    fi
+    mount -o remount,ro /flash || :
+  fi
+  rm -f "${snap}"
   return 1
 }
 
