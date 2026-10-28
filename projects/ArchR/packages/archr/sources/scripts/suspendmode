@@ -15,7 +15,7 @@ if [ ! "${REQUESTED_MODE}" = "${SUSPEND_MODE}" ]; then
     off|freeze|standby|mem|default) ;;
     *)
       for STATE in ${REQUESTED_MODE:-none}; do
-        if [ "${STATE}" = "disk" ] || ! grep -qw -- "${STATE}" /sys/power/state 2>/dev/null; then
+        if [ "${STATE}" = "disk" ] || ! grep -qwF -- "${STATE}" /sys/power/state 2>/dev/null; then
           echo "suspendmode: unsupported mode '${REQUESTED_MODE}'" >&2
           exit 2
         fi
@@ -23,10 +23,16 @@ if [ ! "${REQUESTED_MODE}" = "${SUSPEND_MODE}" ]; then
       ;;
   esac
 
-  # Keep the current config so a failed change can be undone. The PID
-  # suffix matters: "default" re-enters this script through the quirk.
+  # Keep the current config so a failed change can be undone; an existing
+  # file is never touched without a complete backup. The PID suffix
+  # matters: "default" re-enters this script through the quirk.
   RC=0
-  cp -f "${SLEEP_CONF}" "${SLEEP_CONF}.prev.$$" 2>/dev/null
+  BACKUP="${SLEEP_CONF}.prev.$$"
+  if [ -e "${SLEEP_CONF}" ] && ! cp -f "${SLEEP_CONF}" "${BACKUP}"; then
+    rm -f "${BACKUP}"
+    echo "suspendmode: could not back up ${SLEEP_CONF}, nothing changed" >&2
+    exit 1
+  fi
   cat <<EOF >${SLEEP_CONF} || RC=1
 [Sleep]
 EOF
@@ -69,18 +75,25 @@ SuspendState=${REQUESTED_MODE}
 EOF
       ;;
   esac
-  [ ${RC} = 0 ] && systemctl restart systemd-logind || RC=1
+  [ ${RC} = 0 ] && systemctl restart systemd-logind &&
+    set_setting system.suspendmode ${1} || RC=1
   if [ ${RC} != 0 ]; then
-    # Nothing new is persisted: restore the previous config and key.
-    if [ -f "${SLEEP_CONF}.prev.$$" ]; then
-      mv -f "${SLEEP_CONF}.prev.$$" "${SLEEP_CONF}"
+    # Nothing new is persisted: restore the previous config (or its
+    # absence) and key (or its absence), then bring logind back on it.
+    echo "suspendmode: could not apply '${REQUESTED_MODE}'" >&2
+    if [ -e "${BACKUP}" ]; then
+      mv -f "${BACKUP}" "${SLEEP_CONF}"
     else
       rm -f "${SLEEP_CONF}"
-    fi
-    [ -n "${SUSPEND_MODE}" ] && set_setting system.suspendmode "${SUSPEND_MODE}"
-    echo "suspendmode: could not apply '${REQUESTED_MODE}'" >&2
+    fi || echo "suspendmode: could not restore ${SLEEP_CONF}" >&2
+    if [ -n "${SUSPEND_MODE}" ]; then
+      set_setting system.suspendmode "${SUSPEND_MODE}"
+    else
+      del_setting system.suspendmode
+    fi || echo "suspendmode: could not restore system.suspendmode" >&2
+    systemctl restart systemd-logind ||
+      echo "suspendmode: systemd-logind did not restart, see journalctl -u systemd-logind" >&2
     exit 1
   fi
-  rm -f "${SLEEP_CONF}.prev.$$"
-  set_setting system.suspendmode ${1}
+  rm -f "${BACKUP}"
 fi
