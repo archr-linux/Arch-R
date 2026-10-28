@@ -82,15 +82,23 @@ function wait_lock() {
   do
     if (set -o noclobber; echo "$$" > "${J_CONF_LOCK}") 2>/dev/null
     then
-      # Trap original referenciava $lockfile (variável inexistente)
-      # — o rm -f "" do INT/TERM virava no-op e deixava lock órfão se
-      # o script morresse antes do rm explícito no final.
-      trap 'rm -f "${J_CONF_LOCK}"; exit $?' INT TERM EXIT
+      # Se o script morrer segurando a trava, o trap a solta. A trava só é
+      # apagada por quem a criou (release_lock confere o PID): um trap
+      # disparado depois, no EXIT, não pode apagar a trava de outro dono.
+      trap 'release_lock; exit $?' INT TERM EXIT
       break
     else
      sleep 1
     fi
   done
+}
+
+function release_lock() {
+  if [ "$(cat "${J_CONF_LOCK}" 2>/dev/null)" = "$$" ]
+  then
+    rm -f "${J_CONF_LOCK}"
+  fi
+  trap - INT TERM EXIT
 }
 
 function del_setting() {
@@ -99,14 +107,14 @@ function del_setting() {
   then
     sed -i "/^${1}=/d" "${J_CONF}"
   fi
-  rm -f "${J_CONF_LOCK}"
+  release_lock
 }
 
 function sort_settings() {
   wait_lock
   cat "${J_CONF}" | grep ^[a-z0-9] | sort >"${J_CONF}.tmp"
   mv "${J_CONF}.tmp" "${J_CONF}"
-  rm -f "${J_CONF_LOCK}"
+  release_lock
 }
 
 function set_kill() {
@@ -142,7 +150,7 @@ function set_setting() {
     then
       wait_lock
       echo "${1}=${2}" >> "${J_CONF}"
-      rm -f "${J_CONF_LOCK}"
+      release_lock
     fi
   fi
 }
