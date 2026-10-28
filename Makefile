@@ -74,9 +74,6 @@ docker-%: GLOBAL_SETTINGS := $(shell if [ -f "${HOME}/.archr/options" ]; then ec
 # LOCAL_SSH_KEYS_FILE is a variable that contains the location of the authorized keys file for development build use.  It will be mounted into the container if it exists.
 docker-%: LOCAL_SSH_KEYS_FILE := $(shell if [ -n "${LOCAL_SSH_KEYS_FILE}" ]; then echo "-v \"${LOCAL_SSH_KEYS_FILE}:${LOCAL_SSH_KEYS_FILE}\""; else echo ""; fi)
 
-# EMULATIONSTATION_SRC is a variable that contains the location of local emulationstation source code. It will be mounted into the container if it exists.
-docker-%: EMULATIONSTATION_SRC := $(shell if [ -n "${EMULATIONSTATION_SRC}" ]; then echo "-v \"${EMULATIONSTATION_SRC}:${EMULATIONSTATION_SRC}\""; else echo ""; fi)
-
 # UID is the user ID of current user - ensures docker sets file permissions properly
 docker-%: UID := $(shell id -u)
 
@@ -125,5 +122,5 @@ docker-%:
 	@./projects/ArchR/inputs/gen-input-configs verify >/dev/null || \
 	  { ./projects/ArchR/inputs/gen-input-configs verify; exit 1; }
 	./scripts/get_env > .env
-	BUILD_DIR="$(DOCKER_WORK_DIR)" $(DOCKER_CMD) run $(PODMAN_ARGS) $(INTERACTIVE) --init --env-file .env --rm --user $(UID):$(GID) $(GLOBAL_SETTINGS) $(LOCAL_SSH_KEYS_FILE) $(EMULATIONSTATION_SRC) -v "$(PWD)":"$(DOCKER_WORK_DIR)" -v /tmp:/tmp -w "$(DOCKER_WORK_DIR)" $(DOCKER_EXTRA_OPTS) $(DOCKER_IMAGE) $(COMMAND)
+	BUILD_DIR="$(DOCKER_WORK_DIR)" $(DOCKER_CMD) run $(PODMAN_ARGS) $(INTERACTIVE) --init --env-file .env --rm --user $(UID):$(GID) $(GLOBAL_SETTINGS) $(LOCAL_SSH_KEYS_FILE) -v "$(PWD)":"$(DOCKER_WORK_DIR)" -v /tmp:/tmp -w "$(DOCKER_WORK_DIR)" $(DOCKER_EXTRA_OPTS) $(DOCKER_IMAGE) $(COMMAND)
 	@if [ "$*" = "RK3326" ]; then ./scripts/repo/sync-site-bases; fi

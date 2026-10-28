@@ -48,9 +48,8 @@ check_charging() {
   fi
 }
 
-# A game is running whenever runemu.sh is, whichever frontend started it
-# (EmulationStation or archr-launcher).
-check_es_running_game() {
+# A game is running whenever runemu.sh is, whichever frontend started it.
+check_running_game() {
   pgrep -f /usr/bin/runemu.sh >/dev/null 2>&1
 }
 
@@ -254,19 +253,9 @@ do_shutdown() {
   # Unmute audio - otherwise wireplumber will keep it muted on next boot
   unmute_audio
 
-  # Check whether a game is running
-  check_es_running_game
-  local RUNNING_GAME=$?
-
-  # With EmulationStation in the menu, its API saves metadata before
-  # powering off. Otherwise (a game running, or archr-launcher, which saves
-  # its data when systemd stops it) shut down directly.
-  if [[ $RUNNING_GAME -ne 0 ]] && curl -sf -o /dev/null "http://localhost:1234/shutdown"; then
-    ${DEBUG} && log $0 "Shutting down via ES API"
-  else
-    ${DEBUG} && log $0 "Shutting down now"
-    shutdown now
-  fi
+  # The launcher saves its data when systemd stops it during shutdown.
+  ${DEBUG} && log $0 "Shutting down now"
+  shutdown now
 }
 
 suspend() {
@@ -274,7 +263,7 @@ suspend() {
   ${DEBUG} && log $0 "Creating ${DELAY_FLAG_FILE}"
   touch "${DELAY_FLAG_FILE}"
 
-  check_es_running_game
+  check_running_game
   local RUNNING_GAME=$?
 
   check_charging

@@ -4,6 +4,7 @@
 
 PKG_NAME="samba"
 PKG_VERSION="4.21.0"
+PKG_REV="2"
 PKG_LICENSE="GPLv3+"
 PKG_SITE="https://www.samba.org"
 PKG_URL="https://download.samba.org/pub/samba/stable/${PKG_NAME}-${PKG_VERSION}.tar.gz"
