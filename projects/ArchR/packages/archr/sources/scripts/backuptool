@@ -93,8 +93,10 @@ case "${1}" in
         fi
     ;;
     "backup")
-        WORKDIR=$(mktemp -d "${BACKUPFOLDER}/.staging.XXXXXX") || exit 1
-        trap 'rm -rf "${WORKDIR}"' EXIT
+        mkdir -p /storage/.cache || exit 1
+        WORKDIR=$(mktemp -d "/storage/.cache/backuptool.XXXXXX") || exit 1
+        PUBLISHFILE=""
+        trap 'rm -rf "${WORKDIR}"; rm -f "${PUBLISHFILE}"' EXIT
         trap 'exit 1' HUP INT TERM
         if [ -f "${BACKUPFILE}" ]
         then
@@ -112,7 +114,9 @@ case "${1}" in
             [ "$?" -le 1 ] || exit 1
             (cd "${WORKDIR}" && zip -9 backup.zip "${SYSTEM_CFG}") || exit $?
         fi
-        mv "${WORKDIR}/backup.zip" "${BACKUPFILE}"
+        PUBLISHFILE=$(mktemp "${BACKUPFOLDER}/.backup.XXXXXX") || exit 1
+        mv "${WORKDIR}/backup.zip" "${PUBLISHFILE}" || exit 1
+        mv "${PUBLISHFILE}" "${BACKUPFILE}"
     ;;
     *)
         usage >&2
