@@ -153,6 +153,14 @@ function restore_session_core_options() {
         fi
 }
 
+### Export Game Guide Path
+GAME_GUIDE_PATH_CHECK="${1%.*}.txt"
+if [ ! -f "${GAME_GUIDE_PATH_CHECK}" ]; then
+  GAME_GUIDE_PATH_CHECK="No Game Guide Found"
+fi
+  /usr/bin/game-guides-tool "${1}"
+
+### Function Library
 function log() {
         if [ ${LOG} == true ]
         then
