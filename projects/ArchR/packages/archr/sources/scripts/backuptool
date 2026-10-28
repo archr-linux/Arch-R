@@ -85,12 +85,14 @@ case "${1}" in
         then
             KEEP=$(grep '^wifi\.\(ssid\|key\)=' "/${SYSTEM_CFG}" 2>/dev/null)
         fi
-        unzip -o "${BACKUPFILE}" -d / "${EXCLUDES[@]}" || exit $?
+        unzip -o "${BACKUPFILE}" -d / "${EXCLUDES[@]}"
+        RC=$?
         if [ "${2}" != "--with-wifi" ] && [ -f "/${SYSTEM_CFG}" ]
         then
             sed -i '/^wifi\.\(ssid\|key\)=/d' "/${SYSTEM_CFG}" || exit 1
-            [ -z "${KEEP}" ] || printf '%s\n' "${KEEP}" >> "/${SYSTEM_CFG}"
+            [ -z "${KEEP}" ] || printf '%s\n' "${KEEP}" >> "/${SYSTEM_CFG}" || exit 1
         fi
+        exit "${RC}"
     ;;
     "backup")
         mkdir -p /storage/.cache || exit 1
