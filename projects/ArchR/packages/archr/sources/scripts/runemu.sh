@@ -22,20 +22,71 @@ fi
 ### Switch to performance mode early to speed up configuration and reduce time it takes to get into games.
 performance
 
-# Command line schema
-# $1 = Game/Port
-# $2 = Platform
-# $3 = Core
-# $4 = Emulator
-
-ARGUMENTS="$@"
-PLATFORM="${ARGUMENTS##*-P}"  # read from -P onwards
-PLATFORM="${PLATFORM%% *}"  # until a space is found
-CORE="${ARGUMENTS##*--core=}"  # read from --core= onwards
-CORE="${CORE%% *}"  # until a space is found
-EMULATOR="${ARGUMENTS##*--emulator=}"  # read from --emulator= onwards
-EMULATOR="${EMULATOR%% *}"  # until a space is found
+# Command line schema, one shell word per argument:
+#   $1 = Game/Port, then in any order:
+#   -P<platform> --core=<core> --emulator=<emulator> --controllers=<string>
+#   -state_slot N  -autosave N  -state_file FILE (ignored)
+#   netplay: --host | --connect [IP] | --port N | --nick NAME | --spectate
+#            | --netplaymode spectator | --mitm-session ID
+# Values are taken from argument boundaries only, never from substrings of
+# the joined command line, so a ROM path, controller string or nickname
+# cannot change another field. Netplay values may also be --flag=value.
+# --nick takes exactly one argument: quote multiword names.
 ROMNAME="$1"
+PLATFORM=""
+CORE=""
+EMULATOR=""
+CONTROLLERCONFIG=""
+SNAPSHOT=""
+AUTOSAVE=""
+NETPLAY_SESSION_MODE=""
+NETPLAY_SESSION_HOST=""
+NETPLAY_SESSION_PORT=""
+NETPLAY_SESSION_NICK=""
+NETPLAY_SESSION_SPECTATE=0
+NETPLAY_SESSION_MITM=""
+ARGV=("$@")
+for ((i = 1; i < ${#ARGV[@]}; i++)); do
+  ARG="${ARGV[i]}"
+  NEXT="${ARGV[i+1]-}"
+  case "${ARG}" in
+    --core=*) CORE="${ARG#*=}" ;;
+    --emulator=*) EMULATOR="${ARG#*=}" ;;
+    --controllers=*) CONTROLLERCONFIG="${ARG#*=}" ;;
+    --connect=*) NETPLAY_SESSION_MODE="client"; NETPLAY_SESSION_HOST="${ARG#*=}" ;;
+    --port=*) NETPLAY_SESSION_PORT="${ARG#*=}" ;;
+    --nick=*) NETPLAY_SESSION_NICK="${ARG#*=}" ;;
+    --mitm-session=*) NETPLAY_SESSION_MITM="${ARG#*=}" ;;
+    --host) NETPLAY_SESSION_MODE="host" ;;
+    --spectate) NETPLAY_SESSION_SPECTATE=1 ;;
+    --*|-state_slot|-autosave|-state_file)
+      case "${ARG}" in
+        --connect|--port|--nick|--netplaymode|--mitm-session|-state_slot|-autosave|-state_file) ;;
+        *) continue ;;
+      esac
+      [ "${ARG}" = "--connect" ] && NETPLAY_SESSION_MODE="client"
+      # A missing value (end of list or another flag) is not consumed.
+      [ -n "${NEXT}" ] && [ "${NEXT#-}" = "${NEXT}" ] || continue
+      i=$((i + 1))
+      case "${ARG}" in
+        --connect) NETPLAY_SESSION_HOST="${NEXT}" ;;
+        --port) NETPLAY_SESSION_PORT="${NEXT}" ;;
+        --nick) NETPLAY_SESSION_NICK="${NEXT}" ;;
+        --mitm-session) NETPLAY_SESSION_MITM="${NEXT}" ;;
+        --netplaymode)
+          # Legacy spectator: a client that joins as a spectator.
+          if [ "${NEXT}" = "spectator" ]; then
+            NETPLAY_SESSION_MODE="client"
+            NETPLAY_SESSION_SPECTATE=1
+          fi
+          ;;
+        -state_slot) SNAPSHOT="${NEXT}" ;;
+        -autosave) AUTOSAVE="${NEXT}" ;;
+      esac
+      ;;
+    -P*) PLATFORM="${ARG#-P}" ;;
+  esac
+done
 BASEROMNAME=${ROMNAME##*/}
 GAMEFOLDER="${ROMNAME//${BASEROMNAME}}"
 
@@ -52,6 +103,20 @@ NETWORK_PLAY="No"
 SET_SETTINGS_TMP="/tmp/shader"
 OUTPUT_LOG="${LOG_DIRECTORY}/${LOG_FILE}"
 SCRIPT_NAME=$(basename "$0")
+GAMBATTE_OPT="/storage/.config/retroarch/config/Gambatte/Gambatte.opt"
+GAMBATTE_OPT_SAVED="/tmp/.runemu-gambatte.opt"
+GAMBATTE_OPT_ABSENT="/tmp/.runemu-gambatte.absent"
+rm -f "${GAMBATTE_OPT_SAVED}" "${GAMBATTE_OPT_ABSENT}"
+
+### Put back core options that a netplay session changed for this run only.
+function restore_session_core_options() {
+        if [ -e "${GAMBATTE_OPT_SAVED}" ]; then
+                cp -f "${GAMBATTE_OPT_SAVED}" "${GAMBATTE_OPT}" && rm -f "${GAMBATTE_OPT_SAVED}" ||
+                        echo "runemu.sh: could not restore ${GAMBATTE_OPT}, copy kept in ${GAMBATTE_OPT_SAVED}" >&2
+        elif [ -e "${GAMBATTE_OPT_ABSENT}" ]; then
+                rm -f "${GAMBATTE_OPT}" "${GAMBATTE_OPT_ABSENT}"
+        fi
+}
 
 ### Export Game Guide Path
 GAME_GUIDE_PATH_CHECK="${1%.*}.txt"
@@ -106,6 +171,7 @@ EOF
 
 function quit() {
         ${VERBOSE} && log $0 "Cleaning up and exiting"
+        restore_session_core_options
         bluetooth enable
         resume_background_services
         restore_ksm
@@ -231,44 +297,10 @@ case ${EMULATOR} in
     # Make sure NETWORK_PLAY isn't defined before we start our tests/configuration.
     del_setting netplay.mode
 
-    # Netplay flags are matched as whole arguments (never substrings, so a
-    # ROM or controller string cannot trigger them):
-    #   --host | --connect [IP] | --port N | --nick NAME | --spectate
-    #   | --netplaymode spectator
-    # Each value is the next argument or follows "=". A session host/port
-    # given here is handed to setsettings.sh for this run only; without
-    # them setsettings falls back to the saved global.netplay.* keys.
-    NETPLAY_SESSION_MODE=""
-    NETPLAY_SESSION_HOST=""
-    NETPLAY_SESSION_PORT=""
-    NETPLAY_SESSION_NICK=""
-    NETPLAY_SESSION_SPECTATE=0
-    NPARGS=("$@")
-    for ((i = 1; i < ${#NPARGS[@]}; i++)); do
-      NPARG="${NPARGS[i]}"
-      NPNEXT="${NPARGS[i+1]-}"
-      case "${NPARG}" in
-        --host)
-          NETPLAY_SESSION_MODE="host"
-          ;;
-        --connect|--port|--nick|--netplaymode)
-          [ "${NPARG}" = "--connect" ] && NETPLAY_SESSION_MODE="client"
-          # A missing value (end of list or another flag) is not consumed.
-          [ -n "${NPNEXT}" ] && [ "${NPNEXT#-}" = "${NPNEXT}" ] || continue
-          i=$((i + 1))
-          case "${NPARG}" in
-            --connect) NETPLAY_SESSION_HOST="${NPNEXT}" ;;
-            --port) NETPLAY_SESSION_PORT="${NPNEXT}" ;;
-            --nick) NETPLAY_SESSION_NICK="${NPNEXT}" ;;
-            --netplaymode) [ "${NPNEXT}" = "spectator" ] && NETPLAY_SESSION_MODE="spectator" ;;
-          esac
-          ;;
-        --connect=*) NETPLAY_SESSION_MODE="client"; NETPLAY_SESSION_HOST="${NPARG#*=}" ;;
-        --port=*) NETPLAY_SESSION_PORT="${NPARG#*=}" ;;
-        --nick=*) NETPLAY_SESSION_NICK="${NPARG#*=}" ;;
-        --spectate) NETPLAY_SESSION_SPECTATE=1 ;;
-      esac
-    done
+    # Netplay flags come from the argument loop at the top. A session
+    # host/port/nick/relay session is handed to setsettings.sh for this run
+    # only; without them setsettings falls back to the saved
+    # global.netplay.* keys.
     # The host and port end up on the RetroArch command line and config:
     # accept only address characters and a real port number.
     if [ -n "${NETPLAY_SESSION_HOST}" ] && [[ ! "${NETPLAY_SESSION_HOST}" =~ ^[A-Za-z0-9.:-]+$ ]]; then
@@ -286,12 +318,30 @@ case ${EMULATOR} in
       echo "runemu.sh: ignoring netplay nick '${NETPLAY_SESSION_NICK}'" >&2
       NETPLAY_SESSION_NICK=""
     fi
+    if [ -n "${NETPLAY_SESSION_MITM}" ] && [[ ! "${NETPLAY_SESSION_MITM}" =~ ^[A-Za-z0-9]{1,64}$ ]]; then
+      echo "runemu.sh: invalid netplay relay session '${NETPLAY_SESSION_MITM}'" >&2
+      quit 2
+    fi
     if [ -n "${NETPLAY_SESSION_MODE}" ]; then
       ${VERBOSE} && log $0 "Setup netplay ${NETPLAY_SESSION_MODE}."
       set_setting netplay.mode "${NETPLAY_SESSION_MODE}"
     fi
     export NETPLAY_SESSION_MODE NETPLAY_SESSION_HOST NETPLAY_SESSION_PORT \
-           NETPLAY_SESSION_NICK NETPLAY_SESSION_SPECTATE
+           NETPLAY_SESSION_NICK NETPLAY_SESSION_SPECTATE NETPLAY_SESSION_MITM
+
+    # Gambatte link play writes the netplay host and port into its core
+    # options. When they come from this session, keep the previous file and
+    # put it back after the game (see restore_session_core_options).
+    if [ "${CORE}" = "gambatte" ] && { [ -n "${NETPLAY_SESSION_HOST}" ] || [ -n "${NETPLAY_SESSION_PORT}" ]; }; then
+      if [ -e "${GAMBATTE_OPT}" ]; then
+        cp -f "${GAMBATTE_OPT}" "${GAMBATTE_OPT_SAVED}" || {
+          echo "runemu.sh: could not save ${GAMBATTE_OPT}" >&2
+          quit 1
+        }
+      else
+        : >"${GAMBATTE_OPT_ABSENT}"
+      fi
+    fi
 
     ### Set set_kill to kill the appropriate retroarch
     set_kill set "retroarch retroarch32"
@@ -333,26 +383,6 @@ case ${EMULATOR} in
 
 
     RUNTHIS='${EMUPERF} /usr/bin/${RABIN} -L /tmp/cores/${CORE}_libretro.so --config ${RETROARCH_TEMP_CONFIG} --appendconfig ${RETROARCH_APPEND_CONFIG} "${ROMNAME}"'
-
-    CONTROLLERCONFIG="${ARGUMENTS#*--controllers=*}"
-
-    if [[ "${ARGUMENTS}" == *"-state_slot"* ]]
-    then
-      CONTROLLERCONFIG="${CONTROLLERCONFIG%% -state_slot*}"  # until -state is found
-      SNAPSHOT="${ARGUMENTS#*-state_slot *}" # -state_slot x
-      SNAPSHOT="${SNAPSHOT%% -*}"
-        if [[ "${ARGUMENTS}" == *"-autosave"* ]]; then
-          CONTROLLERCONFIG="${CONTROLLERCONFIG%% -autosave*}"  # until -autosave is found
-          AUTOSAVE="${ARGUMENTS#*-autosave *}" # -autosave x
-          AUTOSAVE="${AUTOSAVE%% -*}"
-        else
-          AUTOSAVE=""
-        fi
-    else
-      CONTROLLERCONFIG="${CONTROLLERCONFIG%% --*}"  # until a -- is found
-      SNAPSHOT=""
-      AUTOSAVE=""
-    fi
 
     # Configure platform specific requirements
     case ${PLATFORM} in
