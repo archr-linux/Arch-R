@@ -83,9 +83,9 @@ do_save() {
 
 # Restore bluetooth configuration
 do_restore() {
-    if [ ! -f "${BACKUP_FILE}" ]; then
-        log_error "Backup file ${BACKUP_FILE} not found"
-        return 1
+    if [ ! -e "${BACKUP_FILE}" ]; then
+        log_info "No Bluetooth backup to restore"
+        return 0
     fi
 
     if (cd "${CACHE_PATH}" && tar xf "${BACKUP_FILE}"); then
@@ -201,7 +201,7 @@ do_remove() {
     fi
 
     # Backup new configuration
-    do_save
+    do_save || return $?
     log_info "Device ${DEV} removed successfully"
 }
 
