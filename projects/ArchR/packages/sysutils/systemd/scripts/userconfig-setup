@@ -36,16 +36,20 @@ then
     cp /usr/config/iwd/* /var/lib/iwd/
   fi
 
+  ### Link the game controller database so it is managed with OS updates.
+  if [ -e /usr/config/SDL-GameControllerDB/gamecontrollerdb.txt ]
+  then
+    tocon "Configuring controller database..."
+    mkdir -p /storage/.config/SDL-GameControllerDB  >/dev/null 2>&1
+    rm -f /storage/.config/SDL-GameControllerDB/gamecontrollerdb.txt  >/dev/null 2>&1
+    ln -s /usr/config/SDL-GameControllerDB/gamecontrollerdb.txt /storage/.config/SDL-GameControllerDB/gamecontrollerdb.txt  >/dev/null 2>&1
+  fi
+
   if [ -e "/usr/bin/emulationstation" ]
   then
     tocon "Installing themes..."
     mkdir -p /storage/.config/emulationstation/themes  >/dev/null
     ln -s /usr/share/themes/es-theme-art-book-next /storage/.config/emulationstation/themes/system-theme  >/dev/null 2>&1
-
-    ### Link the game controller database so it is managed with OS updates.
-    tocon "Configuring controller database..."
-    rm -f /storage/.config/SDL-GameControllerDB/gamecontrollerdb.txt  >/dev/null 2>&1
-    ln -s /usr/config/SDL-GameControllerDB/gamecontrollerdb.txt /storage/.config/SDL-GameControllerDB/gamecontrollerdb.txt  >/dev/null 2>&1
 
     ### Remove and link es configs so they are managed with OS updates.
     for es_cfg in es_features.cfg

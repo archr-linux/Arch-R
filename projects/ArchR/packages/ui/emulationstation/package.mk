@@ -3,7 +3,7 @@
 
 PKG_NAME="emulationstation"
 PKG_VERSION="f25c4475a348f534de8ff724e9e42808b7a80a12"
-PKG_REV="3"
+PKG_REV="4"
 PKG_GIT_CLONE_BRANCH="master"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/archr-linux/emulationstation-next"
@@ -78,18 +78,13 @@ makeinstall_target() {
   mkdir -p ${INSTALL}/etc/emulationstation/
   ln -sf /storage/.config/emulationstation/themes ${INSTALL}/etc/emulationstation/
 
+  # es_input.cfg and es_features.cfg come from the archr package.
   cp -rf ${PKG_DIR}/config/common/*.cfg ${INSTALL}/usr/config/emulationstation
 
   # The systems catalog belongs to ArchR (virtual/emulators, or archr on
   # images without emulation). Point ES's two lookup paths at it.
   ln -sf /usr/share/archr/systems.cfg ${INSTALL}/usr/config/emulationstation/es_systems.cfg
   ln -sf /usr/share/archr/systems.cfg ${INSTALL}/etc/emulationstation/es_systems.cfg
-
-  #Delete all vulkan options from es_features when vulkan is not present
-  if [ ! "${VULKAN_SUPPORT}" = "yes" ]
-    then
-      sed -i '/vulkan/d' ${INSTALL}/usr/config/emulationstation/es_features.cfg
-  fi
 }
 
 
