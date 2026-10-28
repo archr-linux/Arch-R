@@ -36,7 +36,7 @@ case "$1" in
       echo "set-audio: no sink named '$2'" >&2
       exit 1
     fi
-    wpctl set-default "${ID}" || exit 1
+    wpctl set-default "${ID}"
     ;;
   list-profiles|get-profile)
     :
