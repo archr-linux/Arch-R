@@ -13,7 +13,11 @@ fi
 
 # Switch to headphones if we have them already connected at boot
 GPIO=$(cat /sys/class/gpio/gpio${DEVICE_JACK}/value)
-[[ "$GPIO" == "0" ]] && set_setting "audio.device" "headphone" || set_setting "audio.device" "speakers"
+if [[ "$GPIO" == "0" ]]; then
+  set_setting "audio.device" "headphone"
+else
+  set_setting "audio.device" "speakers"
+fi
 
 ### Set the default audio path, needed for some devices
 if [ -z "${DEVICE_PLAYBACK_PATH}" ]
