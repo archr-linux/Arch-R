@@ -17,6 +17,38 @@ get_current_driver() {
 
 GPUDRIVER_LOG="/storage/.config/gpudriver.log"
 
+# Device-specific DTB overlay switch, filled in by package.mk (empty on
+# boards whose base DTS already carries the GPU node). The leading `:`
+# keeps the body valid when the placeholder is empty.
+dtb_overlay_load() {
+  :
+  @DTB_OVERLAY_LOAD@
+}
+
+dtb_overlay_unload() {
+  :
+  @DTB_OVERLAY_UNLOAD@
+}
+
+# Persist the driver for the next boot. The overlay goes first so a
+# rejected overlay never leaves gpu.driver pointing at a driver the
+# board cannot bring up; the read-back proves the key really landed.
+select_driver() {
+  case "$1" in
+    libmali)  dtb_overlay_unload || return 1 ;;
+    panfrost) dtb_overlay_load || return 1 ;;
+  esac
+  set_setting ${GPU_DRIVER_SETTING_KEY} "$1"
+  [ "$(get_setting ${GPU_DRIVER_SETTING_KEY})" = "$1" ] || return 1
+  # Force the setting onto disk before we return control to the UI,
+  # which may immediately trigger a reboot ("Reboot now" in the popup
+  # is dispatched synchronously; ext4 might still have the new value
+  # in the page cache, not on the SD). Without this sync the next
+  # boot could still read gpu.driver=libmali and the user perceives
+  # the switch as silently broken.
+  sync
+}
+
 # Append a one-line tagged entry to the persistent log. We keep this on
 # /storage so it survives across reboots — the most common diagnostic
 # need is "I picked panfrost and the system came up in libmali", which
@@ -305,23 +337,12 @@ case "$1" in
     rm -f "${SENTINEL}" 2>/dev/null
     sync 2>/dev/null
     ;;
-  "libmali")
-    set_setting ${GPU_DRIVER_SETTING_KEY} $1
-    # Force the setting onto disk before we return control to the UI,
-    # which may immediately trigger a reboot.
-    sync
-    @DTB_OVERLAY_UNLOAD@
-    ;;
-  "panfrost")
-    set_setting ${GPU_DRIVER_SETTING_KEY} $1
-    # Force the setting onto disk before we return control to the UI,
-    # which may immediately trigger a reboot ("Reboot now" in the popup
-    # is dispatched synchronously; ext4 might still have the new value
-    # in the page cache, not on the SD). Without this sync the next
-    # boot could still read gpu.driver=libmali and the user perceives
-    # the switch as silently broken.
-    sync
-    @DTB_OVERLAY_LOAD@
+  "libmali"|"panfrost")
+    if ! select_driver "$1"; then
+      log_event "select $1 FAILED, gpu.driver left as $(get_setting ${GPU_DRIVER_SETTING_KEY})"
+      echo "gpudriver: could not select $1" >&2
+      exit 1
+    fi
     ;;
   "")
     get_current_driver
