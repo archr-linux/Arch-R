@@ -23,21 +23,17 @@
 
 BOOST_FILE="/sys/devices/system/cpu/cpufreq/boost"
 
-# The setting is persisted only after the boost flag and the max_freq pin
-# both took; a missing boost control or a rejected write exits non-zero.
 case $1 in
-  disable)
-    [ -e "${BOOST_FILE}" ] && echo 0 > "${BOOST_FILE}" 2>/dev/null || exit 1
-    set_cpu_max_freq highest || exit 1
-    set_setting enable.turbo-mode 0
-    ;;
-  enable)
-    [ -e "${BOOST_FILE}" ] && echo 1 > "${BOOST_FILE}" 2>/dev/null || exit 1
-    set_cpu_max_freq highest || exit 1
-    set_setting enable.turbo-mode 1
-    ;;
+  enable)  VALUE=1 ;;
+  disable) VALUE=0 ;;
   *)
     echo "usage: $0 enable|disable" >&2
     exit 2
     ;;
 esac
+
+# The setting is persisted only after the boost flag and the max_freq pin
+# both took; a missing boost control or a rejected write exits non-zero.
+[ -e "${BOOST_FILE}" ] && echo ${VALUE} > "${BOOST_FILE}" 2>/dev/null || exit 1
+set_cpu_max_freq highest || exit 1
+set_setting enable.turbo-mode ${VALUE}
