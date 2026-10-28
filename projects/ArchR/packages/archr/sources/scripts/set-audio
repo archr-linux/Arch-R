@@ -11,7 +11,9 @@
 # boards: the profile subcommands return nothing and ES hides that row.
 
 sinks() {
-  wpctl status 2>/dev/null | sed -n '/Sinks:/,/Sources:/p'
+  local status
+  status=$(wpctl status 2>/dev/null) || return 1
+  printf '%s\n' "${status}" | sed -n '/Sinks:/,/Sources:/p'
 }
 
 case "$1" in
@@ -22,8 +24,19 @@ case "$1" in
     sinks | grep '\*' | grep -oE '[0-9]+\. .*\[vol' | sed -E 's/^[0-9]+\. //; s/ *\[vol$//' | head -1
     ;;
   set)
-    ID=$(sinks | grep -F "$2" | grep -oE '[0-9]+\.' | tr -d '.' | head -1)
-    [ -n "${ID}" ] && wpctl set-default "${ID}"
+    # Match the name exactly as "list" prints it ("<id>. <name>" with the
+    # volume suffix removed): a substring match could pick "HDMI 2" for
+    # "HDMI". wpctl failures propagate as the exit status.
+    SINKS=$(sinks) || { echo "set-audio: wpctl status failed" >&2; exit 1; }
+    ID=$(printf '%s\n' "${SINKS}" | grep -oE '[0-9]+\. .*\[vol' | sed -E 's/ *\[vol$//' |
+      while IFS= read -r LINE; do
+        [ "${LINE#*. }" = "$2" ] && { echo "${LINE%%.*}"; break; }
+      done)
+    if [ -z "${ID}" ]; then
+      echo "set-audio: no sink named '$2'" >&2
+      exit 1
+    fi
+    wpctl set-default "${ID}" || exit 1
     ;;
   list-profiles|get-profile)
     :
