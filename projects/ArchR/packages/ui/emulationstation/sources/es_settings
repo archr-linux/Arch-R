@@ -8,49 +8,16 @@
 
 export SDL_AUDIODRIVER=pulseaudio
 
-TZ=$(get_setting system.timezone)
-echo -n "TIMEZONE=${TZ}" > /storage/.cache/timezone
-# es_settings is ExecStartPre for emustation.service, so it runs on every ES
-# (re)start. Restarting tz-data is synchronous and blocks the ES relaunch
-# (a visible chunk of the "Restart EmulationStation" black screen), yet it
-# only matters when the timezone changed. Skip it otherwise.
-PREV_TZ="$(cat /storage/.cache/system_timezone 2>/dev/null)"
-echo -n "${TZ}" >/storage/.cache/system_timezone
-if [ "${TZ}" != "${PREV_TZ}" ]; then
-  systemctl restart tz-data.service
-fi
-
-MYLOCALE=$(get_setting system.language)
-if [[ -n "${MYLOCALE}" ]]
-then
-
-  unset I18NPATH LANG LANGUAGE LOCPATH
-
-  MYCHARMAP="UTF-8"
-  MYLANG="${MYLOCALE}.${MYCHARMAP}"
-  MYLOCPATH="/storage/.config/emulationstation"
-
-  if [ ! -e "${MYLOCPATH}/locale/${MYLANG}/LC_NAME" ]; then
-    performance
- I18NPATH="/usr/share/i18n"
- localedef -i ${MYLOCALE} \
-           -c \
-           -v \
-           -f ${MYCHARMAP} \
-           ${MYLOCPATH}/locale/${MYLANG} >/var/log/start_es.log 2>&1
-    ${DEVICE_CPU_GOVERNOR}
-  fi
-
-  export LOCPATH="${MYLOCPATH}/locale"
-  export LANG=${MYLANG}
-  export LANGUAGE=${MYLANG}
-  IMPORT_VARS="LANG LOCPATH I18NPATH LANGUAGE"
-fi
+# Timezone and language now live in archr-apply-locale, shared with
+# other frontends. It also imports LANG/LANGUAGE/LOCPATH into systemd.
+# Its status is ignored: as ExecStartPre a failure would stop ES from
+# starting, and a missing locale only means English.
+/usr/bin/archr-apply-locale >/dev/null || true
 
 ### Import quirk variables, in one call: import-environment takes any
 ### number of names, and one call per variable (57 on an R36S) spent ~3s
 ### starting systemctl before EmulationStation could even start.
-IMPORT_VARS+=" $(cat /etc/profile.d/999-export | grep _ | sed 's/export//g; s/^\W//g; s/\\//g')"
+IMPORT_VARS="$(cat /etc/profile.d/999-export | grep _ | sed 's/export//g; s/^\W//g; s/\\//g')"
 systemctl import-environment ${IMPORT_VARS}
 
 set_kill set "emulationstation"

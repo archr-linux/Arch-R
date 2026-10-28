@@ -83,9 +83,9 @@ do_save() {
 
 # Restore bluetooth configuration
 do_restore() {
-    if [ ! -f "${BACKUP_FILE}" ]; then
-        log_error "Backup file ${BACKUP_FILE} not found"
-        return 1
+    if [ ! -e "${BACKUP_FILE}" ]; then
+        log_info "No Bluetooth backup to restore"
+        return 0
     fi
 
     if (cd "${CACHE_PATH}" && tar xf "${BACKUP_FILE}"); then
@@ -195,8 +195,13 @@ do_remove() {
     # Remove device files
     find "${CACHE_PATH}/bluetooth" -name "${DEV}" -exec rm -rf {} +
 
+    if do_list | grep -q "id=\"${DEV}\""; then
+        log_error "Failed to remove device ${DEV}"
+        return 1
+    fi
+
     # Backup new configuration
-    do_save
+    do_save || return $?
     log_info "Device ${DEV} removed successfully"
 }
 
@@ -244,6 +249,14 @@ do_trust() {
         N=$((N-1))
     done
 
+    # A MAC that never showed up as trusted is a failure; "input" mode
+    # has no single device to check, so it only reports the backup.
+    if [ "${TRUSTDEV}" != "input" ] && [ $N -eq 0 ]; then
+        log_error "Failed to trust device ${TRUSTDEV}"
+        do_save >/dev/null
+        return 1
+    fi
+
     do_save
 }
 
@@ -272,7 +285,10 @@ do_enable() {
 do_disable() {
     set_setting controllers.bluetooth.enabled 0
     systemctl stop bluetooth-agent
-    systemctl stop bluetooth
+    if ! systemctl stop bluetooth; then
+        log_error "Failed to stop bluetooth"
+        return 1
+    fi
     log_info "Bluetooth disabled"
 }
 
@@ -368,4 +384,5 @@ case "${ACTION}" in
         ;;
 esac
 
-exit 0
+# Status of the command that ran, so callers can tell failure from success.
+exit $?

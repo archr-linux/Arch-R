@@ -15,25 +15,44 @@
 #   /some/other/folder/file.name*
 # )
 
+usage() {
+    echo "Usage: ${0} {backup|restore} [--with-wifi]"
+    echo "  --with-wifi  Include saved Wi-Fi settings and iwd profiles (backup/restore)."
+    echo "               Backups are unencrypted and stored on the ROMs share."
+}
+
+if [ "$#" -gt 2 ] || { [ -n "${2}" ] && [ "${2}" != "--with-wifi" ]; }
+then
+    usage >&2
+    exit 1
+fi
+
 BACKUPFOLDER="/storage/roms/backup"
 BACKUPFILE="${BACKUPFOLDER}/${OS_NAME}_BACKUP.zip"
-mkdir -p ${BACKUPFOLDER}
+mkdir -p "${BACKUPFOLDER}"
+
+# Real paths, not the /storage/.emulationstation symlink: that link only
+# exists while EmulationStation is installed. WiFi is iwd, whose saved
+# networks (/var/lib/iwd) live in /storage/.cache/iwd.
+ES_DIR="/storage/.config/emulationstation"
 
 DEFAULT=(
     /storage/.config/fancontrol.conf
     /storage/.config/backuptool.conf
     /var/lib/bluetooth/*
-    /var/lib/connman*
     /storage/.config/system/configs/system.cfg
     /storage/.config/ppsspp/*
     /storage/.config/retroarch/*
     /storage/.config/moonlight/*
     /storage/.config/game/*
-    /storage/.emulationstation/es_*.cfg
-    /storage/.emulationstation/scripts/*
-    /storage/.emulationstation/themesettings/*
-    $(find /storage/.emulationstation/themes/* -type d -maxdepth 0 -not -path "*es-theme-art-book-next" -not -path "*system-theme")
+    "${ES_DIR}"/es_*.cfg
+    "${ES_DIR}"/scripts/*
+    "${ES_DIR}"/themesettings/*
 )
+while IFS= read -r -d '' THEME
+do
+    DEFAULT+=("${THEME}")
+done < <(find "${ES_DIR}/themes" -mindepth 1 -maxdepth 1 -type d -not -name es-theme-art-book-next -not -name system-theme -print0 2>/dev/null)
 
 if [ -e "/storage/.config/backuptool.conf" ]
 then
@@ -43,27 +62,71 @@ then
         WARN="Error loading custom backuptool configs. Using defaults."
         ${DEBUG} && echo "${WARN}"
         logger -t backuptool "${WARN}"
-        COMPRESSLOCATIONS=(${DEFAULT[@]})
+        COMPRESSLOCATIONS=("${DEFAULT[@]}")
     else
-        COMPRESSLOCATIONS=(${LOCATIONS[@]})
+        COMPRESSLOCATIONS=("${LOCATIONS[@]}")
     fi
 else
-    COMPRESSLOCATIONS=(${DEFAULT[@]})
+    COMPRESSLOCATIONS=("${DEFAULT[@]}")
 fi
 
+# Also exclude profiles when a custom location contains their parent directory.
+EXCLUDES=('storage/.cache/iwd' 'storage/.cache/iwd/*' 'var/lib/iwd' 'var/lib/iwd/*')
+if [ "${2}" = "--with-wifi" ]
+then
+    COMPRESSLOCATIONS+=(/storage/.cache/iwd/*)
+    EXCLUDES=()
+fi
+# System-managed symlinks are recreated by the OS, and BusyBox unzip stops
+# at any entry whose destination is a symlink.
+mapfile -t LINKS < <(find "${COMPRESSLOCATIONS[@]}" -type l 2>/dev/null | sed 's|^/||')
+EXCLUDES+=("${LINKS[@]}")
+[ "${#EXCLUDES[@]}" -eq 0 ] || EXCLUDES=(-x "${EXCLUDES[@]}")
+
+SYSTEM_CFG="storage/.config/system/configs/system.cfg"
 case "${1}" in
     "restore")
-        unzip -o ${BACKUPFILE} -d /
+        if [ "${2}" != "--with-wifi" ]
+        then
+            KEEP=$(grep '^wifi\.\(ssid\|key\)=' "/${SYSTEM_CFG}" 2>/dev/null)
+        fi
+        unzip -o "${BACKUPFILE}" -d / "${EXCLUDES[@]}"
+        RC=$?
+        if [ "${2}" != "--with-wifi" ] && [ -f "/${SYSTEM_CFG}" ]
+        then
+            sed -i '/^wifi\.\(ssid\|key\)=/d' "/${SYSTEM_CFG}" || exit 1
+            [ -z "${KEEP}" ] || printf '%s\n' "${KEEP}" >> "/${SYSTEM_CFG}" || exit 1
+        fi
+        exit "${RC}"
     ;;
     "backup")
-        if [ -f ${BACKUPFILE} ]
+        mkdir -p /storage/.cache || exit 1
+        WORKDIR=$(mktemp -d "/storage/.cache/backuptool.XXXXXX") || exit 1
+        PUBLISHFILE=""
+        trap 'rm -rf "${WORKDIR}"; rm -f "${PUBLISHFILE}"' EXIT
+        trap 'exit 1' HUP INT TERM
+        if [ -f "${BACKUPFILE}" ]
         then
             TODAY=`date +%y-%m-%d_%H_%M_%S`
             ARCHIVEFILENAME="ARCHIVED_${OS_NAME}_BACKUP-${TODAY}.zip"
-            mv ${BACKUPFILE} "${BACKUPFOLDER}/${ARCHIVEFILENAME}"
+            mv "${BACKUPFILE}" "${BACKUPFOLDER}/${ARCHIVEFILENAME}"
         fi
-        [ -f "${BACKUPFILE}" ] && rm "${BACKUPFILE}"
-        zip -9 -r ${BACKUPFILE} \
-        ${COMPRESSLOCATIONS[@]}
+        zip -9 -r "${WORKDIR}/backup.zip" \
+        "${COMPRESSLOCATIONS[@]}" "${EXCLUDES[@]}" || exit $?
+        if [ "${2}" != "--with-wifi" ] && \
+           unzip -l "${WORKDIR}/backup.zip" | grep -q " ${SYSTEM_CFG}$"
+        then
+            mkdir -p "${WORKDIR}/${SYSTEM_CFG%/*}" || exit 1
+            grep -v '^wifi\.\(ssid\|key\)=' "/${SYSTEM_CFG}" > "${WORKDIR}/${SYSTEM_CFG}"
+            [ "$?" -le 1 ] || exit 1
+            (cd "${WORKDIR}" && zip -9 backup.zip "${SYSTEM_CFG}") || exit $?
+        fi
+        PUBLISHFILE=$(mktemp "${BACKUPFOLDER}/.backup.XXXXXX") || exit 1
+        mv "${WORKDIR}/backup.zip" "${PUBLISHFILE}" || exit 1
+        mv "${PUBLISHFILE}" "${BACKUPFILE}"
+    ;;
+    *)
+        usage >&2
+        exit 1
     ;;
 esac

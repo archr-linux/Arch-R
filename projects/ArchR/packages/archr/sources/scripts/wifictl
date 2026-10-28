@@ -13,6 +13,15 @@
 ### Usage:
 ###     wifictl command [ssid] [psk]
 ###
+###     wifictl scanlist             scan, then one SSID per line
+###     wifictl scanlist --detail    scan, then one network per line:
+###                                  ssid<TAB>security<TAB>signal<TAB>connected<TAB>known
+###                                  (format in /usr/bin/iwd_get-networks)
+###     wifictl forget <ssid>        drop the saved iwd profile(s) of <ssid>
+###
+### Exits 1, with a message on stderr, when there is no WiFi interface
+### (forget still runs: the profiles live on disk, not on the device).
+###
 
 IWD_AP_CFG_DIR="/var/lib/iwd/ap"
 WIFI_TYPE=$(get_setting wifi.adhoc.enabled)
@@ -22,9 +31,15 @@ ADHOC_CLIENT_ID=$(get_setting wifi.adhoc.id)
 WIFI_DEV="$(ls /sys/class/net | grep -m1 '^wl')"
 DEFAULT_CHAN="6"
 
-# Exit the script if the WiFi device isn't available
-[ -z "${WIFI_DEV}" ] && exit 0
-[ ! -d "/sys/class/net/${WIFI_DEV}" ] && exit 0
+# Exit the script if the WiFi device isn't available. Non-zero, so a UI
+# can tell "no adapter" from success; the boot and sleep callers ignore
+# the status.
+if [ -z "${WIFI_DEV}" ] || [ ! -d "/sys/class/net/${WIFI_DEV}" ]; then
+  if [ "${1}" != "forget" ]; then
+    echo "wifictl: no WiFi interface" >&2
+    exit 1
+  fi
+fi
 
 SSID="${2:-$(get_setting wifi.ssid 2>/dev/null)}"
 PSK="${3:-$(get_setting wifi.key 2>/dev/null)}"
@@ -44,6 +59,59 @@ fi
 ###
 ### Functions...
 ###
+
+# Nome do arquivo de perfil, conforme storage_get_network_file_path()
+# em src/storage.c do iwd e o man iwd.network, seção "Network file
+# names". A regra tem duas partes, e a versão anterior errava as duas:
+#
+#   1. O conjunto aceito cru é letras, dígitos, "-", "_" e espaço. O
+#      ponto NÃO entra, e o espaço entra. A versão anterior tratava o
+#      ponto como seguro e escapava o espaço, invertendo os dois.
+#   2. Quando algum caractere fica de fora, o iwd não escapa caractere
+#      a caractere; ele codifica o SSID INTEIRO em hexadecimal
+#      minúsculo e prefixa com um único "=". A versão anterior fazia
+#      escape por caractere no estilo "=XX", que o iwd nunca gera nem
+#      sabe ler.
+#
+# O efeito do item 1, observado no R36S em 2026-09-04 numa rede chamada
+# "ntoskrnl.exe": o arquivo saía como "ntoskrnl.exe.psk", a leitura no
+# iwd corta no PRIMEIRO ponto, tenta interpretar "exe.psk" como tipo de
+# segurança, não reconhece e descarta o perfil inteiro. A rede sumia de
+# known-networks, o iwctl connect caía em prompt interativo de
+# passphrase e, sem TTY, o usuário via só um erro genérico no ES.
+encode_iwd_name() {
+  local LC_ALL=C
+  if [[ "$1" =~ ^[A-Za-z0-9_\ -]+$ ]]; then
+    printf '%s' "$1"
+  else
+    printf '=%s' "$(printf '%s' "$1" | od -An -tx1 | tr -d ' \n')"
+  fi
+}
+
+# Nome que a versão anterior teria gerado. Serve só para apagar perfis
+# órfãos de quem já tem o bug gravado em disco: o iwd os ignora, mas
+# eles guardam a passphrase em texto claro. Nunca contêm "/", porque a
+# regra antiga escapava a barra como =2F.
+legacy_iwd_name() {
+  printf '%s' "$1" | awk '
+    BEGIN { for (i = 0; i < 256; i++) bc[sprintf("%c", i)] = sprintf("%02X", i) }
+    {
+      out = ""
+      n = length($0)
+      for (i = 1; i <= n; i++) {
+        c = substr($0, i, 1)
+        if (c ~ /[A-Za-z0-9._-]/) out = out c
+        else out = out "=" bc[c]
+      }
+      print out
+    }'
+}
+
+# Do not wait for a stopped daemon; bound every client call, even if it stalls.
+iwctl() {
+  pgrep -x iwd >/dev/null || return 1
+  timeout -k 1 "${IWCTL_TIMEOUT:-5}" iwctl "$@"
+}
 
 # Wait for iwd to start and have a device available
 wait_for_wifi() {
@@ -99,52 +167,6 @@ connect_wifi() {
       fi
     fi
   fi
-
-  # Nome do arquivo de perfil, conforme storage_get_network_file_path()
-  # em src/storage.c do iwd e o man iwd.network, seção "Network file
-  # names". A regra tem duas partes, e a versão anterior errava as duas:
-  #
-  #   1. O conjunto aceito cru é letras, dígitos, "-", "_" e espaço. O
-  #      ponto NÃO entra, e o espaço entra. A versão anterior tratava o
-  #      ponto como seguro e escapava o espaço, invertendo os dois.
-  #   2. Quando algum caractere fica de fora, o iwd não escapa caractere
-  #      a caractere; ele codifica o SSID INTEIRO em hexadecimal
-  #      minúsculo e prefixa com um único "=". A versão anterior fazia
-  #      escape por caractere no estilo "=XX", que o iwd nunca gera nem
-  #      sabe ler.
-  #
-  # O efeito do item 1, observado no R36S em 2026-09-04 numa rede chamada
-  # "ntoskrnl.exe": o arquivo saía como "ntoskrnl.exe.psk", a leitura no
-  # iwd corta no PRIMEIRO ponto, tenta interpretar "exe.psk" como tipo de
-  # segurança, não reconhece e descarta o perfil inteiro. A rede sumia de
-  # known-networks, o iwctl connect caía em prompt interativo de
-  # passphrase e, sem TTY, o usuário via só um erro genérico no ES.
-  encode_iwd_name() {
-    if printf '%s' "$1" | LC_ALL=C grep -qE '^[A-Za-z0-9_ -]+$'; then
-      printf '%s' "$1"
-    else
-      printf '=%s' "$(printf '%s' "$1" | od -An -tx1 | tr -d ' \n')"
-    fi
-  }
-
-  # Nome que a versão anterior teria gerado. Serve só para apagar perfis
-  # órfãos de quem já tem o bug gravado em disco: o iwd os ignora, mas
-  # eles guardam a passphrase em texto claro. Nunca contêm "/", porque a
-  # regra antiga escapava a barra como =2F.
-  legacy_iwd_name() {
-    printf '%s' "$1" | awk '
-      BEGIN { for (i = 0; i < 256; i++) bc[sprintf("%c", i)] = sprintf("%02X", i) }
-      {
-        out = ""
-        n = length($0)
-        for (i = 1; i <= n; i++) {
-          c = substr($0, i, 1)
-          if (c ~ /[A-Za-z0-9._-]/) out = out c
-          else out = out "=" bc[c]
-        }
-        print out
-      }'
-  }
 
   IWD_NAME=$(encode_iwd_name "${SSID}")
   IWD_NAME_LEGACY=$(legacy_iwd_name "${SSID}")
@@ -230,7 +252,7 @@ connect_wifi() {
       # o iwd não aceitar o profile por qualquer motivo, o iwctl pede a
       # passphrase pelo stdin; wifictl não tem TTY, então em vez de um
       # erro o usuário recebe um travamento até o timeout.
-      iwctl --dont-ask station ${WIFI_DEV} connect "${SSID}" 2>&1
+      IWCTL_TIMEOUT=30 iwctl --dont-ask station ${WIFI_DEV} connect "${SSID}" 2>&1
     else
       # A rede não apareceu em ~12s de varredura, e o caso provável é
       # rede oculta. Para essas o connect comum não serve: um AP oculto
@@ -254,10 +276,10 @@ connect_wifi() {
       remove_iwd_profile
       sleep 1
       if [ -n "${PSK}" ]; then
-        iwctl --passphrase "${PSK}" --dont-ask \
+        IWCTL_TIMEOUT=30 iwctl --passphrase "${PSK}" --dont-ask \
           station ${WIFI_DEV} connect-hidden "${SSID}" 2>&1
       else
-        iwctl --dont-ask station ${WIFI_DEV} connect-hidden "${SSID}" 2>&1
+        IWCTL_TIMEOUT=30 iwctl --dont-ask station ${WIFI_DEV} connect-hidden "${SSID}" 2>&1
       fi
       # Se a rede não era oculta e sim uma varredura que simplesmente
       # não a alcançou, o connect-hidden falha. Restaura o profile e
@@ -266,7 +288,7 @@ connect_wifi() {
         echo "== connect-hidden não pegou, voltando ao connect comum"
         write_iwd_profile
         sleep 1
-        iwctl --dont-ask station ${WIFI_DEV} connect "${SSID}" 2>&1
+        IWCTL_TIMEOUT=30 iwctl --dont-ask station ${WIFI_DEV} connect "${SSID}" 2>&1
       fi
     fi
   } >> "${CONNECT_LOG}"
@@ -290,6 +312,46 @@ connect_wifi() {
   done
   echo "== $(date '+%F %T') FAILED to connect to '${SSID}' (state=${STATE:-?})" >> "${CONNECT_LOG}"
   return 1
+}
+
+# Esquece uma rede: apaga os perfis do SSID (todos os tipos, inclusive
+# o .8021x escrito à mão e o nome da regra antiga) e desconecta se for a
+# rede atual. Apagar o arquivo basta para o iwd, que vigia o diretório
+# por inotify; o iwctl forget vem antes só para valer na hora. Se era a
+# rede salva no cfg, limpa wifi.ssid/wifi.key, senão o boot
+# (099-networkservices) a reconectaria com a senha antiga.
+forget_wifi() {
+  local name legacy show net status=0
+
+  if [ -z "${SSID}" ]; then
+    echo "wifictl: forget needs an SSID" >&2
+    return 2
+  fi
+
+  if [ -n "${WIFI_DEV}" ]; then
+    show=$(iwctl station ${WIFI_DEV} show 2>/dev/null)
+    net=$(printf '%s\n' "${show}" | sed -n 's/^[[:space:]]*Connected network[[:space:]]*//p')
+    net="${net#"${net%%[![:space:]]*}"}"
+    net="${net%"${net##*[![:space:]]}"}"
+    if [ "${net}" = "${SSID}" ]; then
+      iwctl station ${WIFI_DEV} disconnect 2>/dev/null
+    fi
+  fi
+  iwctl --dont-ask known-networks "${SSID}" forget >/dev/null 2>&1
+
+  name=$(encode_iwd_name "${SSID}")
+  legacy=$(legacy_iwd_name "${SSID}")
+  rm -f "/var/lib/iwd/${name}.psk" "/var/lib/iwd/${name}.open" \
+        "/var/lib/iwd/${name}.8021x" \
+        "/var/lib/iwd/${legacy}.psk" "/var/lib/iwd/${legacy}.open" 2>/dev/null || status=$?
+
+  if [ "$(get_setting wifi.ssid)" = "${SSID}" ]; then
+    del_setting wifi.ssid
+    del_setting wifi.key
+    # del_setting's lock cleanup can mask a failed write.
+    [ -z "$(get_setting wifi.ssid)$(get_setting wifi.key)" ] || status=1
+  fi
+  return "${status}"
 }
 
 create_adhoc() {
@@ -419,6 +481,17 @@ case "${1}" in
   scanlist)
     iwctl station ${WIFI_DEV} scan 2>/dev/null
     sleep 2
-    list_wifi
+    if [ "${2}" = "--detail" ]; then
+      wait_for_wifi
+      /usr/bin/iwd_get-networks --detail
+    else
+      list_wifi
+    fi
+    ;;
+  forget)
+    # Só o SSID do argumento: sem ele o SSID cairia no wifi.ssid salvo
+    # (ou no NETPLAY_AP do modo adhoc), e esqueceria a rede errada.
+    SSID="${2}"
+    forget_wifi
     ;;
 esac
