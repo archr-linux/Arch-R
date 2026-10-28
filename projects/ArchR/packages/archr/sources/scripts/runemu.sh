@@ -231,26 +231,67 @@ case ${EMULATOR} in
     # Make sure NETWORK_PLAY isn't defined before we start our tests/configuration.
     del_setting netplay.mode
 
-    case ${ARGUMENTS} in
-      *"--host"*)
-        ${VERBOSE} && log $0 "Setup netplay host."
-        NETWORK_PLAY="${ARGUMENTS##*--host}"  # read from --host onwards
-        NETWORK_PLAY="${NETWORK_PLAY%%--nick*}"  # until --nick is found
-        NETWORK_PLAY="--host ${NETWORK_PLAY} --nick"
-        set_setting netplay.mode "host"
-      ;;
-      *"--connect"*)
-        ${VERBOSE} && log $0 "Setup netplay client."
-        NETWORK_PLAY="${ARGUMENTS##*--connect}"  # read from --connect onwards
-        NETWORK_PLAY="${NETWORK_PLAY%%--nick*}"  # until --nick is found
-        NETWORK_PLAY="--connect ${NETWORK_PLAY} --nick"
-        set_setting netplay.mode "client"
-      ;;
-      *"--netplaymode spectator"*)
-        ${VERBOSE} && log $0 "Setup netplay spectator."
-        set_setting "netplay.mode" "spectator"
-      ;;
-    esac
+    # Netplay flags are matched as whole arguments (never substrings, so a
+    # ROM or controller string cannot trigger them):
+    #   --host | --connect [IP] | --port N | --nick NAME | --spectate
+    #   | --netplaymode spectator
+    # Each value is the next argument or follows "=". A session host/port
+    # given here is handed to setsettings.sh for this run only; without
+    # them setsettings falls back to the saved global.netplay.* keys.
+    NETPLAY_SESSION_MODE=""
+    NETPLAY_SESSION_HOST=""
+    NETPLAY_SESSION_PORT=""
+    NETPLAY_SESSION_NICK=""
+    NETPLAY_SESSION_SPECTATE=0
+    NPARGS=("$@")
+    for ((i = 1; i < ${#NPARGS[@]}; i++)); do
+      NPARG="${NPARGS[i]}"
+      NPNEXT="${NPARGS[i+1]-}"
+      case "${NPARG}" in
+        --host)
+          NETPLAY_SESSION_MODE="host"
+          ;;
+        --connect|--port|--nick|--netplaymode)
+          [ "${NPARG}" = "--connect" ] && NETPLAY_SESSION_MODE="client"
+          # A missing value (end of list or another flag) is not consumed.
+          [ -n "${NPNEXT}" ] && [ "${NPNEXT#-}" = "${NPNEXT}" ] || continue
+          i=$((i + 1))
+          case "${NPARG}" in
+            --connect) NETPLAY_SESSION_HOST="${NPNEXT}" ;;
+            --port) NETPLAY_SESSION_PORT="${NPNEXT}" ;;
+            --nick) NETPLAY_SESSION_NICK="${NPNEXT}" ;;
+            --netplaymode) [ "${NPNEXT}" = "spectator" ] && NETPLAY_SESSION_MODE="spectator" ;;
+          esac
+          ;;
+        --connect=*) NETPLAY_SESSION_MODE="client"; NETPLAY_SESSION_HOST="${NPARG#*=}" ;;
+        --port=*) NETPLAY_SESSION_PORT="${NPARG#*=}" ;;
+        --nick=*) NETPLAY_SESSION_NICK="${NPARG#*=}" ;;
+        --spectate) NETPLAY_SESSION_SPECTATE=1 ;;
+      esac
+    done
+    # The host and port end up on the RetroArch command line and config:
+    # accept only address characters and a real port number.
+    if [ -n "${NETPLAY_SESSION_HOST}" ] && [[ ! "${NETPLAY_SESSION_HOST}" =~ ^[A-Za-z0-9.:-]+$ ]]; then
+      echo "runemu.sh: invalid netplay host '${NETPLAY_SESSION_HOST}'" >&2
+      quit 2
+    fi
+    if [ -n "${NETPLAY_SESSION_PORT}" ] && { [[ ! "${NETPLAY_SESSION_PORT}" =~ ^[0-9]{1,5}$ ]] ||
+         [ "${NETPLAY_SESSION_PORT}" -lt 1 ] || [ "${NETPLAY_SESSION_PORT}" -gt 65535 ]; }; then
+      echo "runemu.sh: invalid netplay port '${NETPLAY_SESSION_PORT}'" >&2
+      quit 2
+    fi
+    # The nickname is written into the RetroArch config: plain names only,
+    # anything else falls back to the saved nickname.
+    if [ -n "${NETPLAY_SESSION_NICK}" ] && [[ ! "${NETPLAY_SESSION_NICK}" =~ ^[A-Za-z0-9_.\ -]{1,32}$ ]]; then
+      echo "runemu.sh: ignoring netplay nick '${NETPLAY_SESSION_NICK}'" >&2
+      NETPLAY_SESSION_NICK=""
+    fi
+    if [ -n "${NETPLAY_SESSION_MODE}" ]; then
+      ${VERBOSE} && log $0 "Setup netplay ${NETPLAY_SESSION_MODE}."
+      set_setting netplay.mode "${NETPLAY_SESSION_MODE}"
+    fi
+    export NETPLAY_SESSION_MODE NETPLAY_SESSION_HOST NETPLAY_SESSION_PORT \
+           NETPLAY_SESSION_NICK NETPLAY_SESSION_SPECTATE
 
     ### Set set_kill to kill the appropriate retroarch
     set_kill set "retroarch retroarch32"
