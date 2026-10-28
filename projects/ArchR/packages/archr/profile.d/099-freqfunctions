@@ -198,7 +198,8 @@ restore_cpu_boost() {
 }
 
 # The governor entry points below return the CPU governor status; the
-# boost, max_freq and DMC steps stay best effort as before.
+# boost, max_freq, DMC and tuning steps are best effort (`|| :`), also
+# for callers running under set -e.
 performance() {
   local rc=0
   # Honor the user's "Enable CPU Overclock" switch from ES even during
@@ -207,24 +208,24 @@ performance() {
   # prefer to stay at 1416 MHz for thermals/battery, gameplay respects
   # that. set_cpu_max_freq highest then pins to the highest currently
   # available frequency (1512 if boost on, 1416 if off).
-  restore_cpu_boost
+  restore_cpu_boost || :
   set_cpu_gov performance || rc=1
-  set_cpu_max_freq highest
-  set_dmc_gov performance
+  set_cpu_max_freq highest || :
+  set_dmc_gov performance || :
   return ${rc}
 }
 
 ondemand() {
   local rc=0
-  restore_cpu_boost
+  restore_cpu_boost || :
   set_cpu_gov ondemand || rc=1
-  set_dmc_gov ondemand
+  set_dmc_gov ondemand || :
   # Tune ondemand: stay at high freq longer, reduce switching overhead
   for POLICY in $(ls /sys/devices/system/cpu/cpufreq 2>/dev/null | grep policy[0-9]); do
     local ONDEMAND="/sys/devices/system/cpu/cpufreq/${POLICY}/ondemand"
     if [ -d "${ONDEMAND}" ]; then
-      echo 85 > ${ONDEMAND}/up_threshold 2>/dev/null
-      echo 150 > ${ONDEMAND}/sampling_down_factor 2>/dev/null
+      echo 85 > ${ONDEMAND}/up_threshold 2>/dev/null || :
+      echo 150 > ${ONDEMAND}/sampling_down_factor 2>/dev/null || :
     fi
   done
   return ${rc}
@@ -232,16 +233,16 @@ ondemand() {
 
 schedutil() {
   local rc=0
-  restore_cpu_boost
+  restore_cpu_boost || :
   set_cpu_gov schedutil || rc=1
-  set_dmc_gov ondemand
+  set_dmc_gov ondemand || :
   return ${rc}
 }
 
 powersave() {
   local rc=0
   set_cpu_gov powersave || rc=1
-  set_dmc_gov powersave
+  set_dmc_gov powersave || :
   return ${rc}
 }
 
