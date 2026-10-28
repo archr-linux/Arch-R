@@ -61,8 +61,11 @@ SuspendState=mem standby freeze
 EOF
       ;;
     default)
-      del_setting system.suspendmode
-      if [ -e "/usr/lib/autostart/quirks/devices/${QUIRK_DEVICE}/030-suspend_mode" ]; then
+      # The quirk only acts on an absent key: if the deletion failed, the
+      # transaction fails here and the quirk is not run.
+      if ! del_setting system.suspendmode; then
+        RC=1
+      elif [ -e "/usr/lib/autostart/quirks/devices/${QUIRK_DEVICE}/030-suspend_mode" ]; then
         "/usr/lib/autostart/quirks/devices/${QUIRK_DEVICE}/030-suspend_mode" || RC=1
       elif [ -e "/usr/lib/autostart/quirks/platforms/${HW_DEVICE}/030-suspend_mode" ]; then
         "/usr/lib/autostart/quirks/platforms/${HW_DEVICE}/030-suspend_mode" || RC=1
