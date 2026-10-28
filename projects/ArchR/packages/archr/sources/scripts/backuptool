@@ -93,7 +93,7 @@ case "${1}" in
         fi
     ;;
     "backup")
-        WORKDIR=$(mktemp -d) || exit 1
+        WORKDIR=$(mktemp -d "${BACKUPFOLDER}/.staging.XXXXXX") || exit 1
         trap 'rm -rf "${WORKDIR}"' EXIT
         trap 'exit 1' HUP INT TERM
         if [ -f "${BACKUPFILE}" ]
