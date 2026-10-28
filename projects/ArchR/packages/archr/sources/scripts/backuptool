@@ -109,7 +109,7 @@ case "${1}" in
         zip -9 -r "${WORKDIR}/backup.zip" \
         "${COMPRESSLOCATIONS[@]}" "${EXCLUDES[@]}" || exit $?
         if [ "${2}" != "--with-wifi" ] && \
-           unzip -Z1 "${WORKDIR}/backup.zip" | grep -qxF "${SYSTEM_CFG}"
+           unzip -l "${WORKDIR}/backup.zip" | grep -q " ${SYSTEM_CFG}$"
         then
             mkdir -p "${WORKDIR}/${SYSTEM_CFG%/*}" || exit 1
             grep -v '^wifi\.\(ssid\|key\)=' "/${SYSTEM_CFG}" > "${WORKDIR}/${SYSTEM_CFG}"
