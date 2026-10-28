@@ -284,11 +284,34 @@ if [ "$command" == "tz" ];then
     then
 	cat /storage/.config/system/configs/tz
     else
-	if test -f "/usr/share/zoneinfo/${mode}"
+	# Only a real zone file, and only paths inside zoneinfo.
+	case "${mode}" in
+	    /*|*..*) echo "archr-config: invalid timezone ${mode}" >&2; exit 1 ;;
+	esac
+	if ! test -f "/usr/share/zoneinfo/${mode}"
 	then
-	    echo "TIMEZONE=${mode}" > /storage/.cache/timezone
-        systemctl restart tz-data.service
+	    echo "archr-config: unknown timezone ${mode}" >&2
+	    exit 1
 	fi
+	# tz-data links /var/run/localtime from the cache file; when any step
+	# fails or the link does not follow, put the previous file back so
+	# the next boot does not pick up a zone that never applied.
+	prevTz="$(cat /storage/.cache/timezone 2>/dev/null)"
+	if echo "TIMEZONE=${mode}" > /storage/.cache/timezone &&
+	    systemctl restart tz-data.service &&
+	    test "$(readlink /var/run/localtime)" = "/usr/share/zoneinfo/${mode}"
+	then
+	    exit 0
+	fi
+	if test -n "${prevTz}"
+	then
+	    echo "${prevTz}" > /storage/.cache/timezone
+	else
+	    rm -f /storage/.cache/timezone
+	fi
+	systemctl restart tz-data.service
+	echo "archr-config: could not apply timezone ${mode}" >&2
+	exit 1
     fi
     exit $?
 fi
