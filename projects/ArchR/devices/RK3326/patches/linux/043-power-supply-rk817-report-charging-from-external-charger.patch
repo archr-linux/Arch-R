@@ -11,7 +11,9 @@ CHRG_OFF. The battery status then reads "Not charging" while the pack
 is charging, and the UI never shows it.
 
 When the RK817 charger is off and unplugged but the averaged gauge
-current is at least 100 mA into the pack, report Charging.
+current is at least 10 mA into the pack, report Charging. The current
+tapers well below 100 mA in the constant-voltage phase, while running
+on battery the gauge always reads a clearly negative current.
 
 diff --color -ru a/drivers/power/supply/rk817_charger.c b/drivers/power/supply/rk817_charger.c
 --- a/drivers/power/supply/rk817_charger.c
@@ -21,7 +23,7 @@ diff --color -ru a/drivers/power/supply/rk817_charger.c b/drivers/power/supply/r
  }
  
 +/* Net charge current that means an external charger is feeding the pack. */
-+#define RK817_EXT_CHRG_MIN_UA	100000
++#define RK817_EXT_CHRG_MIN_UA	10000
 +
  static int rk817_bat_get_prop(struct power_supply *ps,
  		enum power_supply_property prop,
