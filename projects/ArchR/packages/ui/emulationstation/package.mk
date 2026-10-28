@@ -3,6 +3,7 @@
 
 PKG_NAME="emulationstation"
 PKG_VERSION="f25c4475a348f534de8ff724e9e42808b7a80a12"
+PKG_REV="2"
 PKG_GIT_CLONE_BRANCH="master"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/archr-linux/emulationstation-next"
@@ -85,33 +86,10 @@ makeinstall_target() {
 
   cp -rf ${PKG_DIR}/config/common/*.cfg ${INSTALL}/usr/config/emulationstation
 
-  # If we're not an emulation device, ES may still be installed so we need a default config.
-  if [ "${EMULATION_DEVICE}" = "no" ] || \
-     [ "${BASE_ONLY}" = "true" ]
-  then
-    cat <<EOF >${INSTALL}/usr/config/emulationstation/es_systems.cfg
-<?xml version="1.0" encoding="UTF-8"?>
-<systemList>
-        <system>
-                <name>tools</name>
-                <fullname>Tools</fullname>
-                <manufacturer>ArchR</manufacturer>
-                <release>2024</release>
-                <hardware>system</hardware>
-                <path>/storage/.config/modules</path>
-                <extension>.sh</extension>
-                <command>%ROM%</command>
-                <platform>tools</platform>
-                <theme>tools</theme>
-        </system>
-</systemList>
-EOF
-  fi
-
-  # Symlink target must be an in-target path (/usr/config/...), not the
-  # host's ${INSTALL} build dir, otherwise the staged symlink points to
-  # the builder's filesystem and breaks on the device.
-  ln -sf /usr/config/emulationstation/es_systems.cfg ${INSTALL}/etc/emulationstation/es_systems.cfg
+  # The systems catalog belongs to ArchR (virtual/emulators, or archr on
+  # images without emulation). Point ES's two lookup paths at it.
+  ln -sf /usr/share/archr/systems.cfg ${INSTALL}/usr/config/emulationstation/es_systems.cfg
+  ln -sf /usr/share/archr/systems.cfg ${INSTALL}/etc/emulationstation/es_systems.cfg
 
   ln -sf /storage/.cache/system_timezone ${INSTALL}/etc/timezone
 

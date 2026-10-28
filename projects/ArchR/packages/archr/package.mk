@@ -36,6 +36,30 @@ makeinstall_target() {
 
   mkdir -p ${INSTALL}/usr/bin/
 
+  ### Without emulation (virtual/emulators not built) the UI still needs a
+  ### systems catalog: just the tools.
+  if [ "${EMULATION_DEVICE}" = "no" ] || [ "${BASE_ONLY}" = "true" ]
+  then
+    mkdir -p ${INSTALL}/usr/share/archr
+    cat <<EOF >${INSTALL}/usr/share/archr/systems.cfg
+<?xml version="1.0" encoding="UTF-8"?>
+<systemList>
+        <system>
+                <name>tools</name>
+                <fullname>Tools</fullname>
+                <manufacturer>ArchR</manufacturer>
+                <release>2024</release>
+                <hardware>system</hardware>
+                <path>/storage/.config/modules</path>
+                <extension>.sh</extension>
+                <command>%ROM%</command>
+                <platform>tools</platform>
+                <theme>tools</theme>
+        </system>
+</systemList>
+EOF
+  fi
+
   ### Compatibility links for ports
   ln -s /storage/roms ${INSTALL}/roms
 

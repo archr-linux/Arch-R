@@ -27,11 +27,18 @@ then
 fi
 
 ### Remove and link es configs so they are managed with OS updates.
-for es_cfg in es_features.cfg es_systems.cfg
+for es_cfg in es_features.cfg
 do
   mv /storage/.config/emulationstation/${es_cfg} /storage/.config/emulationstation/last_${es_cfg} >/dev/null 2>&1
   ln -s /usr/config/emulationstation/${es_cfg} /storage/.config/emulationstation/${es_cfg}  >/dev/null 2>&1
 done
+
+### The systems catalog is /usr/share/archr/systems.cfg (user override:
+### /storage/.config/archr/systems.cfg). Drop the old per-user link to it.
+if [ -L /storage/.config/emulationstation/es_systems.cfg ]
+then
+  rm -f /storage/.config/emulationstation/es_systems.cfg
+fi
 
 rsync -a --delete ${EXCLUDE} /usr/config/system/ /storage/.config/system/
 rsync -a --ignore-existing /usr/config/game /storage/.config/

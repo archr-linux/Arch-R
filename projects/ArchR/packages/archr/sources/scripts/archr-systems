@@ -868,12 +868,15 @@ def checkBios(systems, prefix, filterROMs):
     systemDict = {}
     emuDict = {}
     systemName = ""
-    configFile = "/storage/.config/emulationstation/es_systems.cfg"
+    # Same order as the launcher: user override, then the packaged catalog.
+    configFile = "/usr/share/archr/systems.cfg"
+    if isfile("/storage/.config/archr/systems.cfg"):
+        configFile = "/storage/.config/archr/systems.cfg"
     configData = elementTree.parse(configFile)
     configRoot = configData.getroot()
 
     if filterROMs:
-        # Load systems & emulators from es_systems.cfg
+        # Load systems & emulators from the systems catalog
         # System full name stored but not currently used, may be useful for the readme function.
         for activeSystem in configRoot:
             for systemTag in activeSystem:
