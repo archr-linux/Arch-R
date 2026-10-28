@@ -466,7 +466,8 @@ function set_cheevos() {
 }
 
 # runemu.sh exports NETPLAY_SESSION_* for a session started with explicit
-# flags (--connect IP, --port N, --nick NAME, --spectate). Session values
+# flags (--connect IP, --port N, --nick NAME, --spectate, --mitm-session ID;
+# the relay session only goes on the RetroArch command line). Session values
 # win; the saved global.netplay.* keys are the fallback for callers that
 # pass no address. A session mode enables netplay for this run even when
 # the saved netplay switch is off.
@@ -614,12 +615,12 @@ tgbdual_audio_output = "Game Boy #${PLAYER}"
 EOF
                             add_setting "none" "netplay_mode" "true"
                             add_setting "none" "netplay_client_swap_input" "true"
-                            echo -n " --connect ${NETPLAY_HOST_IP}${NETPLAY_PORT:+ --port ${NETPLAY_PORT}}"
+                            echo -n " --connect ${NETPLAY_HOST_IP}${NETPLAY_PORT:+ --port ${NETPLAY_PORT}}${NETPLAY_SESSION_MITM:+ --mitm-session=${NETPLAY_SESSION_MITM}}"
                         ;;
                         *)
                             add_setting "none" "netplay_mode" "true"
                             add_setting "none" "netplay_client_swap_input" "true"
-                            echo -n " --connect ${NETPLAY_HOST_IP}${NETPLAY_PORT:+ --port ${NETPLAY_PORT}}"
+                            echo -n " --connect ${NETPLAY_HOST_IP}${NETPLAY_PORT:+ --port ${NETPLAY_PORT}}${NETPLAY_SESSION_MITM:+ --mitm-session=${NETPLAY_SESSION_MITM}}"
                         ;;
                     esac
                 fi
