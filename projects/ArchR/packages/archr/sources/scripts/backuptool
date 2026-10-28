@@ -17,7 +17,7 @@
 
 usage() {
     echo "Usage: ${0} {backup|restore} [--with-wifi]"
-    echo "  --with-wifi  Include saved iwd Wi-Fi credentials in backup or restore."
+    echo "  --with-wifi  Include iwd profiles (backup/restore) and wifi.key (backup)."
     echo "               Backups are unencrypted and stored on the ROMs share."
 }
 
@@ -83,6 +83,9 @@ case "${1}" in
         unzip -o "${BACKUPFILE}" -d / "${EXCLUDES[@]}"
     ;;
     "backup")
+        WORKDIR=$(mktemp -d) || exit 1
+        trap 'rm -rf "${WORKDIR}"' EXIT
+        trap 'exit 1' HUP INT TERM
         if [ -f "${BACKUPFILE}" ]
         then
             TODAY=`date +%y-%m-%d_%H_%M_%S`
@@ -90,8 +93,18 @@ case "${1}" in
             mv "${BACKUPFILE}" "${BACKUPFOLDER}/${ARCHIVEFILENAME}"
         fi
         [ -f "${BACKUPFILE}" ] && rm "${BACKUPFILE}"
-        zip -9 -r "${BACKUPFILE}" \
-        "${COMPRESSLOCATIONS[@]}" "${EXCLUDES[@]}"
+        zip -9 -r "${WORKDIR}/backup.zip" \
+        "${COMPRESSLOCATIONS[@]}" "${EXCLUDES[@]}" || exit $?
+        SYSTEM_CFG="storage/.config/system/configs/system.cfg"
+        if [ "${2}" != "--with-wifi" ] && \
+           unzip -Z1 "${WORKDIR}/backup.zip" | grep -qxF "${SYSTEM_CFG}"
+        then
+            mkdir -p "${WORKDIR}/${SYSTEM_CFG%/*}" || exit 1
+            grep -v '^wifi\.key=' "/${SYSTEM_CFG}" > "${WORKDIR}/${SYSTEM_CFG}"
+            [ "$?" -le 1 ] || exit 1
+            (cd "${WORKDIR}" && zip -9 backup.zip "${SYSTEM_CFG}") || exit $?
+        fi
+        mv "${WORKDIR}/backup.zip" "${BACKUPFILE}"
     ;;
     *)
         usage >&2
