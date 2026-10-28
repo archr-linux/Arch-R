@@ -111,26 +111,48 @@ SCRIPT_NAME=$(basename "$0")
 GAMBATTE_OPT="/storage/.config/retroarch/config/Gambatte/Gambatte.opt"
 GAMBATTE_OPT_SAVED="/tmp/.runemu-gambatte.opt"
 GAMBATTE_OPT_ABSENT="/tmp/.runemu-gambatte.absent"
-rm -f "${GAMBATTE_OPT_SAVED}" "${GAMBATTE_OPT_ABSENT}"
+# Set only by the run that completed the backup; only that run restores.
+GAMBATTE_RESTORE_ARMED=0
 
-### Put back core options that a netplay session changed for this run only.
+### Save Gambatte.opt before a netplay session writes its address into it.
+### The copy is made under a temporary name and renamed, so a recovery copy
+### only ever exists complete. A copy left by an earlier run whose restore
+### failed is never overwritten or deleted: this session is refused.
+function save_session_core_options() {
+        local tmp="${GAMBATTE_OPT_SAVED}.$$"
+        if [ -e "${GAMBATTE_OPT_SAVED}" ] || [ -e "${GAMBATTE_OPT_ABSENT}" ]; then
+                echo "runemu.sh: unrestored ${GAMBATTE_OPT} copy in /tmp, restore it first" >&2
+                return 1
+        fi
+        if [ -e "${GAMBATTE_OPT}" ]; then
+                if ! { cp -f "${GAMBATTE_OPT}" "${tmp}" && mv -f "${tmp}" "${GAMBATTE_OPT_SAVED}"; }; then
+                        rm -f "${tmp}"
+                        echo "runemu.sh: could not save ${GAMBATTE_OPT}" >&2
+                        return 1
+                fi
+        else
+                : >"${GAMBATTE_OPT_ABSENT}" || return 1
+        fi
+        GAMBATTE_RESTORE_ARMED=1
+}
+
+### Put back the options saved above; non-zero when that fails (the
+### recovery copy is then kept).
 function restore_session_core_options() {
+        [ "${GAMBATTE_RESTORE_ARMED}" = 1 ] || return 0
+        GAMBATTE_RESTORE_ARMED=0
         if [ -e "${GAMBATTE_OPT_SAVED}" ]; then
-                cp -f "${GAMBATTE_OPT_SAVED}" "${GAMBATTE_OPT}" && rm -f "${GAMBATTE_OPT_SAVED}" ||
+                if cp -f "${GAMBATTE_OPT_SAVED}" "${GAMBATTE_OPT}" && cmp -s "${GAMBATTE_OPT_SAVED}" "${GAMBATTE_OPT}"; then
+                        rm -f "${GAMBATTE_OPT_SAVED}"
+                else
                         echo "runemu.sh: could not restore ${GAMBATTE_OPT}, copy kept in ${GAMBATTE_OPT_SAVED}" >&2
+                        return 1
+                fi
         elif [ -e "${GAMBATTE_OPT_ABSENT}" ]; then
-                rm -f "${GAMBATTE_OPT}" "${GAMBATTE_OPT_ABSENT}"
+                rm -f "${GAMBATTE_OPT}" && rm -f "${GAMBATTE_OPT_ABSENT}" || return 1
         fi
 }
 
-### Export Game Guide Path
-GAME_GUIDE_PATH_CHECK="${1%.*}.txt"
-if [ ! -f "${GAME_GUIDE_PATH_CHECK}" ]; then
-  GAME_GUIDE_PATH_CHECK="No Game Guide Found"
-fi
-  /usr/bin/game-guides-tool "${1}"
-
-### Function Library
 function log() {
         if [ ${LOG} == true ]
         then
@@ -176,7 +198,8 @@ EOF
 
 function quit() {
         ${VERBOSE} && log $0 "Cleaning up and exiting"
-        restore_session_core_options
+        local rc=$1
+        restore_session_core_options || [ "${rc}" != 0 ] || rc=1
         bluetooth enable
         resume_background_services
         restore_ksm
@@ -196,7 +219,7 @@ function quit() {
                         ondemand
                         ;;
         esac
-        exit $1
+        exit ${rc}
 }
 
 # KSM (Kernel Same-page Merging) compares page contents across processes
@@ -338,14 +361,7 @@ case ${EMULATOR} in
     # options. When they come from this session, keep the previous file and
     # put it back after the game (see restore_session_core_options).
     if [ "${CORE}" = "gambatte" ] && { [ -n "${NETPLAY_SESSION_HOST}" ] || [ -n "${NETPLAY_SESSION_PORT}" ]; }; then
-      if [ -e "${GAMBATTE_OPT}" ]; then
-        cp -f "${GAMBATTE_OPT}" "${GAMBATTE_OPT_SAVED}" || {
-          echo "runemu.sh: could not save ${GAMBATTE_OPT}" >&2
-          quit 1
-        }
-      else
-        : >"${GAMBATTE_OPT_ABSENT}"
-      fi
+      save_session_core_options || quit 1
     fi
 
     ### Set set_kill to kill the appropriate retroarch
