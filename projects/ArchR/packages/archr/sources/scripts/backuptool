@@ -71,12 +71,17 @@ else
 fi
 
 # Also exclude profiles when a custom location contains their parent directory.
-EXCLUDES=(-x 'storage/.cache/iwd' 'storage/.cache/iwd/*' 'var/lib/iwd' 'var/lib/iwd/*')
+EXCLUDES=('storage/.cache/iwd' 'storage/.cache/iwd/*' 'var/lib/iwd' 'var/lib/iwd/*')
 if [ "${2}" = "--with-wifi" ]
 then
     COMPRESSLOCATIONS+=(/storage/.cache/iwd/*)
     EXCLUDES=()
 fi
+# System-managed symlinks are recreated by the OS, and BusyBox unzip stops
+# at any entry whose destination is a symlink.
+mapfile -t LINKS < <(find "${COMPRESSLOCATIONS[@]}" -type l 2>/dev/null | sed 's|^/||')
+EXCLUDES+=("${LINKS[@]}")
+[ "${#EXCLUDES[@]}" -eq 0 ] || EXCLUDES=(-x "${EXCLUDES[@]}")
 
 SYSTEM_CFG="storage/.config/system/configs/system.cfg"
 case "${1}" in
