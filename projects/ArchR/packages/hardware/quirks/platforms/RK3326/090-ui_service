@@ -5,6 +5,6 @@
 
 ### Set the default device configuration
 cat <<EOF >/storage/.config/profile.d/090-ui_service
-UI_SERVICE="sway.service essway.service"
+UI_SERVICE="sway.service archr-launcher-session.service"
 MALI_WAYLAND_AFBC=0
 EOF

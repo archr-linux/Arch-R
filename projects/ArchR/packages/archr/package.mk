@@ -19,7 +19,8 @@ PKG_VERSION="$(date +%Y%m%d)"
 PKG_LICENSE="GPLv2"
 PKG_SITE=""
 PKG_URL=""
-PKG_DEPENDS_TARGET="toolchain autostart"
+# drm_tool: 055-hdmi-check and paneladj (it used to come with emulationstation).
+PKG_DEPENDS_TARGET="toolchain autostart drm_tool"
 PKG_LONGDESC="Arch R Meta Package"
 PKG_TOOLCHAIN="make"
 

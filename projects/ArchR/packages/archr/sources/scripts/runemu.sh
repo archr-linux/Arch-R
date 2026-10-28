@@ -108,7 +108,7 @@ function quit() {
         bluetooth enable
         resume_background_services
         restore_ksm
-        set_kill set "emulationstation"
+        set_kill set "archr-launcher"
         clear_screen
         # Restore CPU governor to user pref (or ondemand fallback). Gameplay
         # switches to the performance governor, so without the fallback the

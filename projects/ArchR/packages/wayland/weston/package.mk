@@ -3,6 +3,7 @@
 
 PKG_NAME="weston"
 PKG_VERSION="14.0.2"
+PKG_REV="2"
 
 PKG_LICENSE="MIT"
 PKG_SITE="https://wayland.freedesktop.org/"
@@ -67,16 +68,5 @@ post_makeinstall_target() {
   do
     sed -i -e "s|@WESTONFONTSIZE@|${WESTONFONTSIZE}|g" ${INSTALL}/usr/share/weston/${configfile}
   done
-
-  if [ "${EMULATION_DEVICE}" = "yes" ] && \
-     [ ! "${BASE_ONLY}" == true ]
-  then
-    cat <<EOF >>${INSTALL}/usr/share/weston/weston.ini
-
-[launcher]
-path=/usr/bin/start_es.sh
-icon=/usr/config/emulationstation/resources/window_icon_24.png
-EOF
-  fi
 
 }
