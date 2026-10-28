@@ -11,7 +11,9 @@ CHRG_OFF. The battery status then reads "Not charging" while the pack
 is charging, and the UI never shows it.
 
 When the RK817 charger is off and unplugged but the averaged gauge
-current is at least 10 mA into the pack, report Charging. The current
+current is at least 10 mA into the pack, report Charging. Poll the gauge every
+2 seconds instead of 8 so plugging and unplugging the charger shows up
+promptly. The current
 tapers well below 100 mA in the constant-voltage phase, while running
 on battery the gauge always reads a clearly negative current.
 
@@ -47,3 +49,13 @@ diff --color -ru a/drivers/power/supply/rk817_charger.c b/drivers/power/supply/r
  			break;
  		/*
  		 * Dead charge is documented, but not explained. I never
+@@ -1132,7 +1145,7 @@
+ 	rk817_read_props(charger);
+ 	rk817_bat_ocv_recalibrate(charger);
+ 
+-	/* Run every 8 seconds like the BSP driver did. */
+-	queue_delayed_work(system_wq, &charger->work, msecs_to_jiffies(8000));
++	/* Every 2 seconds, so charger plug/unplug shows up promptly. */
++	queue_delayed_work(system_wq, &charger->work, msecs_to_jiffies(2000));
+ }
+ 
