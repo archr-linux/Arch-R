@@ -284,11 +284,47 @@ if [ "$command" == "tz" ];then
     then
 	cat /storage/.config/system/configs/tz
     else
-	if test -f "/usr/share/zoneinfo/${mode}"
+	# Only a real zone file, and only paths inside zoneinfo.
+	case "${mode}" in
+	    /*|*..*) echo "archr-config: invalid timezone ${mode}" >&2; exit 1 ;;
+	esac
+	if ! test -f "/usr/share/zoneinfo/${mode}"
 	then
-	    echo "TIMEZONE=${mode}" > /storage/.cache/timezone
-        systemctl restart tz-data.service
+	    echo "archr-config: unknown timezone ${mode}" >&2
+	    exit 1
 	fi
+	# tz-data links /var/run/localtime from the cache file. The new file
+	# is staged next to it and renamed in; when any step fails or the
+	# link does not follow, the backup is renamed back (or the file
+	# removed if there was none) so the next boot keeps the old zone.
+	tzCache=/storage/.cache/timezone
+	tzNew="${tzCache}.new.$$"
+	tzOld="${tzCache}.old.$$"
+	if test -e "${tzCache}" && ! cp -f "${tzCache}" "${tzOld}"
+	then
+	    rm -f "${tzOld}"
+	    echo "archr-config: could not back up ${tzCache}, nothing changed" >&2
+	    exit 1
+	fi
+	if echo "TIMEZONE=${mode}" > "${tzNew}" &&
+	    mv -f "${tzNew}" "${tzCache}" &&
+	    systemctl restart tz-data.service &&
+	    test "$(readlink /var/run/localtime)" = "/usr/share/zoneinfo/${mode}"
+	then
+	    rm -f "${tzOld}"
+	    exit 0
+	fi
+	echo "archr-config: could not apply timezone ${mode}" >&2
+	rm -f "${tzNew}"
+	if test -e "${tzOld}"
+	then
+	    mv -f "${tzOld}" "${tzCache}"
+	else
+	    rm -f "${tzCache}"
+	fi || echo "archr-config: could not restore ${tzCache}" >&2
+	systemctl restart tz-data.service ||
+	    echo "archr-config: tz-data.service did not restart" >&2
+	exit 1
     fi
     exit $?
 fi

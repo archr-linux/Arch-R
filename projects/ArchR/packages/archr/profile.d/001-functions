@@ -101,20 +101,46 @@ function release_lock() {
   trap - INT TERM EXIT
 }
 
-function del_setting() {
+# Replace J_CONF with the output of "$@" under one lock. The new content
+# goes to a temp file in J_CONF's directory (same filesystem, same mode)
+# and is renamed over J_CONF only when every write succeeded, so a failed
+# update leaves the old file intact. Returns the update status.
+function rewrite_config() {
+  local tmp rc=1
   wait_lock
-  if [[ "${1}" =~ ^[[:alnum:]] ]]
+  if tmp=$(mktemp "${J_CONF}.XXXXXX" 2>/dev/null)
   then
-    sed -i "/^${1}=/d" "${J_CONF}"
+    if "$@" >"${tmp}" && chmod --reference="${J_CONF}" "${tmp}" && mv -f "${tmp}" "${J_CONF}"
+    then
+      rc=0
+    else
+      rm -f "${tmp}"
+    fi
   fi
   release_lock
+  return ${rc}
+}
+
+# J_CONF without key $1, plus "$1=$2" when a value is given.
+function config_with() {
+  grep -v "^${1}=" "${J_CONF}"
+  [ $? -le 1 ] || return 1
+  [ $# -lt 2 ] || echo "${1}=${2}"
+}
+
+function config_sorted() {
+  grep '^[a-z0-9]' "${J_CONF}" | sort
+  local st=("${PIPESTATUS[@]}")
+  [ "${st[0]}" -le 1 ] && [ "${st[1]}" = 0 ]
+}
+
+function del_setting() {
+  [[ "${1}" =~ ^[[:alnum:]] ]] || return 1
+  rewrite_config config_with "${1}"
 }
 
 function sort_settings() {
-  wait_lock
-  cat "${J_CONF}" | grep ^[a-z0-9] | sort >"${J_CONF}.tmp"
-  mv "${J_CONF}.tmp" "${J_CONF}"
-  release_lock
+  rewrite_config config_sorted
 }
 
 function set_kill() {
@@ -143,15 +169,12 @@ function set_setting() {
     cp -f /usr/config/system/configs/system.cfg /storage/.config/system/configs/system.cfg
   fi
 
-  if [[ "${1}" =~ ^[[:alnum:]] ]]
+  [[ "${1}" =~ ^[[:alnum:]] ]] || return 1
+  if [ "${2}" = "default" ]
   then
-    del_setting "${1}"
-    if [ ! "${2}" = "default" ]
-    then
-      wait_lock
-      echo "${1}=${2}" >> "${J_CONF}"
-      release_lock
-    fi
+    rewrite_config config_with "${1}"
+  else
+    rewrite_config config_with "${1}" "${2}"
   fi
 }
 

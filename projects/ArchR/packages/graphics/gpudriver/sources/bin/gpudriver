@@ -17,6 +17,69 @@ get_current_driver() {
 
 GPUDRIVER_LOG="/storage/.config/gpudriver.log"
 
+# GPU overlay this board needs for the Mesa driver, filled in by
+# package.mk; empty when the base DTS already carries the GPU node.
+GPU_OVERLAY="@DTB_OVERLAY_GPU@"
+
+# Persist the driver and force it onto disk: the caller may reboot right
+# away, and the next boot must not still read the old value from SD.
+persist_driver() {
+  set_setting ${GPU_DRIVER_SETTING_KEY} "$1" &&
+    [ "$(get_setting ${GPU_DRIVER_SETTING_KEY})" = "$1" ] &&
+    sync
+}
+
+# Put key $1 back to value $2, or remove it when $2 is empty.
+restore_key() {
+  if [ -n "$2" ]; then
+    set_setting "$1" "$2"
+  else
+    del_setting "$1"
+  fi || log_event "could not restore $1=$2"
+}
+
+# Select the driver for the next boot. The overlay goes first and is read
+# back, so gpu.driver never points at a driver the board cannot bring up.
+# This transaction owns the rollback: it snapshots extlinux.conf and both
+# keys up front and, on any failure, puts them back verbatim (never by
+# re-running dtb_overlay, which rebuilds the file from settings).
+select_driver() {
+  local want=None prev_driver prev_overlay snap
+  local extlinux=/flash/extlinux/extlinux.conf
+  prev_driver=$(get_setting ${GPU_DRIVER_SETTING_KEY})
+  if [ -z "${GPU_OVERLAY}" ]; then
+    persist_driver "$1" && return 0
+    restore_key ${GPU_DRIVER_SETTING_KEY} "${prev_driver}"
+    return 1
+  fi
+  [ "$1" = "panfrost" ] && want="${GPU_OVERLAY}"
+  prev_overlay=$(get_setting system.driver-gpu)
+  if ! snap=$(mktemp) || ! cp -f "${extlinux}" "${snap}"; then
+    rm -f "${snap}"
+    log_event "could not snapshot ${extlinux}, nothing changed"
+    return 1
+  fi
+  if /usr/bin/dtb_overlay set driver-gpu "${want}" >/dev/null &&
+     [ "$(/usr/bin/dtb_overlay get driver-gpu)" = "${want}" ] &&
+     persist_driver "$1"; then
+    rm -f "${snap}"
+    return 0
+  fi
+  restore_key ${GPU_DRIVER_SETTING_KEY} "${prev_driver}"
+  restore_key system.driver-gpu "${prev_overlay}"
+  if ! cmp -s "${snap}" "${extlinux}"; then
+    mount -o remount,rw /flash
+    if ! { cp -f "${snap}" "${extlinux}" && cmp -s "${snap}" "${extlinux}"; }; then
+      log_event "could not restore ${extlinux}, previous copy kept in ${snap}"
+      mount -o remount,ro /flash || :
+      return 1
+    fi
+    mount -o remount,ro /flash || :
+  fi
+  rm -f "${snap}"
+  return 1
+}
+
 # Append a one-line tagged entry to the persistent log. We keep this on
 # /storage so it survives across reboots — the most common diagnostic
 # need is "I picked panfrost and the system came up in libmali", which
@@ -305,23 +368,12 @@ case "$1" in
     rm -f "${SENTINEL}" 2>/dev/null
     sync 2>/dev/null
     ;;
-  "libmali")
-    set_setting ${GPU_DRIVER_SETTING_KEY} $1
-    # Force the setting onto disk before we return control to the UI,
-    # which may immediately trigger a reboot.
-    sync
-    @DTB_OVERLAY_UNLOAD@
-    ;;
-  "panfrost")
-    set_setting ${GPU_DRIVER_SETTING_KEY} $1
-    # Force the setting onto disk before we return control to the UI,
-    # which may immediately trigger a reboot ("Reboot now" in the popup
-    # is dispatched synchronously; ext4 might still have the new value
-    # in the page cache, not on the SD). Without this sync the next
-    # boot could still read gpu.driver=libmali and the user perceives
-    # the switch as silently broken.
-    sync
-    @DTB_OVERLAY_LOAD@
+  "libmali"|"panfrost")
+    if ! select_driver "$1"; then
+      log_event "select $1 FAILED, gpu.driver left as $(get_setting ${GPU_DRIVER_SETTING_KEY})"
+      echo "gpudriver: could not select $1" >&2
+      exit 1
+    fi
     ;;
   "")
     get_current_driver

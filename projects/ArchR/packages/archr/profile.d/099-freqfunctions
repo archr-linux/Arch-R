@@ -45,12 +45,20 @@ set_online_threads() {
   done
 }
 
+# Returns non-zero when no policy took the governor or the kernel rejected
+# a write (unknown governor, read-only node), so callers can report it.
 set_cpu_gov() {
+  local applied=0 failed=0
   for POLICY in $(ls /sys/devices/system/cpu/cpufreq 2>/dev/null | grep policy[0-9]); do
     if [ -e "/sys/devices/system/cpu/cpufreq/${POLICY}/scaling_governor" ]; then
-      echo $1 >/sys/devices/system/cpu/cpufreq/${POLICY}/scaling_governor 2>/dev/null
+      if echo $1 >/sys/devices/system/cpu/cpufreq/${POLICY}/scaling_governor 2>/dev/null; then
+        applied=1
+      else
+        failed=1
+      fi
     fi
   done
+  [ ${applied} = 1 ] && [ ${failed} = 0 ]
 }
 
 # Toggle the CPU turbo OPP. On RK3326 the 1512 MHz OPP is marked
@@ -71,8 +79,10 @@ set_cpu_boost() {
 # scaling_available_frequencies, even after cpufreq/boost=1. Combine
 # both so "highest" really hits 1512 MHz on RK3326 when the user's
 # turbo switch is on, and naturally falls back to 1416 when off (boost
-# file then reports an empty list).
+# file then reports an empty list). Returns non-zero when no policy was
+# pinned or a write failed.
 set_cpu_max_freq() {
+  local applied=0 failed=0
   for POLICY in /sys/devices/system/cpu/cpufreq/policy[0-9]*; do
     [ -e "${POLICY}/scaling_max_freq" ] || continue
     [ -e "${POLICY}/scaling_available_frequencies" ] || continue
@@ -90,8 +100,13 @@ set_cpu_max_freq() {
         ;;
     esac
 
-    [ -n "${target}" ] && echo "${target}" >"${POLICY}/scaling_max_freq" 2>/dev/null
+    if [ -n "${target}" ] && echo "${target}" >"${POLICY}/scaling_max_freq" 2>/dev/null; then
+      applied=1
+    else
+      failed=1
+    fi
   done
+  [ ${applied} = 1 ] && [ ${failed} = 0 ]
 }
 
 set_cpu_min_freq() {
@@ -182,42 +197,53 @@ restore_cpu_boost() {
   esac
 }
 
+# The governor entry points below return the CPU governor status; the
+# boost, max_freq, DMC and tuning steps are best effort (`|| :`), also
+# for callers running under set -e.
 performance() {
+  local rc=0
   # Honor the user's "Enable CPU Overclock" switch from ES even during
   # gameplay: gameplay shouldn't silently enable turbo behind the user's
   # back. If they want the 1512 MHz OPP, they toggle it on; if they
   # prefer to stay at 1416 MHz for thermals/battery, gameplay respects
   # that. set_cpu_max_freq highest then pins to the highest currently
   # available frequency (1512 if boost on, 1416 if off).
-  restore_cpu_boost
-  set_cpu_gov performance
-  set_cpu_max_freq highest
-  set_dmc_gov performance
+  restore_cpu_boost || :
+  set_cpu_gov performance || rc=1
+  set_cpu_max_freq highest || :
+  set_dmc_gov performance || :
+  return ${rc}
 }
 
 ondemand() {
-  restore_cpu_boost
-  set_cpu_gov ondemand
-  set_dmc_gov ondemand
+  local rc=0
+  restore_cpu_boost || :
+  set_cpu_gov ondemand || rc=1
+  set_dmc_gov ondemand || :
   # Tune ondemand: stay at high freq longer, reduce switching overhead
   for POLICY in $(ls /sys/devices/system/cpu/cpufreq 2>/dev/null | grep policy[0-9]); do
     local ONDEMAND="/sys/devices/system/cpu/cpufreq/${POLICY}/ondemand"
     if [ -d "${ONDEMAND}" ]; then
-      echo 85 > ${ONDEMAND}/up_threshold 2>/dev/null
-      echo 150 > ${ONDEMAND}/sampling_down_factor 2>/dev/null
+      echo 85 > ${ONDEMAND}/up_threshold 2>/dev/null || :
+      echo 150 > ${ONDEMAND}/sampling_down_factor 2>/dev/null || :
     fi
   done
+  return ${rc}
 }
 
 schedutil() {
-  restore_cpu_boost
-  set_cpu_gov schedutil
-  set_dmc_gov ondemand
+  local rc=0
+  restore_cpu_boost || :
+  set_cpu_gov schedutil || rc=1
+  set_dmc_gov ondemand || :
+  return ${rc}
 }
 
 powersave() {
-  set_cpu_gov powersave
-  set_dmc_gov powersave
+  local rc=0
+  set_cpu_gov powersave || rc=1
+  set_dmc_gov powersave || :
+  return ${rc}
 }
 
 get_gpu_performance_level() {
