@@ -17,7 +17,7 @@
 
 usage() {
     echo "Usage: ${0} {backup|restore} [--with-wifi]"
-    echo "  --with-wifi  Include iwd profiles (backup/restore) and wifi.key (backup)."
+    echo "  --with-wifi  Include saved Wi-Fi settings and iwd profiles (backup/restore)."
     echo "               Backups are unencrypted and stored on the ROMs share."
 }
 
@@ -78,9 +78,19 @@ then
     EXCLUDES=()
 fi
 
+SYSTEM_CFG="storage/.config/system/configs/system.cfg"
 case "${1}" in
     "restore")
-        unzip -o "${BACKUPFILE}" -d / "${EXCLUDES[@]}"
+        if [ "${2}" != "--with-wifi" ]
+        then
+            KEEP=$(grep '^wifi\.\(ssid\|key\)=' "/${SYSTEM_CFG}" 2>/dev/null)
+        fi
+        unzip -o "${BACKUPFILE}" -d / "${EXCLUDES[@]}" || exit $?
+        if [ "${2}" != "--with-wifi" ] && [ -f "/${SYSTEM_CFG}" ]
+        then
+            sed -i '/^wifi\.\(ssid\|key\)=/d' "/${SYSTEM_CFG}" || exit 1
+            [ -z "${KEEP}" ] || printf '%s\n' "${KEEP}" >> "/${SYSTEM_CFG}"
+        fi
     ;;
     "backup")
         WORKDIR=$(mktemp -d) || exit 1
@@ -95,12 +105,11 @@ case "${1}" in
         [ -f "${BACKUPFILE}" ] && rm "${BACKUPFILE}"
         zip -9 -r "${WORKDIR}/backup.zip" \
         "${COMPRESSLOCATIONS[@]}" "${EXCLUDES[@]}" || exit $?
-        SYSTEM_CFG="storage/.config/system/configs/system.cfg"
         if [ "${2}" != "--with-wifi" ] && \
            unzip -Z1 "${WORKDIR}/backup.zip" | grep -qxF "${SYSTEM_CFG}"
         then
             mkdir -p "${WORKDIR}/${SYSTEM_CFG%/*}" || exit 1
-            grep -v '^wifi\.key=' "/${SYSTEM_CFG}" > "${WORKDIR}/${SYSTEM_CFG}"
+            grep -v '^wifi\.\(ssid\|key\)=' "/${SYSTEM_CFG}" > "${WORKDIR}/${SYSTEM_CFG}"
             [ "$?" -le 1 ] || exit 1
             (cd "${WORKDIR}" && zip -9 backup.zip "${SYSTEM_CFG}") || exit $?
         fi
