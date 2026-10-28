@@ -40,6 +40,8 @@ ARCH="aarch64"
 mkdir -p "${OUT_DIR}"
 echo "gen-pacman-repo: build=${BUILD_DIR} out=${OUT_DIR} channel=${CHANNEL} signer=${SIGNER:-none}"
 
+. "$(dirname "$(realpath "$0")")/pkg-identity"
+
 # Per-package metadata. Today the package.mk format does not carry a
 # clean semver, so we synthesize: PKG_VERSION if numeric, else the
 # build date. Real PKGBUILDs replace this when Arch-ification 2.3 lands.
@@ -52,91 +54,9 @@ build_one_pkg() {
     # Skip anything that is not an actually built package tree.
     [ -d "${src}" ] || return 0
 
-    # The install_pkg dir name is "<pkgname>-<version_or_githash>". Strip
-    # the trailing suffix to recover the package name; the suffix is
-    # either a 40-char git hash or starts with a digit (semver).
-    local name version
-    name="$(echo "${dirname}" | sed -E 's/-[0-9a-f]{40}$//; s/-[0-9].*$//')"
-
-    # Try to recover the exact PKG_VERSION from a matching package.mk
-    # under either the ArchR overlay or the top-level packages tree.
-    # Search any depth; multiple categories share the same package name
-    # in some cases, take the ArchR overlay first.
-    local pkgmk=""
-    pkgmk="$(find projects/ArchR/packages -mindepth 2 -maxdepth 6 \
-                -path "*/${name}/package.mk" -print -quit 2>/dev/null)"
-    if [ -z "${pkgmk}" ]; then
-        pkgmk="$(find packages -mindepth 2 -maxdepth 6 \
-                    -path "*/${name}/package.mk" -print -quit 2>/dev/null)"
-    fi
-
-    version=""
-    if [ -n "${pkgmk}" ]; then
-        version="$(awk -F'"' '/^PKG_VERSION/ {print $2; exit}' "${pkgmk}")"
-    fi
-    # Some package.mk files set PKG_VERSION dynamically, e.g.:
-    #   PKG_VERSION="$(get_pkg_version gstreamer)"
-    # awk pulls the unresolved shell expansion as a string, which then
-    # turns into garbage like "..get_pkg_version.gstreamer." after the
-    # charset filter. Detect any $( ... ), :- or ${ and bail to the
-    # dirname fallback below, which holds the version the build system
-    # actually substituted.
-    case "${version}" in
-        *'$('* | *'${'* ) version="" ;;
-    esac
-    # Fallback: pull the suffix back out of the dirname.
-    if [ -z "${version}" ]; then
-        version="${dirname#${name}-}"
-    fi
-    version="${version:-$(date +%Y%m%d)}"
-
-    # pacman version must match [a-zA-Z0-9.+_]+. Long hashes are fine
-    # by this charset, but '/' or '~' would break: tr the rest. Use
-    # printf instead of echo to avoid the trailing newline being
-    # turned into a stray '.' by tr -c.
-    version="$(printf '%s' "${version}" | tr -c 'a-zA-Z0-9.+_' '.')"
-
-    # The name above is derived from the install_pkg directory, which
-    # goes wrong when PKG_VERSION is empty or starts with a letter
-    # ("autostart-", "mako-notify-v1.0"); devices already carry those
-    # names, so they stay. Their package.mk is still found through the
-    # name the build recorded, so PKG_REV and PKG_REPLACES work for them.
-    local relmk="${pkgmk}"
-    if [ -z "${relmk}" ] && [ -f "${src}/.archr-package" ]; then
-        local real
-        real="$(sed -n 's/^INFO_PKG_NAME="\(.*\)"$/\1/p' "${src}/.archr-package")"
-        if [ -n "${real}" ]; then
-            relmk="$(find projects/ArchR/packages packages -mindepth 2 -maxdepth 6 \
-                        -path "*/${real}/package.mk" -print -quit 2>/dev/null)"
-        fi
-    fi
-
-    # pkgrel comes from the package's PKG_REV (the standard knob for "same
-    # upstream version, new package build", e.g. a changed local overlay
-    # like a joypad autoconfig). Hardcoding 1 here meant any local-only
-    # change never produced a newer package, so pacman never saw it as an
-    # update. Default to 1 when PKG_REV is unset or dynamic.
-    local pkgrel=1
-    if [ -n "${relmk}" ]; then
-        local rev
-        rev="$(awk -F'"' '/^PKG_REV/ {print $2; exit}' "${relmk}")"
-        case "${rev}" in
-            ''|*'$('* | *'${'* ) : ;;
-            *) pkgrel="${rev}" ;;
-        esac
-    fi
+    local name version pkgrel replaces replaced pkgmk relmk
+    pkg_identity "${src}"
     local outfile="${OUT_DIR}/${name}-${version}-${pkgrel}-${ARCH}.pkg.tar.zst"
-
-    # PKG_REPLACES lists packages this one takes over (e.g. a dropped
-    # package whose job it does). Without it a device keeps the old
-    # package forever, since it leaves the repo but stays installed, and
-    # files that moved to another package then conflict on -Syu. pacman
-    # -Syu offers the replacement (accepted by --noconfirm) and removes
-    # the old package in the same transaction.
-    local replaces="" replaced
-    if [ -n "${relmk}" ]; then
-        replaces="$(awk -F'"' '/^PKG_REPLACES=/ {print $2; exit}' "${relmk}")"
-    fi
 
     # .PKGINFO sidecar that pacman reads on install. pkgbase is
     # required by repo-add (pacman 7+); xdata pkgtype=pkg matches
@@ -173,24 +93,8 @@ EOF
             # /.image on every kernel update for nothing.
             find . -mindepth 1 -maxdepth 1 -not -name '.PKGINFO' -not -name '.image' -printf '%P\n'
         } > "${filelist}"
-        # The depmod-generated indexes are stale by construction inside a
-        # package (the kernel builds them before any out-of-tree module
-        # exists); shipping them wiped the joypad and WiFi drivers from
-        # modules.dep on every linux update. The device rebuilds them via
-        # the archr-depmod hook; modules.builtin*/order stay (kernel-owned
-        # depmod inputs).
         tar --zstd -cf "${outfile}" --owner=0 --group=0 \
-            --exclude='*/modules/*/modules.dep' \
-            --exclude='*/modules/*/modules.dep.bin' \
-            --exclude='*/modules/*/modules.alias' \
-            --exclude='*/modules/*/modules.alias.bin' \
-            --exclude='*/modules/*/modules.symbols' \
-            --exclude='*/modules/*/modules.symbols.bin' \
-            --exclude='*/modules/*/modules.devname' \
-            --exclude='*/modules/*/modules.softdep' \
-            --exclude='*/modules/*/modules.weakdep' \
-            --exclude='*/modules/*/modules.builtin.bin' \
-            --exclude='*/modules/*/modules.builtin.alias.bin' \
+            "${PKG_ID_EXCLUDES[@]/#/--exclude=}" \
             -T "${filelist}"
         rm -f "${filelist}"
     )

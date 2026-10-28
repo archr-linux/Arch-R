@@ -41,11 +41,12 @@ network_ok() {
 
 usage() {
     cat <<EOF
-Usage: ${0##*/} [check|update|info]
+Usage: ${0##*/} [check|update|info|seed]
 
   check     Sync repo metadata and report whether updates are available.
   update    Sync metadata and apply pending updates (pacman -Syu).
   info      Show current OS version, channel, and configured mirror.
+  seed      Record this image's packages in an empty pacman database.
 
 Channel is configured via system.cfg "updates.branch" (stable|next|dev).
 EOF
@@ -53,21 +54,36 @@ EOF
 
 # A freshly flashed image carries no pacman local db, so pacman has no
 # installed list to compare against and every check reports "no
-# updates". Seed it once from the repo (gen-pacman-repo publishes the
-# matching archr-localdb.tar.gz next to the packages).
+# updates". Seed it once from the db the image build recorded of its own
+# packages (/usr/share/archr/pacman-image-db.tar.gz). Never from the
+# repo: its seed lists the repo's newest versions, so a device seeded
+# after the repo moved looked current and skipped every update since its
+# image, migrations included. A db made for another build is refused.
+IMAGE_DB=/usr/share/archr/pacman-image-db.tar.gz
+PACMAN_DB=/var/lib/pacman
+OS_RELEASE=/etc/os-release
+
 seed_local_db() {
-    [ -n "$(pacman -Q 2>/dev/null | head -1)" ] && return 0
-    echo "Seeding package database (first update on this install)..."
-    mkdir -p /var/lib/pacman
-    if curl -fsSL -o /tmp/archr-localdb.tar.gz \
-        "https://github.com/archr-linux/archr-repo/releases/download/repo-${BRANCH}/archr-localdb.tar.gz"; then
-        tar -xzf /tmp/archr-localdb.tar.gz -C /var/lib/pacman
-        rm -f /tmp/archr-localdb.tar.gz
-        echo "Seeded $(pacman -Q 2>/dev/null | wc -l) package entries."
-    else
-        echo "Could not download the database seed. Check network."
+    [ -n "$(ls -A "${PACMAN_DB}/local" 2>/dev/null | grep -v '^ALPM_DB_VERSION$')" ] && return 0
+    local build tmp
+    build="$(sed -n 's/^BUILD_ID="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "${OS_RELEASE}")"
+    if [ ! -f "${IMAGE_DB}" ] || [ -z "${build}" ]; then
+        echo "No package database for this image; cannot seed. Reflash to update." >&2
         return 1
     fi
+    tmp="$(mktemp -d)" || return 1
+    if ! tar -xzf "${IMAGE_DB}" -C "${tmp}" ||
+       [ "$(cat "${tmp}/archr-image-build" 2>/dev/null)" != "${build}" ] ||
+       [ ! -d "${tmp}/local" ]; then
+        echo "The image package database does not match build ${build}; not seeding." >&2
+        rm -rf "${tmp}"
+        return 1
+    fi
+    echo "Seeding package database from this image (build ${build})..."
+    mkdir -p "${PACMAN_DB}/local" &&
+        cp -a "${tmp}/local/." "${PACMAN_DB}/local/" || { rm -rf "${tmp}"; return 1; }
+    rm -rf "${tmp}"
+    echo "Seeded $(ls -1 "${PACMAN_DB}/local" | grep -vc '^ALPM_DB_VERSION$') package entries."
 }
 
 cmd_check() {
@@ -99,6 +115,12 @@ cmd_info() {
     echo "Mirror:     https://github.com/archr-linux/archr-repo/releases/download/repo-${BRANCH}"
     echo "Pacman:     $(pacman --version | head -1 | awk '{print $3}')"
 }
+
+# Seeding needs no network (004-seed-pacmandb runs it at boot).
+if [ "${1:-}" = seed ]; then
+    seed_local_db
+    exit $?
+fi
 
 if ! network_ok; then
     echo "Network connection unavailable."
