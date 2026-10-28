@@ -42,7 +42,15 @@ if [ -z "${WIFI_DEV}" ] || [ ! -d "/sys/class/net/${WIFI_DEV}" ]; then
 fi
 
 SSID="${2:-$(get_setting wifi.ssid 2>/dev/null)}"
-PSK="${3:-$(get_setting wifi.key 2>/dev/null)}"
+# An omitted psk falls back to the saved key (boot runs a bare
+# "wifictl connect"); an explicitly empty one means an open network.
+if [ $# -ge 3 ]; then
+  PSK="${3}"
+  PSK_GIVEN=1
+else
+  PSK="$(get_setting wifi.key 2>/dev/null)"
+  PSK_GIVEN=0
+fi
 COUNTRY="${4:-$(get_setting wifi.country | tr -d '[:space:]' 2>/dev/null)}"
 
 if [ "${WIFI_TYPE}" = "1" ]; then
@@ -451,7 +459,13 @@ case "${1}" in
       create_adhoc >/dev/null 2>&1
     else
       destroy_adhoc >/dev/null 2>&1
-      connect_wifi
+      connect_wifi || exit $?
+      # Joined an open network on request: drop the saved key, or the
+      # boot reconnect would offer the old passphrase to this SSID.
+      if [ "${PSK_GIVEN}" = 1 ] && [ -z "${PSK}" ] && ! del_setting wifi.key; then
+        echo "wifictl: connected, but could not clear wifi.key" >&2
+        exit 1
+      fi
     fi
   ;;
   disconnect)
