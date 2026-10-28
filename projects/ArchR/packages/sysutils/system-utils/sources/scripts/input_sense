@@ -112,16 +112,14 @@ HOTKEY_B_PRESSED=false
 HOTKEY_C_PRESSED=false
 
 FUNCTION_HOTKEY_A_EVENT='*('${BTN_HOTKEY_A_MODIFIER}'), value *'
-FUNCTION_HOTKEY_B_EVENT='*('${BTN_HOTKEY_B_MODIFIER}'), value *'
-FUNCTION_HOTKEY_C_EVENT='*('${BTN_HOTKEY_C_MODIFIER}'), value *'
 
 INPUT_PLUMBER_CHECK=$(grep -l "InputPlumber Keyboard" /sys/class/input/event*/device/name | sed -E 's#.*/(event[0-9]+).*#/dev/input/\1#')
 if [[ -n "${INPUT_PLUMBER_CHECK}" ]]; then
   ${DEBUG} && log $0 "InputPlumber detected, fixing face buttons."
 fi
 
-# Physical button name -> pattern for its press. InputPlumber reports
-# north and west swapped.
+# Physical button name -> pattern for its press (or the supplied value).
+# InputPlumber reports north and west swapped.
 press_event() {
   local BTN="${1}"
   if [[ -n "${INPUT_PLUMBER_CHECK}" ]]; then
@@ -130,8 +128,11 @@ press_event() {
       BTN_WEST)  BTN=BTN_NORTH ;;
     esac
   fi
-  echo "*(${BTN}), value 1*"
+  echo "*(${BTN}), value ${2:-1*}"
 }
+
+FUNCTION_HOTKEY_B_EVENT=$(press_event "${BTN_HOTKEY_B_MODIFIER}" '*')
+FUNCTION_HOTKEY_C_EVENT=$(press_event "${BTN_HOTKEY_C_MODIFIER}" '*')
 
 HOTKEY_SCREENSHOT=$(hotkey_button hotkey.screenshot BTN_EAST)
 HOTKEY_SCREENSHOT_ENABLED=$(hotkey_enabled hotkey.screenshot)
