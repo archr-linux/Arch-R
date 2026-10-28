@@ -31,13 +31,11 @@ post_makeinstall_target() {
   case ${DEVICE} in
     RK3588)
       PAN="panthor"
-      DTB_OVERLAY_LOAD="\/usr\/bin\/dtb_overlay set driver-gpu driver-gpu-panthor.dtbo"
-      DTB_OVERLAY_UNLOAD="\/usr\/bin\/dtb_overlay set driver-gpu None"
+      DTB_OVERLAY_GPU="driver-gpu-panthor.dtbo"
     ;;
     S922X)
       PAN="panfrost"
-      DTB_OVERLAY_LOAD="\/usr\/bin\/dtb_overlay set driver-gpu driver-gpu-panfrost.dtbo"
-      DTB_OVERLAY_UNLOAD="\/usr\/bin\/dtb_overlay set driver-gpu None"
+      DTB_OVERLAY_GPU="driver-gpu-panfrost.dtbo"
     ;;
     *)
       # No DTB overlay needed: kernel base DTS already has the GPU node
@@ -46,17 +44,13 @@ post_makeinstall_target() {
       # requires loading/unloading the kernel module and swapping the
       # userspace GL library binds.
       PAN="panfrost"
-      DTB_OVERLAY_LOAD=""
-      DTB_OVERLAY_UNLOAD=""
+      DTB_OVERLAY_GPU=""
     ;;
   esac
 
   sed -e "s/@PAN@/${PAN}/g" \
       -i  "${GPUDRIVER_BIN}"
 
-  sed -e "s/@DTB_OVERLAY_LOAD@/${DTB_OVERLAY_LOAD}/g" \
-      -i  "${GPUDRIVER_BIN}"
-
-  sed -e "s/@DTB_OVERLAY_UNLOAD@/${DTB_OVERLAY_UNLOAD}/g" \
+  sed -e "s/@DTB_OVERLAY_GPU@/${DTB_OVERLAY_GPU}/g" \
       -i  "${GPUDRIVER_BIN}"
 }
