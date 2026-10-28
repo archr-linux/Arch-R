@@ -19,20 +19,25 @@ BACKUPFOLDER="/storage/roms/backup"
 BACKUPFILE="${BACKUPFOLDER}/${OS_NAME}_BACKUP.zip"
 mkdir -p ${BACKUPFOLDER}
 
+# Real paths, not the /storage/.emulationstation symlink: that link only
+# exists while EmulationStation is installed. WiFi is iwd, whose saved
+# networks (/var/lib/iwd) live in /storage/.cache/iwd.
+ES_DIR="/storage/.config/emulationstation"
+
 DEFAULT=(
     /storage/.config/fancontrol.conf
     /storage/.config/backuptool.conf
     /var/lib/bluetooth/*
-    /var/lib/connman*
+    /storage/.cache/iwd/*
     /storage/.config/system/configs/system.cfg
     /storage/.config/ppsspp/*
     /storage/.config/retroarch/*
     /storage/.config/moonlight/*
     /storage/.config/game/*
-    /storage/.emulationstation/es_*.cfg
-    /storage/.emulationstation/scripts/*
-    /storage/.emulationstation/themesettings/*
-    $(find /storage/.emulationstation/themes/* -type d -maxdepth 0 -not -path "*es-theme-art-book-next" -not -path "*system-theme")
+    ${ES_DIR}/es_*.cfg
+    ${ES_DIR}/scripts/*
+    ${ES_DIR}/themesettings/*
+    $(find ${ES_DIR}/themes/* -type d -maxdepth 0 -not -path "*es-theme-art-book-next" -not -path "*system-theme" 2>/dev/null)
 )
 
 if [ -e "/storage/.config/backuptool.conf" ]
