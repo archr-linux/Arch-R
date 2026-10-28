@@ -112,6 +112,17 @@ build_one_pkg() {
     fi
     local outfile="${OUT_DIR}/${name}-${version}-${pkgrel}-${ARCH}.pkg.tar.zst"
 
+    # PKG_REPLACES lists packages this one takes over (e.g. a dropped
+    # package whose job it does). Without it a device keeps the old
+    # package forever, since it leaves the repo but stays installed, and
+    # files that moved to another package then conflict on -Syu. pacman
+    # -Syu offers the replacement (accepted by --noconfirm) and removes
+    # the old package in the same transaction.
+    local replaces="" replaced
+    if [ -n "${pkgmk}" ]; then
+        replaces="$(awk -F'"' '/^PKG_REPLACES=/ {print $2; exit}' "${pkgmk}")"
+    fi
+
     # .PKGINFO sidecar that pacman reads on install. pkgbase is
     # required by repo-add (pacman 7+); xdata pkgtype=pkg matches
     # makepkg output so clients treat us as a normal split-package.
@@ -130,6 +141,9 @@ size = $(du -sb "${src}" | cut -f1)
 arch = ${ARCH}
 license = GPL
 EOF
+    for replaced in ${replaces}; do
+        printf 'replaces = %s\nconflict = %s\n' "${replaced}" "${replaced}" >>"${pkginfo}"
+    done
 
     # Pack with .PKGINFO as the FIRST tar entry; pacman/repo-add stream
     # the archive and need .PKGINFO up front to validate. Drop the "./"
