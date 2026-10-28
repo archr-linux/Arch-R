@@ -80,7 +80,8 @@ fi
 # known-networks, o iwctl connect caía em prompt interativo de
 # passphrase e, sem TTY, o usuário via só um erro genérico no ES.
 encode_iwd_name() {
-  if printf '%s' "$1" | LC_ALL=C grep -qE '^[A-Za-z0-9_ -]+$'; then
+  local LC_ALL=C
+  if [[ "$1" =~ ^[A-Za-z0-9_\ -]+$ ]]; then
     printf '%s' "$1"
   else
     printf '=%s' "$(printf '%s' "$1" | od -An -tx1 | tr -d ' \n')"
@@ -104,6 +105,12 @@ legacy_iwd_name() {
       }
       print out
     }'
+}
+
+# Do not wait for a stopped daemon; bound every client call, even if it stalls.
+iwctl() {
+  pgrep -x iwd >/dev/null || return 1
+  timeout -k 1 5 iwctl "$@"
 }
 
 # Wait for iwd to start and have a device available
@@ -314,7 +321,7 @@ connect_wifi() {
 # rede salva no cfg, limpa wifi.ssid/wifi.key, senão o boot
 # (099-networkservices) a reconectaria com a senha antiga.
 forget_wifi() {
-  local name legacy show net
+  local name legacy show net saved status=0
 
   if [ -z "${SSID}" ]; then
     echo "wifictl: forget needs an SSID" >&2
@@ -336,13 +343,16 @@ forget_wifi() {
   legacy=$(legacy_iwd_name "${SSID}")
   rm -f "/var/lib/iwd/${name}.psk" "/var/lib/iwd/${name}.open" \
         "/var/lib/iwd/${name}.8021x" \
-        "/var/lib/iwd/${legacy}.psk" "/var/lib/iwd/${legacy}.open" 2>/dev/null
+        "/var/lib/iwd/${legacy}.psk" "/var/lib/iwd/${legacy}.open" 2>/dev/null || status=$?
 
-  if [ "$(get_setting wifi.ssid)" = "${SSID}" ]; then
-    del_setting wifi.ssid
-    del_setting wifi.key
+  saved=$(get_setting wifi.ssid) || status=$?
+  if [ "${saved}" = "${SSID}" ]; then
+    del_setting wifi.ssid || status=$?
+    del_setting wifi.key || status=$?
+    # del_setting's lock cleanup can mask a failed write.
+    [ -z "$(get_setting wifi.ssid)$(get_setting wifi.key)" ] || status=1
   fi
-  return 0
+  return "${status}"
 }
 
 create_adhoc() {
