@@ -65,25 +65,47 @@ OS_RELEASE=/etc/os-release
 
 seed_local_db() {
     [ -n "$(ls -A "${PACMAN_DB}/local" 2>/dev/null | grep -v '^ALPM_DB_VERSION$')" ] && return 0
-    local build tmp
+    local build stage old="" entry want
     build="$(sed -n 's/^BUILD_ID="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "${OS_RELEASE}")"
     if [ ! -f "${IMAGE_DB}" ] || [ -z "${build}" ]; then
         echo "No package database for this image; cannot seed. Reflash to update." >&2
         return 1
     fi
-    tmp="$(mktemp -d)" || return 1
-    if ! tar -xzf "${IMAGE_DB}" -C "${tmp}" ||
-       [ "$(cat "${tmp}/archr-image-build" 2>/dev/null)" != "${build}" ] ||
-       [ ! -d "${tmp}/local" ]; then
-        echo "The image package database does not match build ${build}; not seeding." >&2
-        rm -rf "${tmp}"
+    # Built next to the live db (same filesystem) and published with a
+    # rename, so the live db is either still empty or complete: a failed
+    # or interrupted attempt (disk full, power loss) leaves at most a
+    # .seed-* or .empty-* directory, which the next attempt removes.
+    mkdir -p "${PACMAN_DB}" || return 1
+    rm -rf "${PACMAN_DB}"/.seed-* "${PACMAN_DB}"/.empty-*
+    stage="$(mktemp -d "${PACMAN_DB}/.seed-XXXXXX")" || return 1
+    want="$(tar -tzf "${IMAGE_DB}" 2>/dev/null | sed -n 's#^local/\([^/]*\)/desc$#\1#p')"
+    if [ -z "${want}" ] || ! tar -xzf "${IMAGE_DB}" -C "${stage}" ||
+       [ "$(cat "${stage}/archr-image-build" 2>/dev/null)" != "${build}" ]; then
+        echo "The image package database is unreadable or not for build ${build}; not seeding." >&2
+        rm -rf "${stage}"
         return 1
     fi
-    echo "Seeding package database from this image (build ${build})..."
-    mkdir -p "${PACMAN_DB}/local" &&
-        cp -a "${tmp}/local/." "${PACMAN_DB}/local/" || { rm -rf "${tmp}"; return 1; }
-    rm -rf "${tmp}"
-    echo "Seeded $(ls -1 "${PACMAN_DB}/local" | grep -vc '^ALPM_DB_VERSION$') package entries."
+    for entry in ${want}; do
+        if [ ! -s "${stage}/local/${entry}/desc" ] || [ ! -s "${stage}/local/${entry}/files" ]; then
+            echo "The image package database is incomplete (${entry}); not seeding." >&2
+            rm -rf "${stage}"
+            return 1
+        fi
+    done
+    sync
+    # Set the empty db aside, then publish. Interrupted in between, there
+    # is no db, which counts as empty: the next attempt seeds again.
+    if [ -e "${PACMAN_DB}/local" ]; then
+        old="${PACMAN_DB}/.empty-$$"
+        mv "${PACMAN_DB}/local" "${old}" || { rm -rf "${stage}"; return 1; }
+    fi
+    if ! mv "${stage}/local" "${PACMAN_DB}/local"; then
+        [ -n "${old}" ] && mv "${old}" "${PACMAN_DB}/local"
+        rm -rf "${stage}"
+        return 1
+    fi
+    rm -rf "${stage}" ${old:+"${old}"}
+    echo "Seeded $(ls -1 "${PACMAN_DB}/local" | grep -vc '^ALPM_DB_VERSION$') package entries (build ${build})."
 }
 
 cmd_check() {
