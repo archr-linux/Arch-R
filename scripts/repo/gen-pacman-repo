@@ -96,15 +96,30 @@ build_one_pkg() {
     # turned into a stray '.' by tr -c.
     version="$(printf '%s' "${version}" | tr -c 'a-zA-Z0-9.+_' '.')"
 
+    # The name above is derived from the install_pkg directory, which
+    # goes wrong when PKG_VERSION is empty or starts with a letter
+    # ("autostart-", "mako-notify-v1.0"); devices already carry those
+    # names, so they stay. Their package.mk is still found through the
+    # name the build recorded, so PKG_REV and PKG_REPLACES work for them.
+    local relmk="${pkgmk}"
+    if [ -z "${relmk}" ] && [ -f "${src}/.archr-package" ]; then
+        local real
+        real="$(sed -n 's/^INFO_PKG_NAME="\(.*\)"$/\1/p' "${src}/.archr-package")"
+        if [ -n "${real}" ]; then
+            relmk="$(find projects/ArchR/packages packages -mindepth 2 -maxdepth 6 \
+                        -path "*/${real}/package.mk" -print -quit 2>/dev/null)"
+        fi
+    fi
+
     # pkgrel comes from the package's PKG_REV (the standard knob for "same
     # upstream version, new package build", e.g. a changed local overlay
     # like a joypad autoconfig). Hardcoding 1 here meant any local-only
     # change never produced a newer package, so pacman never saw it as an
     # update. Default to 1 when PKG_REV is unset or dynamic.
     local pkgrel=1
-    if [ -n "${pkgmk}" ]; then
+    if [ -n "${relmk}" ]; then
         local rev
-        rev="$(awk -F'"' '/^PKG_REV/ {print $2; exit}' "${pkgmk}")"
+        rev="$(awk -F'"' '/^PKG_REV/ {print $2; exit}' "${relmk}")"
         case "${rev}" in
             ''|*'$('* | *'${'* ) : ;;
             *) pkgrel="${rev}" ;;
@@ -119,8 +134,8 @@ build_one_pkg() {
     # -Syu offers the replacement (accepted by --noconfirm) and removes
     # the old package in the same transaction.
     local replaces="" replaced
-    if [ -n "${pkgmk}" ]; then
-        replaces="$(awk -F'"' '/^PKG_REPLACES=/ {print $2; exit}' "${pkgmk}")"
+    if [ -n "${relmk}" ]; then
+        replaces="$(awk -F'"' '/^PKG_REPLACES=/ {print $2; exit}' "${relmk}")"
     fi
 
     # .PKGINFO sidecar that pacman reads on install. pkgbase is
