@@ -83,6 +83,7 @@ list_specialized_overlays() {
 
 write_dtbo() {
     PRE=/overlays/
+    local dtbos=""
     for spec in $SPECIALIZATIONS custom_dtbo; do
 	ol=$(get_setting system.$spec)
         if [ "$ol" != "None" ] && [[ ! -z $ol ]]; then
@@ -96,10 +97,31 @@ write_dtbo() {
         else
             sed -i "/FDT/a \ \ FDTOVERLAYS ${dtbos}" /flash/extlinux/extlinux.conf
         fi
+        grep -qxF "  FDTOVERLAYS ${dtbos}" /flash/extlinux/extlinux.conf
     else
-        sed -i "/FDTOVERLAYS/d" /flash/extlinux/extlinux.conf
+        sed -i "/FDTOVERLAYS/d" /flash/extlinux/extlinux.conf &&
+            ! grep -q FDTOVERLAYS /flash/extlinux/extlinux.conf
     fi
-    mount -o remount,ro /flash
+    local rc=$?
+    mount -o remount,ro /flash || :
+    return ${rc}
+}
+
+# Select overlay $2 for setting $1 and rewrite extlinux.conf. If either
+# step fails, put the previous selection back and exit non-zero.
+apply_overlay() {
+    prev=$(get_setting $1)
+    if set_setting $1 $2 && write_dtbo; then
+        exit 0
+    fi
+    if [ -n "$prev" ]; then
+        set_setting $1 "$prev"
+    else
+        del_setting $1
+    fi
+    write_dtbo || echo "Could not restore the previous overlay configuration"
+    echo "Could not apply overlay: $2"
+    exit 1
 }
 
 case "$1" in
@@ -134,9 +156,7 @@ case "$1" in
             "custom")
                 for ol in $(list_custom_overlays); do
 		            if [ "$3" = "$ol" ] || [ $3 = None ]; then
-                        set_setting system.custom_dtbo $3
-                        write_dtbo
-                        exit 0
+                        apply_overlay system.custom_dtbo $3
 		            fi
 		        done
                 echo "dtbo doesn't exist: $3"
@@ -146,9 +166,7 @@ case "$1" in
                 check_valid_specialization $2
 	            for ol in $(list_specialized_overlays $2); do
 		            if [ "$3" = "$ol" ] || [ $3 = None ]; then
-                        set_setting system.$2 $3
-                        write_dtbo
-                        exit 0
+                        apply_overlay system.$2 $3
 		            fi
 		        done
                 echo "dtbo doesn't exist: $3"
