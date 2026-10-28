@@ -48,12 +48,10 @@ check_charging() {
   fi
 }
 
+# A game is running whenever runemu.sh is, whichever frontend started it
+# (EmulationStation or archr-launcher).
 check_es_running_game() {
-  local HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:1234/runningGame")
-  ${DEBUG} && log $0 "ES runningGame HTTP_STATUS - ${HTTP_STATUS}"
-  test $? != 0 && return 1 # call failed, assume no game running
-  test "${HTTP_STATUS}" = 201 && return 1 # 201 when no game running
-  test "${HTTP_STATUS}" = 200 && return 0 # 200 when game running
+  pgrep -f /usr/bin/runemu.sh >/dev/null 2>&1
 }
 
 display_off() {
@@ -260,14 +258,14 @@ do_shutdown() {
   check_es_running_game
   local RUNNING_GAME=$?
 
-  if [[ $RUNNING_GAME -eq 0 ]]; then
-    # ES shutdown API won't work if a game is running
+  # With EmulationStation in the menu, its API saves metadata before
+  # powering off. Otherwise (a game running, or archr-launcher, which saves
+  # its data when systemd stops it) shut down directly.
+  if [[ $RUNNING_GAME -ne 0 ]] && curl -sf -o /dev/null "http://localhost:1234/shutdown"; then
+    ${DEBUG} && log $0 "Shutting down via ES API"
+  else
     ${DEBUG} && log $0 "Shutting down now"
     shutdown now
-  else
-    # Use ES shutdown API so metadata is saved
-    ${DEBUG} && log $0 "Shutting down via ES API"
-    curl "http://localhost:1234/shutdown"
   fi
 }
 
