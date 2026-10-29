@@ -502,9 +502,10 @@ cleanup_usb_network() {
         echo "" > ${g_cdc}/UDC
     fi
     rm -f ${g_cdc}/os_desc/c.1
-    for func in ncm.usb0 rndis.usb0; do
-        rm -f ${g_cdc}/configs/c.1/${func}
-        [ -d "${g_cdc}/functions/${func}" ] && rmdir "${g_cdc}/functions/${func}"
+    # Not "func": prepare_usb_network calls this and still needs its own.
+    for old_func in ncm.usb0 rndis.usb0; do
+        rm -f ${g_cdc}/configs/c.1/${old_func}
+        [ -d "${g_cdc}/functions/${old_func}" ] && rmdir "${g_cdc}/functions/${old_func}"
     done
     [ -d ${g_cdc}/configs/c.1/strings/0x409 ] && rmdir ${g_cdc}/configs/c.1/strings/0x409
     [ -d ${g_cdc}/configs/c.1 ] && rmdir ${g_cdc}/configs/c.1
