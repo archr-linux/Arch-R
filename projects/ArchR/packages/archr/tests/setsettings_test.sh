@@ -51,6 +51,7 @@ config_save_on_exit = "true"'
 check() {
   if eval "$2"; then echo "ok   $1"; else echo "FAIL $1"; FAILED=1; fi
 }
+# shellcheck disable=SC2317 # called through eval in check
 has() { grep -qxF "$1" "$2"; }
 run() {
   printf '%s\n' "${USER_RA}" >"${TMP}/ra/retroarch.cfg"
@@ -117,16 +118,17 @@ bash "${HK}" --force "${R}"
 check "autohotkeys=0 writes nothing" "has 'input_menu_toggle_btn = \"9\"' '${R}'"
 
 # Migration: old factory values go, user values and other keys stay, once.
-git -C "${PKG}" show "$(git -C "${PKG}" merge-base HEAD main 2>/dev/null || echo HEAD):./config/system/configs/system.cfg" \
-  >"${TMP}/old.cfg" 2>/dev/null || cp "${PKG}/config/system/configs/system.cfg" "${TMP}/old.cfg"
-grep -v '^migration\.' "${TMP}/old.cfg" >"${TMP}/system.cfg"
-sed -i 's/^snes\.ratio=4\/3$/snes.ratio=16\/9/; s/^gba\.ratio=3\/2$/gba.ratio=3\/2/' "${TMP}/system.cfg"
+# An older installation: today's defaults plus some of the old factory lines.
+{ grep -v '^migration\.' "${PKG}/config/system/configs/system.cfg"
+  printf '%s\n' gba.ratio=3/2 global.bezel=thebezelproject snes.integerscale=0 \
+    snes.ratio=16/9 global.ratio=core global.rewind=0; } >"${TMP}/system.cfg"
 echo "nes.integerscale=1" >>"${TMP}/system.cfg"
 bash "${SCRIPTS}/archr-retroarch-defaults"
 C="${TMP}/system.cfg"
 check "factory gba ratio removed" "! grep -q '^gba.ratio=' '${C}'"
 check "factory bezel removed" "! grep -q '^global.bezel=' '${C}'"
 check "factory integerscale removed" "! grep -q '^snes.integerscale=' '${C}'"
+check "factory global ratio and rewind removed" "! grep -Eq '^global.(ratio|rewind)=' '${C}'"
 check "user ratio kept" "has 'snes.ratio=16/9' '${C}'"
 check "user integerscale kept" "has 'nes.integerscale=1' '${C}'"
 check "unrelated keys kept" "has 'global.autosave=1' '${C}' && has 'system.hostname=archr' '${C}'"
@@ -134,7 +136,5 @@ check "migration marked done" "has 'migration.retroarch_defaults=1' '${C}'"
 echo "gba.ratio=3/2" >>"${C}"
 bash "${SCRIPTS}/archr-retroarch-defaults"
 check "migration runs once" "has 'gba.ratio=3/2' '${C}'"
-if [ -s "${TMP}/old.cfg" ] && grep -q '^gba.ratio=3/2' "${TMP}/old.cfg"; then :; else
-  echo "FAIL old defaults not found"; FAILED=1; fi
 
 exit "${FAILED}"
