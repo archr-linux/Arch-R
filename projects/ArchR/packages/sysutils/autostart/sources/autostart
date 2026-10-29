@@ -98,7 +98,7 @@ systemctl start archr-automount
 ###     themselves via wait_lock + J_CONF_LOCK, so concurrent writes are
 ###     safe. The UI starts as soon as this phase is done.
 ###   Phase C: the scripts in DEFERRED_SCRIPTS, started after the UI.
-###     None of them writes anything sway or EmulationStation reads at
+###     None of them writes anything sway or the UI reads at
 ###     startup (network daemons, bluetooth, LEDs, rumble, USB gadget,
 ###     logging, pacman db...). Holding the UI for them cost the slowest
 ###     one of the lot on every boot. A script missing from this list

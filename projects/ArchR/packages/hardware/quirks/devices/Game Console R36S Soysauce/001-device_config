@@ -3,7 +3,7 @@
 # Copyright (C) 2024-present ArchR (https://github.com/archr-linux/Arch-R)
 
 # Minimal per-device config: wire up the temperature sensors so System
-# Information (archr-info) and EmulationStation show CPU/GPU temps. The
+# Information (archr-info) and the launcher show CPU/GPU temps. The
 # quirks loader matches the folder name against /proc/device-tree/model
 # exactly, so this folder name MUST equal the DTS `model` string. Audio
 # routing and LED config are intentionally left to the working defaults.

@@ -2,13 +2,11 @@
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (C) 2026-present ArchR (https://github.com/archr-linux/Arch-R)
 #
-# Backend for the EmulationStation AUDIO OUTPUT menu. ApiSystem hardcodes
-# these calls: list, get, set <name>, list-profiles, get-profile,
-# set-profile <name>. The script was missing entirely, so the menu was dead
-# and every ES start logged "set-audio: command not found".
+# Audio output backend for the UI (archr-launcher settings): list, get,
+# set <name>, list-profiles, get-profile, set-profile <name>.
 #
 # PipeWire/WirePlumber via wpctl. Card profiles are not exposed on these
-# boards: the profile subcommands return nothing and ES hides that row.
+# boards: the profile subcommands return nothing and the UI hides that row.
 
 sinks() {
   local status

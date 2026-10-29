@@ -11,9 +11,8 @@ PKG_TOOLCHAIN="manual"
 PKG_LONGDESC="GPU driver util for switching between panfrost / panthor and libmali / libmali-vulkan"
 
 post_makeinstall_target() {
-  # Installed as /usr/bin/gpudriver. EmulationStation surfaces the GPU
-  # DRIVER selector only when that exact path exists (see es-app
-  # GuiMenu.cpp), so the location IS the feature flag. It lived under
+  # Installed as /usr/bin/gpudriver, where the UI's GPU DRIVER setting
+  # calls it. It lived under
   # /usr/lib/archr/ for a while to hide the picker while the panfrost
   # probe could still hang the kernel on RK3326 clones; the guards that
   # made hiding unnecessary are all in the script now: the

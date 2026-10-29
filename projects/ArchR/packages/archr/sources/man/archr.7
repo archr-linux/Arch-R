@@ -5,7 +5,7 @@ archr \- overview of the ArchR distribution
 .B ArchR
 is a Linux distribution targeted at the Rockchip RK3326 handheld console family
 (R36S, K36, MagicX XU10, Soysauce/Y3506 and clones).
-It boots from a microSD card, exposes EmulationStation as the default front end,
+It boots from a microSD card, runs archr-launcher as its front end,
 and ships a curated catalogue of emulators, RetroAchievements integration,
 PortMaster compatibility and panel auto-detection via DTBO overlays.
 .PP
@@ -41,10 +41,10 @@ The log is
 .B archr-config
 Read or write a runtime setting persisted in
 .IR /storage/.config/system/configs/system.cfg .
-Used by every emulator launcher and by EmulationStation.
+Used by every emulator launcher and by archr-launcher.
 .TP
 .B archr-settings
-Top-level settings UI dispatcher consumed by EmulationStation menus.
+Top-level settings dispatcher for the user interface.
 .TP
 .B archr-systems
 List supported emulator systems and their associated cores.
@@ -85,7 +85,7 @@ target
 .IR /etc/archr .
 .TP
 .B ARCHR_CONFIG
-User and application configuration (emulators, EmulationStation,
+User and application configuration (emulators, archr-launcher,
 PortMaster). Resolves to
 .IR /var/lib/archr/config ,
 a symlink into
@@ -136,11 +136,11 @@ family. Equivalent to
 on Arch Linux.
 .TP
 .I /storage/.config
-User-writable configuration root for emulators, EmulationStation, system
+User-writable configuration root for emulators, archr-launcher, system
 preferences and saved settings.
 .TP
 .I /storage/roms
-Default ROM library root, expected layout matches EmulationStation conventions.
+Default ROM library root: one folder per system, as in the systems catalog.
 .TP
 .I /usr/share/bootloader
 Boot files installed by mkimage: kernel, DTB, overlay catalogue, update script.
