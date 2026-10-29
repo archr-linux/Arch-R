@@ -64,8 +64,13 @@
 #   (repo-<channel>/changelog.txt). Its first line is the version the
 #   release brings (e.g. 2.1.2), the rest are the notes. Without it,
 #   new_version and news are empty. After an update that names a version,
-#   it is recorded in /var/lib/archr-update/version and reported as
-#   os_version from then on (the image's /etc/os-release is not packaged).
+#   it is recorded in /var/lib/archr-update/version (the image's
+#   /etc/os-release is not packaged).
+#
+#   archr-update version
+#     The system's version: the recorded one when newer than the image's,
+#     else /etc/os-release. The one place that decides it; os_version and
+#     archr-launcher's Information page use it.
 #
 #   Everything, pacman's output included, is appended to
 #   /storage/.config/archr-update.log. Check and update hold
@@ -119,7 +124,7 @@ network_ok() {
 
 usage() {
     cat <<EOF
-Usage: ${0##*/} [check [--json]|update [--progress]|info|seed]
+Usage: ${0##*/} [check [--json]|update [--progress]|info|seed|version]
 
   check     Sync repo metadata and report whether updates are available.
             --json: one JSON report for frontends.
@@ -127,6 +132,7 @@ Usage: ${0##*/} [check [--json]|update [--progress]|info|seed]
             --progress: download, then install, with JSON progress lines.
   info      Show current OS version, channel, and configured mirror.
   seed      Record this image's packages in an empty pacman database.
+  version   Print the system's version.
 
 Channel is configured via system.cfg "updates.branch" (stable|next|dev).
 EOF
@@ -257,11 +263,17 @@ battery_low() {
     return 1
 }
 
+# The recorded version when newer than the image's (a newer image flashed
+# over an updated one wins), else the image's.
 os_version() {
-    if [ -s "${UPDATE_STATE}/version" ]; then
-        cat "${UPDATE_STATE}/version"
+    local image recorded
+    image="$(sed -n 's/^VERSION="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "${OS_RELEASE}")"
+    recorded="$(cat "${UPDATE_STATE}/version" 2>/dev/null)"
+    if [ -n "${recorded}" ] &&
+       [ "$(printf '%s\n%s\n' "${image}" "${recorded}" | sort -V | tail -n 1)" = "${recorded}" ]; then
+        echo "${recorded}"
     else
-        sed -n 's/^VERSION="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "${OS_RELEASE}"
+        echo "${image}"
     fi
 }
 
@@ -569,6 +581,10 @@ cmd_info() {
 if [ "${1:-}" = seed ]; then
     seed_local_db
     exit $?
+fi
+if [ "${1:-}" = version ]; then
+    os_version
+    exit 0
 fi
 
 MODE=plain

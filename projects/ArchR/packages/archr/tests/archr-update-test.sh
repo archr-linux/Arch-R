@@ -270,6 +270,16 @@ for PID in $(pgrep -f "${SCRIPT}"); do kill -TERM "${PID}" 2>/dev/null; done
 wait "${RUN}"
 check "TERM during the install is ignored" "$(field phase <"${TMP}/out") $([ -e "${TMP}/installed-ok" ] && echo installed)" "done installed"
 
+### version: the recorded one only when newer than the image's
+ARGS=(version)
+rm -rf "${TMP}/state"
+check "version: image" "$(run)" 2.1.1
+mkdir -p "${TMP}/state"
+echo 2.1.10 >"${TMP}/state/version"
+check "version: recorded newer" "$(run)" 2.1.10
+printf 'VERSION="2.2.0"\nBUILD_ID="abc"\n' >"${TMP}/os-release"
+check "version: newer image flashed" "$(run)" 2.2.0
+
 ### archr-fake-suspend refuses to suspend while the lock is held
 eval "$(sed -n '/^check_update_running()/,/^}/p' "${HERE}/../sources/scripts/archr-fake-suspend")"
 UPDATE_LOCK="${TMP}/run/archr-update.lock"
