@@ -2,15 +2,15 @@
 # Copyright (C) 2026 ArchR (https://github.com/archr-linux/Arch-R)
 
 PKG_NAME="archr-launcher"
-PKG_VERSION="ca54433e89c3e7a9dd5189e4a71e34acbd2902d3"
-PKG_SHA256="233f4680a549a56e53053ce415d765e378311d361c7d033c6f177b443a93c0e9"
+PKG_VERSION="665aec62d790fc536143385fe682e8f93c9ee0f2"
+PKG_SHA256="9d6a15975bee4dcc1152eacf8381b3b9e888e9989b486c40e766cf5b57908f5e"
 PKG_ARCH="aarch64"
 # Bundled fonts retain their separate OFL licenses.
 PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/archr-linux/archr-launcher"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain SDL2 SDL2_image SDL2_ttf SDL2_mixer cargo:host rust:host"
-PKG_LONGDESC="ArchR's game launcher and its UI session (SDL2, under sway)"
+PKG_LONGDESC="ArchR's game launcher, its UI session (SDL2, under sway) and the volume/brightness OSD"
 # Devices updated with pacman get the launcher in place of the old UI.
 PKG_REPLACES="emulationstation es-theme-art-book-next"
 PKG_TOOLCHAIN="manual"
@@ -52,13 +52,16 @@ make_target() {
     echo "WARNING: SCREENSCRAPER_DEV_LOGIN not set: scraper built without a developer login"
   fi
   cargo build --locked --release --target "${TARGET_NAME}" \
-    --manifest-path "${PKG_BUILD}/Cargo.toml" --package archr-launcher
+    --manifest-path "${PKG_BUILD}/Cargo.toml" --package archr-launcher --package archr-osd
 }
 
 makeinstall_target() {
   install -Dm644 "${PKG_BUILD}/LICENSE" "${INSTALL}/usr/share/licenses/archr-launcher/LICENSE"
   install -Dm755 "${PKG_BUILD}/.${TARGET_NAME}/target/${TARGET_NAME}/release/archr-launcher" \
     "${INSTALL}/usr/bin/archr-launcher"
+  # Started by the sway kiosk config; input_sense sends it the levels.
+  install -Dm755 "${PKG_BUILD}/.${TARGET_NAME}/target/${TARGET_NAME}/release/archr-osd" \
+    "${INSTALL}/usr/bin/archr-osd"
   install -Dm755 "${PKG_BUILD}/session/archr-launcher-session" \
     "${INSTALL}/usr/bin/archr-launcher-session"
   install -Dm644 "${PKG_BUILD}/session/archr-launcher-session.service" \

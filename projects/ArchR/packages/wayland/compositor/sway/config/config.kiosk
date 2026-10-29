@@ -1,3 +1,5 @@
 seat * hide_cursor 1000
 default_border none
 exec_always mako
+# Volume/brightness pill; a second copy exits on its own (sway reload).
+exec_always archr-osd
