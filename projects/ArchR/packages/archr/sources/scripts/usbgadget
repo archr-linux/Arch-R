@@ -704,6 +704,8 @@ usb_stop() {
 			killall umtprd
 		fi
 	) >/dev/null 2>&1
+	# usb_disable ran in the subshell above.
+	CURRENT_MODE=disabled
 }
 
 current_ipv4() {
