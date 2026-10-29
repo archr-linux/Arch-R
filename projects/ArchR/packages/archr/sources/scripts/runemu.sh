@@ -571,7 +571,8 @@ ${CPU_GOVERNOR}
 if [ "${DEVICE_MANGOHUD_SUPPORT}" == "true" ]; then
   MANGOHUD_ENABLED=$(get_setting "archr.mangohud.enabled"  "${PLATFORM}" "${ROMNAME##*/}")
   if [ "${MANGOHUD_ENABLED}" = "1" ]; then
-    # Enable GPU profiling and MangoHud
+    # Enable GPU profiling and MangoHud with the current overlay settings
+    /usr/bin/mangohud_set apply || log $0 "MangoHud settings not applied"
     gpu_profiling "on"
     RUNTHIS="/usr/bin/mangohud ${RUNTHIS}"
     ${VERBOSE} && log $0 "Enabling MangoHud"
