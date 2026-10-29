@@ -277,10 +277,13 @@ prepare_usb_network() {
 
     # Make the network function the first configuration
     ln -s "${g_cdc}/functions/${func}" "${g_cdc}/configs/c.1"
-    # The OS descriptors only reach Windows from the configuration linked here.
-    if [ "${func}" = rndis.usb0 ]; then
-        ln -s ${g_cdc}/configs/c.1 ${g_cdc}/os_desc
-    fi
+    # The OS descriptors only reach Windows from the configuration linked
+    # here; before, WINNCM was set but never served. Windows 11 binds
+    # UsbNcm by the NCM class anyway, and its UsbNcm.inf also lists
+    # MS_COMP_WINNCM, so the id only names the same driver; Linux and
+    # macOS ignore it. A new bcdDevice each release keeps Windows from
+    # mixing it with what it cached before.
+    ln -s ${g_cdc}/configs/c.1 ${g_cdc}/os_desc
 
     if [ -n "$verbose" ]; then echo "Done."; fi
     set +e
