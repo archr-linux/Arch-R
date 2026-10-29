@@ -33,6 +33,21 @@ then
   rm -f /storage/.config/emulationstation/es_systems.cfg
 fi
 
+### Coming from an image with EmulationStation: archr-launcher is the UI
+### (UI_SERVICE comes from the platform quirk on every boot). Drop the
+### settings that still name ES and the link only ES created; user data
+### (gamelists, media, es_input.cfg) stays where it is.
+if [ -f /storage/.config/system/configs/system.cfg ]
+then
+  sed -i -e '/^boot=Emulationstation$/d' \
+         -e '\#^weston\.startup=/usr/bin/start_es\.sh$#d' \
+         /storage/.config/system/configs/system.cfg
+fi
+if [ -L /storage/.emulationstation ]
+then
+  rm -f /storage/.emulationstation
+fi
+
 rsync -a --delete ${EXCLUDE} /usr/config/system/ /storage/.config/system/
 rsync -a --ignore-existing /usr/config/game /storage/.config/
 rsync -a /usr/config/modules /storage/.config/
