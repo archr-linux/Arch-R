@@ -47,6 +47,23 @@ esac
 exit 0'
 tool "${T}/bin/resolvectl" 'echo "resolvectl $*" >>"$T/calls"'
 tool "${T}/bin/modprobe" ':'
+# Transient units: a named one runs detached and is stopped by name,
+# waiting for it as systemd does; a second start of a running one fails.
+tool "${T}/bin/systemd-run" '
+echo "systemd-run $*" >>"$T/calls"
+unit=
+while [ "${1#-}" != "$1" ]; do case $1 in --unit=*) unit=${1#--unit=} ;; esac; shift; done
+if [ -z "$unit" ]; then "$@" & exit 0; fi
+kill -0 "$(cat "$T/unit-$unit" 2>/dev/null)" 2>/dev/null && exit 1
+setsid "$@" </dev/null >/dev/null 2>&1 &
+echo $! >"$T/unit-$unit"; echo $! >>"$T/pids"'
+tool "${T}/bin/systemctl" '
+echo "systemctl $*" >>"$T/calls"
+[ "$1" = stop ] || exit 0
+pid=$(cat "$T/unit-$2" 2>/dev/null) || exit 0
+kill "$pid" 2>/dev/null
+while kill -0 "$pid" 2>/dev/null; do sleep 0.1; done
+rm -f "$T/unit-$2"'
 tool "${T}/bin/udevadm" ':'
 tool "${R}/usr/bin/wifictl" 'echo "wifictl $*" >>"$T/calls"'
 # A lease from $T/lease (lines of env assignments), or no answer at all.
@@ -99,7 +116,7 @@ check "current mode is internet" '[ "$(gadget)" = internet ]'
 check "compatibility off by default" '[ "$(gadget compat)" = 0 ] && [ "$(field compat)" = 0 ]'
 gadget compat 2 >/dev/null 2>&1
 check "compatibility rejects other values" '[ $? = 2 ]'
-setsid "${SCRIPT}" supervise </dev/null >/dev/null 2>&1 &
+systemd-run --unit=usbgadget-internet "${SCRIPT}" supervise
 
 wait_for "no cable: waiting" '[ "$(field link)" = waiting ]'
 check "no cable: Wi-Fi untouched" '[ "$(calls wifictl)" = 0 ] && [ "$(field wifi)" = free ]'
@@ -115,8 +132,8 @@ check "lease: no local DHCP server" '[ "$(calls "udhcpd ")" = 0 ]'
 
 carrier 0
 wait_for "unplugged: waiting" 'seen waiting && [ "$(field link)" = waiting ]'
-check "unplugged: Wi-Fi back on and reconnecting" \
-  '[ "$(field wifi)" = free ] && [ "$(calls "wifictl enable")" = 1 ] && [ "$(calls "wifictl connect")" = 1 ]'
+wait_for "unplugged: Wi-Fi back on and reconnecting" \
+  '[ "$(field wifi)" = free ] && [ "$(calls "wifictl enable")" = 1 ] && [ "$(calls "^wifictl connect")" = 1 ]'
 check "unplugged: DNS reverted" 'grep -q "resolvectl revert gadget" "${T}/calls"'
 check "unplugged: no address left" '[ -z "$(field address)" ]'
 

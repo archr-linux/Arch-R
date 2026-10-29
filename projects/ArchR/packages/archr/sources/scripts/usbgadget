@@ -22,7 +22,8 @@ SELF=$(readlink -f "$0")
 NETRUN=${ROOT}/run/usbgadget
 LINKFILE=${NETRUN}/link
 WIFI_HOLD=${NETRUN}/wifi-held
-SUPERVISOR_PID=${NETRUN}/internet.pid
+# The supervisor runs as a transient unit: its own cgroup, stopped by name.
+SUPERVISOR_UNIT=usbgadget-internet
 UDHCPC_PID=${NETRUN}/udhcpc.pid
 # Below iwd's (RoutePriorityOffset=200): the cable is the user's choice.
 ROUTE_METRIC=100
@@ -343,7 +344,11 @@ configure_iface() {
 	ip link set "${IFACE_NAME}" up
 
 	if [ "${USB_NET}" = internet ]; then
-		setsid "${SELF}" supervise </dev/null >/dev/null 2>&1 &
+		# KillMode=mixed: TERM reaches the supervisor alone, whose cleanup
+		# then runs before the rest of the unit is killed.
+		systemd-run --quiet --collect --unit="${SUPERVISOR_UNIT}" \
+			--property=KillMode=mixed --property=TimeoutStopSec=15 \
+			"${SELF}" supervise >/dev/null 2>&1
 	else
 		local_up
 	fi
@@ -366,7 +371,9 @@ release_wifi() {
 	# shellcheck disable=SC1091
 	if ( . "${ROOT}/etc/profile.d/001-functions" && [ "$(get_setting wifi.enabled)" = 1 ] ); then
 		"${ROOT}/usr/bin/wifictl" enable >/dev/null 2>&1
-		( "${ROOT}/usr/bin/wifictl" connect >/dev/null 2>&1 & )
+		# Outside the supervisor's unit, which may be stopping.
+		systemd-run --quiet --collect "${ROOT}/usr/bin/wifictl" connect >/dev/null 2>&1 ||
+			( "${ROOT}/usr/bin/wifictl" connect >/dev/null 2>&1 & )
 	fi
 }
 
@@ -399,18 +406,21 @@ internet_down() {
 # PC's sharing (Windows ICS 192.168.137.x, NetworkManager 10.42.0.x, macOS).
 # No lease in time: the fixed address of the "network" mode, Wi-Fi back.
 # Unplugged: everything undone, and tried again on the next plug.
+# Still bound as the network gadget in "internet" mode: anything else
+# (another mode, the UDC released, the interface gone) ends the supervisor.
+internet_active() {
+	[ "$(cat "${ROOT}/sys/class/udc/${UDC_NAME}/function" 2>/dev/null)" = cdc ] &&
+		grep -qx 'USB_NET=internet' "${GADGETCONF}" 2>/dev/null &&
+		[ -n "${IFACE_NAME}" ] && [ -d "${ROOT}/sys/class/net/${IFACE_NAME}" ]
+}
+
 internet_supervise() {
 	mkdir -p "${NETRUN}"
-	pid=$(cat "${SUPERVISOR_PID}" 2>/dev/null)
-	if [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null; then
-		return
-	fi
-	echo $$ > "${SUPERVISOR_PID}"
 	IFACE_NAME=$(gadget_iface)
-	trap 'internet_down; rm -f "${SUPERVISOR_PID}"; exit 0' TERM INT HUP
+	trap 'internet_down; exit 0' TERM INT HUP
 	link=waiting
 	set_link waiting
-	while [ -n "${IFACE_NAME}" ] && [ -d "${ROOT}/sys/class/net/${IFACE_NAME}" ]; do
+	while internet_active; do
 		if ! has_carrier; then
 			if [ "${link}" != waiting ]; then
 				internet_down
@@ -440,18 +450,13 @@ internet_supervise() {
 		sleep 1
 	done
 	internet_down
-	rm -f "${SUPERVISOR_PID}"
 }
 
 stop_internet() {
-	pid=$(cat "${SUPERVISOR_PID}" 2>/dev/null)
-	if [ -n "${pid}" ] && kill "${pid}" 2>/dev/null; then
-		for _ in 1 2 3 4; do
-			kill -0 "${pid}" 2>/dev/null || break
-			sleep 1
-		done
-	fi
-	rm -f "${SUPERVISOR_PID}" "${LINKFILE}"
+	# Waits for the supervisor's own cleanup; the one below covers a
+	# supervisor that already died.
+	systemctl stop "${SUPERVISOR_UNIT}" >/dev/null 2>&1
+	rm -f "${LINKFILE}"
 	IFACE_NAME=${IFACE_NAME:-$(gadget_iface)}
 	internet_down
 }
