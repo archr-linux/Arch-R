@@ -159,6 +159,8 @@ case $1 in
     if [ "$(get_setting wifi.enabled)" == "1" ] && [ ! -e /run/usbgadget/wifi-held ]; then
       log $0 "Enabling WIFI."
       nohup wifictl enable >${EVENTLOG} 2>&1
+      # A hold that started meanwhile wins (see 099-networkservices).
+      [ -e /run/usbgadget/wifi-held ] && nohup wifictl disable >${EVENTLOG} 2>&1
     fi
 
     DEVICE_VOLUME=$(get_setting "audio.volume" 2>/dev/null)
