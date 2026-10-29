@@ -197,6 +197,17 @@ restore_cpu_boost() {
   esac
 }
 
+# The governor of one launch: an override (runemu.sh --governor=, from a
+# launcher module) only when it names one of the functions below, else the
+# user's setting. The caller runs the result as a command, so nothing else
+# may ever come out of here from the override.
+pick_governor() {
+  case "$1" in
+    performance|ondemand|schedutil|powersave) echo "$1" ;;
+    *) echo "$2" ;;
+  esac
+}
+
 # The governor entry points below return the CPU governor status; the
 # boost, max_freq, DMC and tuning steps are best effort (`|| :`), also
 # for callers running under set -e.

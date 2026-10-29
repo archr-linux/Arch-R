@@ -25,6 +25,7 @@ performance
 # Command line schema, one shell word per argument:
 #   $1 = Game/Port, then in any order:
 #   -P<platform> --core=<core> --emulator=<emulator> --controllers=<string>
+#   --governor=<performance|ondemand|schedutil|powersave> (this launch only)
 #   -state_slot N  -autosave N  -state_file FILE (ignored)
 #   netplay: --host | --connect [IP] | --port N | --nick NAME | --spectate
 #            | --netplaymode spectator | --mitm-session ID
@@ -44,6 +45,7 @@ NETPLAY_SESSION_HOST=""
 NETPLAY_SESSION_PORT=""
 NETPLAY_SESSION_NICK=""
 NETPLAY_SESSION_SPECTATE=0
+GOVERNOR_OVERRIDE=""
 NETPLAY_SESSION_MITM=""
 ARGV=("$@")
 for ((i = 1; i < ${#ARGV[@]}; i++)); do
@@ -53,6 +55,7 @@ for ((i = 1; i < ${#ARGV[@]}; i++)); do
     --core=*) CORE="${ARG#*=}" ;;
     --emulator=*) EMULATOR="${ARG#*=}" ;;
     --controllers=*) CONTROLLERCONFIG="${ARG#*=}" ;;
+    --governor=*) GOVERNOR_OVERRIDE="${ARG#*=}" ;;
     --connect=*) NETPLAY_SESSION_MODE="client"; NETPLAY_SESSION_HOST="${ARG#*=}" ;;
     --port=*) NETPLAY_SESSION_PORT="${ARG#*=}" ;;
     --nick=*) NETPLAY_SESSION_NICK="${ARG#*=}" ;;
@@ -563,6 +566,8 @@ fi
 
 ### Set the governor mode for emulation
 CPU_GOVERNOR=$(get_setting "cpugovernor" "${PLATFORM}" "${ROMNAME##*/}")
+# A launcher module may pick the governor of this launch only.
+CPU_GOVERNOR=$(pick_governor "${GOVERNOR_OVERRIDE}" "${CPU_GOVERNOR}")
 ${VERBOSE} && log $0 "Set emulation performance mode to (${CPU_GOVERNOR})"
 ${CPU_GOVERNOR}
 
