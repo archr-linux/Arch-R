@@ -230,6 +230,10 @@ EOF
   ### Take a backup of the system configuration on shutdown
   enable_service save-sysconfig.service
 
+  ### Launcher modules with network never reach this device's own
+  ### addresses (archr-launcher docs/modulos.md, iptables from connman).
+  enable_service archr-modules-firewall.service
+
   ### Expose PortMaster compat libs (/usr/lib/compat) in the default
   ### linker path. No ld.so.cache ships, so love_11.5 et al. fail on
   ### libtheoradec.so.1 unless it is symlinked into /usr/lib (see

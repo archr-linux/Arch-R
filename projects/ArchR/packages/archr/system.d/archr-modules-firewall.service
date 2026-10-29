@@ -1,0 +1,16 @@
+[Unit]
+Description=ArchR launcher modules: no access to this device's own addresses
+# Not on the boot's critical path: the launcher gives modules network only
+# after this ran (it checks /run/archr/modules-firewall).
+DefaultDependencies=no
+After=local-fs.target
+Before=shutdown.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/archr-modules-firewall
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
