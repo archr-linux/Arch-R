@@ -27,7 +27,9 @@ J_CONF_LOCK="${TMP}/system.cfg.lock"
 PATH="${SCRIPTS}:\${PATH}"
 PROFILE
 mkdir -p "${TMP}/ra" "${TMP}/roms/savestates" "${TMP}/joypads"
-printf 'I: Bus=0019\nN: Name="odroidgo3-joypad"\nH: Handlers=event2 js0\n' >"${TMP}/devices"
+# A USB pad took js0; the built-in one sits on the host bus.
+printf '%s\n' 'I: Bus=0003 Vendor=045e' 'N: Name="Xbox Wireless Controller"' 'H: Handlers=event5 js0' '' \
+  'I: Bus=0019 Vendor=1234' 'N: Name="odroidgo3-joypad"' 'H: Handlers=event2 js1' >"${TMP}/devices"
 cat >"${TMP}/joypads/odroidgo3-joypad.cfg" <<'PAD'
 input_device = "odroidgo3-joypad"
 input_select_btn = "12"
@@ -116,6 +118,13 @@ printf '%s\n' "system.autohotkeys=0" >"${TMP}/system.cfg"
 sed -i 's/^input_menu_toggle_btn = .*/input_menu_toggle_btn = "9"/' "${R}"
 bash "${HK}" --force "${R}"
 check "autohotkeys=0 writes nothing" "has 'input_menu_toggle_btn = \"9\"' '${R}'"
+printf '%s\n' "system.autohotkeys=1" >"${TMP}/system.cfg"
+check "stamp names the built-in pad" "[ \"\$(cat '${TMP}/ra/.archr-hotkeys')\" = odroidgo3-joypad ]"
+bash "${HK}" "${R}"
+check "same pad: hotkeys stay" "has 'input_menu_toggle_btn = \"9\"' '${R}'"
+echo "old-joypad" >"${TMP}/ra/.archr-hotkeys"
+bash "${HK}" "${R}"
+check "another built-in pad: written again" "has 'input_menu_toggle_btn = \"2\"' '${R}'"
 
 # Migration: old factory values go, user values and other keys stay, once.
 # An older installation: today's defaults plus some of the old factory lines.

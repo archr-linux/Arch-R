@@ -26,21 +26,26 @@ DEVICES="${ARCHR_INPUT_DEVICES:-/proc/bus/input/devices}"
 
 # system.autohotkeys=0 leaves the hotkeys to RetroArch alone.
 [ "$(get_setting system.autohotkeys)" = "1" ] || exit 0
-[ "${FORCE}" = 1 ] || [ ! -e "${STAMP}" ] || exit 0
 [ -f "${CONFIG}" ] || exit 1
 
-if grep -q "Sony Interactive Entertainment DualSense Wireless Controller" "${DEVICES}"
-then
-    # InputPlumber virtual DS5
-    PAD="Sony Interactive Entertainment DualSense Wireless Controller"
-elif grep -q "js0" "${DEVICES}"
-then
-    PAD=$(grep -b4 js0 "${DEVICES}" | awk 'BEGIN {FS="\""}; /Name/ {printf $2}')
-else
-    PAD=$(grep -b4 joypad "${DEVICES}" | awk 'BEGIN {FS="\""}; /Name/ {printf $2}')
-fi
+# The built-in pad: a joystick on the host bus (0019), never just js0, which
+# may be a USB pad. Else the InputPlumber virtual DualSense (SM8550/SM8650),
+# else a joystick named like a joypad.
+builtin() {
+    awk -F'"' -v want="${1}" '
+        /^I:/ { host = ($0 ~ /Bus=0019/) }
+        /^N:/ { name = $2 }
+        /^H:/ && /js[0-9]/ {
+            if ((want == "host" && host) || (want != "host" && name ~ want)) { print name; exit }
+        }' "${DEVICES}"
+}
+PAD=$(builtin host)
+[ -n "${PAD}" ] || PAD=$(builtin "DualSense Wireless Controller")
+[ -n "${PAD}" ] || PAD=$(builtin joypad)
 # Without the pad's autoconfig nothing is written, and the next game retries.
 [ -n "${PAD}" ] && [ -f "${JOYPADS}/${PAD}.cfg" ] || exit 1
+# Done for this pad already; another built-in pad gets its own hotkeys.
+[ "${FORCE}" = 1 ] || [ "$(cat "${STAMP}" 2>/dev/null)" != "${PAD}" ] || exit 0
 
 # The autoconfig value of an input_* key, quotes removed.
 value() {
