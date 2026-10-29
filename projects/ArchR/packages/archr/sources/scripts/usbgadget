@@ -519,9 +519,10 @@ cleanup_usb_network() {
 
 # Rebuilds the network gadget for the current USB_RNDIS; on failure leaves
 # none, so the caller can rebuild the previous one.
+# A process of its own: called from a condition, a subshell would ignore
+# prepare_usb_network's set -e and report any failure as success.
 rebuild_cdc() {
-	[ -d "${g_cdc}" ] && ( cleanup_usb_network ) >/dev/null 2>&1
-	( prepare_usb_network ) >/dev/null 2>&1 && return 0
+	"${SELF}" rebuild-network "${USB_RNDIS}" >/dev/null 2>&1 && return 0
 	( cleanup_usb_network ) >/dev/null 2>&1
 	return 1
 }
@@ -816,6 +817,12 @@ case "$1" in
 		;;
 	"supervise")
 		internet_supervise
+		;;
+	"rebuild-network")
+		# Internal, for compat: the gadget again with the function in $2.
+		USB_RNDIS=$2
+		[ -d "${g_cdc}" ] && cleanup_usb_network
+		prepare_usb_network
 		;;
 	"file_transfer")
 		usb_start mtp
