@@ -33,12 +33,14 @@ makeinstall_target() {
   mkdir -p ${INSTALL}/usr/config/
   rsync -av ${PKG_DIR}/config/* ${INSTALL}/usr/config/
 
-  ### Data in EmulationStation formats that ArchR scripts read
-  ### (es_input.cfg, es_features.cfg) stays at its old paths for now.
+  ### es_input.cfg stays where ArchR scripts read it; emulator and core
+  ### options are read-only data for the launcher.
+  mkdir -p ${INSTALL}/usr/share/archr
+  mv ${INSTALL}/usr/config/emulationstation/es_features.cfg ${INSTALL}/usr/share/archr/es_features.cfg
   ### Without Vulkan, drop the Vulkan options.
   if [ ! "${VULKAN_SUPPORT}" = "yes" ]
   then
-    sed -i '/vulkan/d' ${INSTALL}/usr/config/emulationstation/es_features.cfg
+    sed -i '/vulkan/d' ${INSTALL}/usr/share/archr/es_features.cfg
   fi
   ### Vertical arcade games, for vertical-check.
   install -Dm644 ${PKG_DIR}/sources/arcaderoms.xml ${INSTALL}/usr/share/archr/arcaderoms.xml
