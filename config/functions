@@ -1621,8 +1621,24 @@ install_driver_addon_files() {
 
 
 ### TARGET CONFIGURATION HELPERS ###
+# 60600-61099 belongs to archr-launcher modules (one uid/gid each, recorded
+# at run time in /run/userdb). No package may take an id from it.
+ARCHR_MODULE_ID_FIRST=60600
+ARCHR_MODULE_ID_LAST=61099
+check_reserved_id() {
+  # Usage: check_reserved_id "name" "id"
+  case "$2" in
+    ''|*[!0-9]*) return 0 ;;
+  esac
+  if [ "$2" -ge "${ARCHR_MODULE_ID_FIRST}" ] && [ "$2" -le "${ARCHR_MODULE_ID_LAST}" ]; then
+    die "$1: id $2 is in ${ARCHR_MODULE_ID_FIRST}-${ARCHR_MODULE_ID_LAST}, reserved for archr-launcher modules"
+  fi
+}
+
 add_user() {
   # Usage: add_user "username" "password" "userid" "groupid" "description" "home" "shell"
+  check_reserved_id "$1" "$3"
+  check_reserved_id "$1" "$4"
   mkdir -p ${INSTALL}/etc
   touch ${INSTALL}/etc/passwd
   if ! grep -q "^$1:" ${INSTALL}/etc/passwd; then
@@ -1646,6 +1662,7 @@ add_user() {
 
 add_group() {
   # Usage: add_group "groupname" "groupid" ("members")
+  check_reserved_id "$1" "$2"
   mkdir -p ${INSTALL}/etc
   touch ${INSTALL}/etc/group
   if [ -z "`grep "$1:" ${INSTALL}/etc/group`" ]; then
