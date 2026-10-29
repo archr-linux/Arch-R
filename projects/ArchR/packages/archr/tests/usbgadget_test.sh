@@ -73,6 +73,8 @@ while [ $# -gt 0 ]; do case $1 in -s) s=$2; shift ;; -p) p=$2; shift ;; esac; sh
 echo $$ >"$p"; echo $$ >>"$T/pids"
 [ -s "$T/lease" ] || { sleep 1; exit 1; }
 env $(cat "$T/lease") "$s" bound
+# The PC stops sharing: the lease ends and udhcpc -n gives up.
+if [ -e "$T/lose" ]; then sleep 1; env interface=gadget "$s" deconfig; exit 1; fi
 exec sleep 600'
 tool "${R}/usr/sbin/udhcpd" '
 echo "udhcpd $*" >>"$T/calls"
@@ -152,6 +154,15 @@ echo 0 >"${T}/wifi.enabled"
 echo "${LEASE}" >"${T}/lease"
 carrier 1
 wait_for "replug: online" '[ "$(field link)" = online ]'
+
+# The PC stops sharing while connected: a lost lease falls back too.
+carrier 0
+wait_for "lease lost: unplugged first" 'seen waiting'
+touch "${T}/lose"
+carrier 1
+wait_for "lease lost: falls back to the network mode" '[ "$(field link)" = fallback ]'
+check "lease lost: fixed address" '[ "$(field address)" = 169.254.170.2 ]'
+rm -f "${T}/lose"
 
 # Leaving the mode stops the supervisor and gives Wi-Fi back as it was.
 gadget disabled >/dev/null 2>&1
