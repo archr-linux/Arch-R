@@ -88,7 +88,7 @@ PKG_MESON_OPTS_TARGET="--libdir=/usr/lib \
                        -Dnss-myhostname=false \
                        -Dnss-mymachines=false \
                        -Dnss-resolve=true \
-                       -Dnss-systemd=false \
+                       -Dnss-systemd=true \
                        -Dman=false \
                        -Dhtml=false \
                        -Dlink-udev-shared=true \
