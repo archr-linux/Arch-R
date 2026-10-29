@@ -3,7 +3,9 @@
 # Copyright (C) 2025-present ArchR (https://github.com/archr-linux/Arch-R)
 #
 # Host test for automount with a second card: fake /proc, devices and
-# mount/umount/blkid/fsck that record calls and copy a card's files in.
+# mount/umount/blkid/fsck/mergerfs that record calls and copy a card's files
+# in. The fake union never touches files, so the file lists prove that the
+# script itself never moves, copies or deletes a ROM.
 #   bash projects/ArchR/packages/archr/tests/automount_test.sh
 
 set -u
@@ -40,6 +42,7 @@ tool mount '
 echo "mount $*" >>"$T/calls"
 for a in "$@"; do case $a in -*) ;; *) src=$dst; dst=$a ;; esac; done
 case " $* " in
+  *" --make-private "*) ;;
   *" --bind "*) echo "$src $dst none rw 0 0" >>"$T/proc/mounts" ;;
   *" -t overlay "*) echo "overlay $dst overlay rw 0 0" >>"$T/proc/mounts" ;;
   *) [ -e "$src.failonce" ] && { rm "$src.failonce"; exit 32; }
@@ -53,8 +56,13 @@ dst=${!#}
 grep -q " $dst " "$T/proc/mounts" || exit 1
 awk -v p="$dst" "\$2 != p" "$T/proc/mounts" >"$T/m" && mv "$T/m" "$T/proc/mounts"
 case $dst in */games-external) find "$dst" -mindepth 1 -delete ;; esac'
+tool mergerfs '
+echo "mergerfs $*" >>"$T/calls"
+[ -e "$T/mergerfs-fails" ] && exit 1
+echo "archr-roms ${!#} fuse.mergerfs rw 0 0" >>"$T/proc/mounts"'
 tool fsck 'echo "fsck $*" >>"$T/calls"; [ -e "$T/slow" ] && sleep 5; exit "$(cat "$T/fsck-rc" 2>/dev/null || echo 0)"'
 
+tool systemd-run 'echo "systemd-run $*" >>"$T/calls"; while [ "${1#-}" != "$1" ]; do shift; done; exec "$@"'
 for t in lsmod modprobe sync systemd-tmpfiles; do tool "$t" ':'; done
 export PATH="${BIN}:${PATH}"
 
@@ -67,7 +75,7 @@ SD2="${TMP}/dev/mmcblk0p1"
 # A fresh device: SD1 (system) mounted, its ROMs in place, and the card
 # described by: type, size in KiB, and files relative to the card root.
 setup() {
-  rm -rf "${TMP:?}"/{storage,proc,run,dev,calls,log,busy,system.cfg,fsck-rc}
+  rm -rf "${TMP:?}"/{storage,proc,run,dev,calls,log,busy,system.cfg,fsck-rc,mergerfs-fails}
   mkdir -p "${STORAGE}/roms/snes" "${EXT}" "${TMP}/proc" "${TMP}/dev" "${TMP}/sys"
   touch "${STORAGE}/roms/snes/Internal.sfc"
   printf 'system.merged.storage=%s\n' "${MERGED:-0}" >"${TMP}/system.cfg"
@@ -91,6 +99,11 @@ check() {
 }
 mounted() { grep -q " $1 " "${TMP}/proc/mounts"; }
 called() { grep -q -- "$1" "${TMP}/calls" 2>/dev/null; }
+fstype() { awk -v p="$1" '$2 == p {t = $3} END {print t}' "${TMP}/proc/mounts"; }
+setting() { grep -x "system.merged.storage=$1" "${TMP}/system.cfg" >/dev/null; }
+# Every file on both cards with its size: what must never change.
+files() { (cd "${TMP}" && find storage/roms "${SD2#${TMP}/}.card" "${EXT#${TMP}/}" -type f ! -name .tmp-archr -printf '%p %s\n' | sort); }
+call_line() { grep -n -- "$1" "${TMP}/calls" | head -1 | cut -d: -f1; }
 
 bash -n "${SCRIPT}" && echo "ok   bash -n" || { echo "FAIL bash -n"; FAILED=1; }
 
@@ -100,7 +113,6 @@ run
 check "no second card: nothing mounted" '! [ -e "${TMP}/calls" ] && ! [ -e "${LINK}" ]'
 check "no second card: /storage/roms untouched" '! mounted "${STORAGE}/roms" && [ -f "${STORAGE}/roms/snes/Internal.sfc" ]'
 check "no second card: no roms/ made in games-external" '! [ -e "${EXT}/roms" ]'
-check "no second card: merged.device defaults to internal" 'grep -qx "system.merged.device=internal" "${TMP}/system.cfg"'
 
 # dArkOS layout: exFAT, systems at the card root.
 setup exfat 62000000 "snes/Mario (Ü).sfc" "gb/Tetris.gb"
@@ -176,15 +188,85 @@ run eject
 RC=$?
 check "eject: 0, card and link gone" '[ ${RC} -eq 0 ] && ! mounted "${EXT}" && ! [ -e "${LINK}" ]'
 
-# Unified storage, explicit and ext4 only.
-MERGED=1 setup ext4 62000000 "roms/snes/B.sfc"
+# Unified storage: mergerfs, any filesystem, off by default.
+BRANCH="${AUTOMOUNT_RUN}/sd1-roms"
+OPTS="category.create=epmfs,func.getattr=newest,minfreespace=1G,moveonenospc=true,cache.files=partial,dropcacheonclose=true,fsname=archr-roms"
+MERGED=1 setup exfat 62000000 "snes/Mario.sfc" "gba/Zelda.gba"
+touch "${STORAGE}/.ms_unsupported"
 run
-check "merged ext4: overlay on /storage/roms, no link" '[ "$(awk -v p="${STORAGE}/roms" "\$2 == p {print \$3}" "${TMP}/proc/mounts")" = overlay ] && ! [ -e "${LINK}" ]'
+# Taken once the card is in (the fake mount copies its files in).
+BEFORE=$(files)
+check "unified exfat: one /storage/roms, SD1 branch first" 'called "mergerfs -o ${OPTS} ${BRANCH}:${EXT} ${STORAGE}/roms" && [ "$(fstype "${STORAGE}/roms")" = fuse.mergerfs ]'
+check "unified: the daemon gets its own scope" 'called "systemd-run --scope --quiet --collect mergerfs"'
+check "unified: SD1 bound privately as its branch" 'called "mount --bind ${STORAGE}/roms ${BRANCH}" && called "mount --make-private ${BRANCH}"'
+check "unified: no second folder for the launcher" '! [ -e "${LINK}" ]'
+check "unified: old overlay markers dropped" '! [ -e "${STORAGE}/.ms_unsupported" ]'
+: >"${TMP}/calls"
+run
+check "unified restart: nothing remounted" '! [ -s "${TMP}/calls" ]'
+
+# Off, on, off, on: only mounts change, never a file.
+run unify 0
+RC=$?
+check "unify 0: union gone lazily, both folders listed, setting saved" '[ ${RC} -eq 0 ] && called "umount -l ${STORAGE}/roms" && [ -z "$(fstype "${STORAGE}/roms")" ] && [ "$(readlink "${LINK}")" = "${EXT}" ] && setting 0'
+check "unify 0: the card stays mounted, SD1 branch unbound" 'mounted "${EXT}" && ! mounted "${BRANCH}"'
+run unify 1
+run unify 0
+run unify 1
+RC=$?
+check "unify 1: one union again, no link, setting saved" '[ ${RC} -eq 0 ] && [ "$(grep -c " ${STORAGE}/roms " "${TMP}/proc/mounts")" -eq 1 ] && ! [ -e "${LINK}" ] && setting 1'
+check "on/off/on: no file lost, moved or duplicated" '[ "$(files)" = "${BEFORE}" ]'
+
+# Pulled out while unified: the union goes first, SD1 is /storage/roms again.
 run remove "${SD2}"
-check "merged: remove drops the overlay first" 'called "umount -l ${STORAGE}/roms" && ! mounted "${STORAGE}/roms" && ! mounted "${EXT}"'
-MERGED=1 setup exfat 62000000 "snes/B.sfc"
+check "remove unified: union, then card, lazily" '[ "$(call_line "umount -l ${STORAGE}/roms")" -lt "$(call_line "umount -l ${EXT}")" ] && ! mounted "${STORAGE}/roms" && ! mounted "${EXT}" && ! [ -e "${LINK}" ]'
+check "remove unified: SD1 files in place" '[ -f "${STORAGE}/roms/snes/Internal.sfc" ]'
+
+# A card with roms/ joins through that folder.
+MERGED=1 setup vfat 3900000 "roms/snes/Zelda.sfc"
 run
-check "merged on exfat: no overlay, link instead" '! mounted "${STORAGE}/roms" && [ -L "${LINK}" ]'
+check "unified vfat: roms/ is the SD2 branch" 'called "mergerfs -o ${OPTS} ${BRANCH}:${EXT}/roms ${STORAGE}/roms"'
+# Eject: busy card puts the union back; then done.
+echo "${EXT}" >"${TMP}/busy"
+run eject
+RC=$?
+check "eject busy unified: 1, union back" '[ ${RC} -eq 1 ] && [ "$(fstype "${STORAGE}/roms")" = fuse.mergerfs ] && mounted "${EXT}"'
+rm "${TMP}/busy"
+run eject
+RC=$?
+check "eject unified: 0, union and card gone" '[ ${RC} -eq 0 ] && ! mounted "${STORAGE}/roms" && ! mounted "${EXT}"'
+
+# No second card at boot: SD1 alone, the setting waits for a card.
+MERGED=1 setup
+run
+check "unified, no card: plain /storage/roms" '! called mergerfs && ! mounted "${STORAGE}/roms"'
+run unify 0
+run unify 1
+RC=$?
+check "unify without a card: saved, nothing mounted" '[ ${RC} -eq 0 ] && setting 1 && ! called mergerfs'
+run unify 2
+RC=$?
+check "unify rejects other values" '[ ${RC} -eq 1 ] && setting 1'
+
+# mergerfs fails: both folders stay listed, the switch goes back.
+setup exfat 62000000 "snes/A.sfc"
+run
+touch "${TMP}/mergerfs-fails"
+run unify 1
+RC=$?
+check "union fails: 1, setting back to 0, link kept, SD1 unbound" '[ ${RC} -eq 1 ] && setting 0 && [ -L "${LINK}" ] && ! mounted "${BRANCH}" && ! mounted "${STORAGE}/roms"'
+MERGED=1 setup exfat 62000000 "snes/A.sfc"
+touch "${TMP}/mergerfs-fails"
+run
+RC=$?
+check "union fails at boot: card still listed, boot goes on" '[ ${RC} -eq 0 ] && mounted "${EXT}" && [ -L "${LINK}" ]'
+
+# The old overlay's leftovers: its work dir goes, every file stays.
+MERGED=1 setup ext4 62000000 "roms/snes/B.sfc" ".tmp/games-workdir/work/x"
+mkdir -p "${STORAGE}/.tmp/games-workdir/work" "${STORAGE}/.games-internal-bind/roms"
+run
+check "overlay leftovers: work dirs and bind dir removed" '! [ -e "${EXT}/.tmp/games-workdir" ] && ! [ -e "${STORAGE}/.tmp/games-workdir" ] && ! [ -e "${STORAGE}/.games-internal-bind" ]'
+check "overlay leftovers: ROMs untouched, union mounted" '[ -f "${EXT}/roms/snes/B.sfc" ] && [ -f "${STORAGE}/roms/snes/Internal.sfc" ] && [ "$(fstype "${STORAGE}/roms")" = fuse.mergerfs ]'
 
 # Automount off: never mounts.
 setup exfat 62000000 "snes/A.sfc"

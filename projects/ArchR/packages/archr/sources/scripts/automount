@@ -3,16 +3,22 @@
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 # Copyright (C) 2025-present ArchR (https://github.com/archr-linux/Arch-R)
 #
-# Second microSD (SD2). The card is mounted at /storage/games-external only;
-# /storage/roms (SD1) is never covered. Its ROM folder, <card>/roms when it
-# exists, else the card root (dArkOS layout), is published as the symlink
-# /run/archr/roms2, which the launcher lists next to /storage/roms.
-# Unified storage (system.merged.storage=1, ext4/btrfs only) is the explicit
-# exception: an overlay of both cards on /storage/roms, and no symlink.
+# Second microSD (SD2). The card is mounted at /storage/games-external only.
+# Its ROM folder, <card>/roms when it exists, else the card root (dArkOS
+# layout), is published as the symlink /run/archr/roms2, which the launcher
+# lists next to /storage/roms.
+#
+# Unified storage (system.merged.storage=1, off by default) shows both cards
+# as one /storage/roms instead: a mergerfs union of SD1's /storage/roms and
+# the SD2 ROM folder, and no symlink. Nothing is moved or reformatted; each
+# card keeps its own files and stays readable on its own in a PC. New files
+# go to the card that already holds their folder (epmfs: a save stays next
+# to its game). Turning it off only unmounts the union.
 #
 #   automount              boot, or a card inserted (archr-automount.service)
 #   automount eject        unmount the card now; 0 done, 1 busy, 2 no card
 #   automount remove DEV   udev: DEV was pulled out, lazy unmount
+#   automount unify 0|1    save unified storage and apply it now; 1 failed
 #
 # Paths and the profile can be redirected for the host test (tests/).
 
@@ -21,12 +27,17 @@
 STORAGE="${AUTOMOUNT_STORAGE:-/storage}"
 PROC="${AUTOMOUNT_PROC:-/proc}"
 SYS_BLOCK="${AUTOMOUNT_SYS:-/sys/class/block}"
-ROMS2="${AUTOMOUNT_RUN:-/run/archr}/roms2"
+RUN="${AUTOMOUNT_RUN:-/run/archr}"
+ROMS2="${RUN}/roms2"
 # Present while the mounted card failed its check; the Storage page warns.
 ERRORS="${ROMS2}.errors"
 MS_PATH="${STORAGE}/roms"
 EXTERNAL="${STORAGE}/games-external"
-INTERNAL_BIND="${STORAGE}/.games-internal-bind/roms"
+# SD1's /storage/roms as a union branch: a branch cannot be the mount point
+# itself, so it is bound here first (private: the union must not propagate
+# onto its own branch).
+SD1_BRANCH="${RUN}/sd1-roms"
+UNION_OPTS="category.create=epmfs,func.getattr=newest,minfreespace=1G,moveonenospc=true,cache.files=partial,dropcacheonclose=true,fsname=archr-roms"
 # Smaller partitions are boot/firmware areas, never a games card. The old
 # 8 GiB floor (JELOS: skip a handheld's internal eMMC) hid real 4/8 GB cards;
 # the system card is now skipped by name (system_disk) instead.
@@ -55,23 +66,92 @@ system_disk() {
   disk_of "$(mounted_at "${STORAGE}")"
 }
 
+# The second card's ROM folder.
+card_roms() {
+  if [ -d "${EXTERNAL}/roms" ]; then echo "${EXTERNAL}/roms"; else echo "${EXTERNAL}"; fi
+}
+
 publish() {
-  local roms=${EXTERNAL}
-  [ -d "${EXTERNAL}/roms" ] && roms="${EXTERNAL}/roms"
-  mkdir -p "${ROMS2%/*}"
-  ln -sfn "${roms}" "${ROMS2}"
-  log $0 "Second card ROMs at ${roms}"
+  mkdir -p "${RUN}"
+  ln -sfn "$(card_roms)" "${ROMS2}"
+  log $0 "Second card ROMs at $(card_roms)"
+}
+
+# Unified storage was an overlay (ext4/btrfs only) before mergerfs. Its files
+# are plain files on either card and stay where they are; only its bookkeeping
+# goes: the work dir and the whiteouts (0:0 character devices standing for
+# files deleted through the overlay), which would shadow real files in the
+# union. A file deleted that way while the other card still had it shows up
+# again: nothing is lost. Runs once, while a work dir is left.
+forget_overlay() {
+  local work found=
+  for work in "${STORAGE}/.tmp/games-workdir" "${EXTERNAL}/.tmp/games-workdir"
+  do
+    [ -d "${work}" ] || continue
+    rm -rf "${work}"
+    found=1
+  done
+  rmdir "${STORAGE}/.games-internal-bind/roms" "${STORAGE}/.games-internal-bind" 2>/dev/null
+  [ -n "${found}" ] || return 0
+  log $0 "Dropping the old overlay's whiteouts."
+  find "${MS_PATH}" "$(card_roms)" -xdev -type c -exec sh -c \
+    'for f; do [ "$(stat -c %t:%T "$f")" = 0:0 ] && rm -f "$f"; done' sh {} +
+}
+
+unified() {
+  case $(fstype_at "${MS_PATH}") in
+    fuse.mergerfs | overlay) return 0 ;;
+  esac
+  return 1
+}
+
+# Both cards as one /storage/roms. On failure the two folders stay apart.
+unify() {
+  unified && return 0
+  forget_overlay
+  mkdir -p "${SD1_BRANCH}"
+  if [ -z "$(mounted_at "${SD1_BRANCH}")" ]
+  then
+    mount --bind "${MS_PATH}" "${SD1_BRANCH}" && mount --make-private "${SD1_BRANCH}" || return 1
+  fi
+  # Its own scope: restarting automount (a card inserted) or the launcher
+  # (which runs "automount unify") must not kill the union's daemon.
+  if ! systemd-run --scope --quiet --collect \
+    mergerfs -o "${UNION_OPTS}" "${SD1_BRANCH}:$(card_roms)" "${MS_PATH}"
+  then
+    log $0 "Cannot unify ${MS_PATH} and $(card_roms)."
+    umount "${SD1_BRANCH}" 2>/dev/null
+    return 1
+  fi
+  rm -f "${ROMS2}"
+  log $0 "Unified ${MS_PATH} and $(card_roms)."
+}
+
+# Back to two folders. Lazy, so it never fails: open files keep working
+# through the detached union, while every new path reaches SD1 directly. The
+# SD1 branch stays bound while the union still uses it, so a write through
+# it always lands on SD1 (it is reused by the next unify).
+separate() {
+  unified || return 0
+  umount -l "${MS_PATH}"
+  umount "${SD1_BRANCH}" 2>/dev/null
+  umount "${STORAGE}/.games-internal-bind/roms" 2>/dev/null
+  log $0 "${MS_PATH} is SD1 alone again."
+}
+
+# The card is mounted: unified or two folders, as the setting says.
+apply() {
+  if [ "$(get_setting system.merged.storage)" = 1 ]
+  then
+    unify && return 0
+    publish
+    return 1
+  fi
+  separate
+  publish
 }
 
 start_ms() {
-  ### Entrypoint will be either games card found (external), or not found (internal).
-  MS_DEVICE=$(get_setting system.merged.device)
-  ### If the merge target isn't defined and we have an external microsd, we should use the external card by default.
-  if [ -z "${MS_DEVICE}" ] && [ "${1}" = "external" ]
-  then
-    set_setting system.merged.device external
-  fi
-
   mkdir -p "${MS_PATH}"
 
   # Migrate: if games-internal/roms has content but roms/ is empty, move it
@@ -89,48 +169,19 @@ start_ms() {
   fi
 
   [ "${1}" = "external" ] || return 0
-
-  if [ -e "${STORAGE}/.ms_unsupported" ] || [ ! "$(get_setting system.merged.storage)" = 1 ]
-  then
-    publish
-    return 0
-  fi
-  if [ -n "$(mounted_at "${MS_PATH}")" ]
-  then
-    log $0 "${MS_PATH} already merged."
-    return 0
-  fi
-
-  ### Unified storage: an overlay of both cards on /storage/roms.
-  case ${MS_DEVICE} in
-    internal) LOWER="external"; UPPER="internal" ;;
-    *)        LOWER="internal"; UPPER="external" ;;
-  esac
-  log $0 "Enabling merged storage of games-${LOWER} and games-${UPPER} on ${MS_PATH}."
-  # "internal" lives at /storage/roms itself: bind it elsewhere so the overlay
-  # does not use one path as both lowerdir and mount point (-EBUSY).
-  local LOWER_DIR UPPER_DIR WORK_DIR
-  [ "${LOWER}" = "internal" ] && LOWER_DIR="${INTERNAL_BIND}" || LOWER_DIR="${EXTERNAL}/roms"
-  [ "${UPPER}" = "internal" ] && UPPER_DIR="${INTERNAL_BIND}" || UPPER_DIR="${EXTERNAL}/roms"
-  [ "${UPPER}" = "internal" ] && WORK_DIR="${STORAGE}/.tmp/games-workdir" || WORK_DIR="${EXTERNAL}/.tmp/games-workdir"
-  mkdir -p "${INTERNAL_BIND}" "${EXTERNAL}/roms" "${WORK_DIR}"
-  [ -n "$(mounted_at "${INTERNAL_BIND}")" ] || mount --bind "${MS_PATH}" "${INTERNAL_BIND}"
-  mount -t overlay overlay -o lowerdir=${LOWER_DIR},upperdir=${UPPER_DIR},workdir=${WORK_DIR} "${MS_PATH}"
+  # A failed union still leaves both cards listed: never a failed mount.
+  apply || :
 }
 
 ### Drops the card. $1: the device that went away (empty: whatever is
-### mounted); $2: -l for a lazy unmount. Returns 1 when a mount stays busy.
+### mounted); $2: -l for a lazy unmount. Returns 1 when the card stays busy.
 release() {
   local device
   device=$(mounted_at "${EXTERNAL}")
   [ -n "${device}" ] || return 0
   [ -z "${1}" ] || [ "${1}" = "${device}" ] || return 0
   rm -f "${ROMS2}" "${ERRORS}"
-  if [ "$(fstype_at "${MS_PATH}")" = "overlay" ]
-  then
-    umount ${2} "${MS_PATH}" || return 1
-    umount ${2} "${INTERNAL_BIND}" 2>/dev/null
-  fi
+  separate
   umount ${2} "${EXTERNAL}" || return 1
   log $0 "Released ${device}."
 }
@@ -144,6 +195,20 @@ eject() {
     start_ms external
     return 1
   fi
+}
+
+# Saves the switch, then applies it to a mounted card (a card inserted
+# later follows the saved value). A failed union restores the old value.
+set_unified() {
+  local old
+  case ${1} in 0 | 1) ;; *) return 1 ;; esac
+  old=$(get_setting system.merged.storage)
+  set_setting system.merged.storage "${1}"
+  [ -n "$(mounted_at "${EXTERNAL}")" ] || return 0
+  apply && return 0
+  set_setting system.merged.storage "${old:-0}"
+  apply
+  return 1
 }
 
 load_modules() {
@@ -176,15 +241,10 @@ mount_card() {
 
 mount_games() {
   FSTYPE=$(blkid -o value -s TYPE "${1}")
+  # Markers of the old overlay, which needed ext4/btrfs; mergerfs takes any.
+  rm -f "${STORAGE}/.ms_supported" "${STORAGE}/.ms_unsupported"
   case ${FSTYPE} in
-    ext4 | btrfs)
-      rm -f "${STORAGE}/.ms_unsupported"
-      touch "${STORAGE}/.ms_supported"
-    ;;
-    vfat | exfat | ntfs)
-      rm -f "${STORAGE}/.ms_supported"
-      touch "${STORAGE}/.ms_unsupported"
-    ;;
+    ext4 | btrfs | vfat | exfat | ntfs) ;;
     *)
       log $0 "${1}: unsupported filesystem '${FSTYPE}'."
       return 1
@@ -256,6 +316,10 @@ case "${1}" in
     release "${2}" -l
     exit 0
   ;;
+  unify)
+    set_unified "${2}"
+    exit $?
+  ;;
 esac
 
 MOUNT_GAMES=$(get_setting system.automount)
@@ -294,9 +358,5 @@ then
 fi
 
 log $0 "No second card; ${MS_PATH} is used directly."
-if [ -z "$(get_setting system.merged.device)" ]
-then
-  set_setting system.merged.device internal
-fi
 start_ms internal
 create_game_dirs

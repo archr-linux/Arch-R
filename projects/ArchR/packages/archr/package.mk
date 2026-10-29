@@ -19,7 +19,7 @@ PKG_VERSION="$(date +%Y%m%d)"
 PKG_LICENSE="GPLv2"
 PKG_SITE=""
 PKG_URL=""
-PKG_DEPENDS_TARGET="toolchain autostart"
+PKG_DEPENDS_TARGET="toolchain autostart mergerfs"
 PKG_LONGDESC="Arch R Meta Package"
 PKG_TOOLCHAIN="make"
 
