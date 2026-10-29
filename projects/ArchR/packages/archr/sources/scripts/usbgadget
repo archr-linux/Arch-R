@@ -11,9 +11,9 @@
 # For implementation benchmark results, see the end of this file
 
 # The "internet" mode (the console as a DHCP client of the PC's internet
-# sharing) follows the idea of raoni07/OTG-Over-Windows and
-# ctgl1987/arkos-usb-network-mode; this is an independent implementation,
-# no code was taken from either.
+# sharing) and the RNDIS compatibility switch follow the idea of
+# raoni07/OTG-Over-Windows and ctgl1987/arkos-usb-network-mode; this is an
+# independent implementation, no code was taken from either.
 
 # Tests run the script against a fake tree; empty on the device.
 ROOT=${USBGADGET_ROOT:-}
@@ -73,14 +73,16 @@ GADGETNETCONF=${CACHEDIR}/network.conf
 UDHCPCONF=${ROOT}/var/run/udhcpd.conf
 UDHCPPIDFILE=${ROOT}/var/run/udhcpd.pid
 
-for mod in usb_f_ncm usb_f_fs; do
+for mod in usb_f_ncm usb_f_rndis usb_f_fs; do
 	modprobe -q ${mod}
 done
 
 mkdir -p "${CACHEDIR}"
 
 # USB_NET: "local" (fixed address, the console serves DHCP) or "internet".
+# USB_RNDIS: 1 builds the network gadget with RNDIS instead of NCM.
 USB_NET=local
+USB_RNDIS=0
 if [ -r "${GADGETCONF}" ] ; then
 	# shellcheck source=/dev/null
 	. "${GADGETCONF}"
@@ -93,7 +95,7 @@ CURRENT_MODE=$(cat "${ROOT}/sys/class/udc/${UDC_NAME}/function")
 
 # Atomic, so a reader never sources half a file.
 write_conf() {
-	printf 'USB_MODE=%s\nUSB_NET=%s\n' "$1" "${USB_NET}" > "${GADGETCONF}.new" &&
+	printf 'USB_MODE=%s\nUSB_NET=%s\nUSB_RNDIS=%s\n' "$1" "${USB_NET}" "${USB_RNDIS}" > "${GADGETCONF}.new" &&
 		mv "${GADGETCONF}.new" "${GADGETCONF}"
 }
 
@@ -183,6 +185,12 @@ g_cdc="/sys/kernel/config/usb_gadget/cdc"
 verbose=${verbose:-0}
 devversion=0x$(echo $OS_VERSION | cut -b 3-6)   # 0xYYMM; 20241025 -> 0x2410
 
+# NCM by default; RNDIS for Windows 10 builds without an NCM driver. RNDIS
+# costs about twice the CPU of NCM here (benchmarks at the end of this file).
+cdc_function() {
+    if [ "${USB_RNDIS}" = 1 ]; then echo rndis.usb0; else echo ncm.usb0; fi
+}
+
 prepare_usb_network() {
     set -e
     usb_ver="0x0200" # USB 2.0
@@ -192,6 +200,7 @@ prepare_usb_network() {
     cfg1="CDC"
     ms_vendor_code="0xcd" # Microsoft
     ms_qw_sign="MSFT100" # also Microsoft (if you couldn't tell)
+    func=$(cdc_function)
 
     if [ -d ${g_cdc} ]; then
         if [ "$(cat ${g_cdc}/UDC)" != "" ]; then
@@ -226,8 +235,20 @@ prepare_usb_network() {
 
     # Create the CDC function
 
-    mkdir ${g_cdc}/functions/ncm.usb0
-    echo "WINNCM" > ${g_cdc}/functions/ncm.usb0/os_desc/interface.ncm/compatible_id
+    mkdir "${g_cdc}/functions/${func}"
+    if [ "${func}" = rndis.usb0 ]; then
+        # Windows binds its inbox RNDIS driver by this compatible id. The
+        # interface association needs the composite class, and a release of
+        # its own keeps Windows from reusing what it cached for NCM.
+        echo "0xEF" > ${g_cdc}/bDeviceClass
+        echo "0x02" > ${g_cdc}/bDeviceSubClass
+        echo "0x01" > ${g_cdc}/bDeviceProtocol
+        printf '0x%04x\n' $(( devversion ^ 0x8000 )) > ${g_cdc}/bcdDevice
+        echo "RNDIS" > "${g_cdc}/functions/${func}/os_desc/interface.rndis/compatible_id"
+        echo "5162001" > "${g_cdc}/functions/${func}/os_desc/interface.rndis/sub_compatible_id"
+    else
+        echo "WINNCM" > "${g_cdc}/functions/${func}/os_desc/interface.ncm/compatible_id"
+    fi
 
     echo "1" > ${g_cdc}/os_desc/use
     echo "${ms_vendor_code}" > ${g_cdc}/os_desc/b_vendor_code
@@ -242,21 +263,25 @@ prepare_usb_network() {
     dev_mac="82ba1c9278b1"  # Static to make all devices the same network for Windows, switch to "Private" once for all
     host_mac="12$(echo ${smac} | cut -b 3-)"
 
-    echo "${dev_mac}"  > ${g_cdc}/functions/ncm.usb0/dev_addr
-    echo "${host_mac}" > ${g_cdc}/functions/ncm.usb0/host_addr
+    echo "${dev_mac}"  > "${g_cdc}/functions/${func}/dev_addr"
+    echo "${host_mac}" > "${g_cdc}/functions/${func}/host_addr"
     # max_segment_size allows higher MTUs which lead to higher transfer rates and lower CPU usage.
     # However it needs some more work to be done as host needs to set high MTU as well
     #echo "8000" > ${g_cdc}/functions/ncm.usb0/max_segment_size # f_ncm.c: #define MAX_DATAGRAM_SIZE	8000
 
-    # Make NCM the first configuration
-    ln -s ${g_cdc}/functions/ncm.usb0 ${g_cdc}/configs/c.1
+    # Make the network function the first configuration
+    ln -s "${g_cdc}/functions/${func}" "${g_cdc}/configs/c.1"
+    # The OS descriptors only reach Windows from the configuration linked here.
+    if [ "${func}" = rndis.usb0 ]; then
+        ln -s ${g_cdc}/configs/c.1 ${g_cdc}/os_desc
+    fi
 
     if [ -n "$verbose" ]; then echo "Done."; fi
     set +e
 }
 
 gadget_iface() {
-	cat "${ROOT}${g_cdc}/functions/ncm.usb0/ifname" 2>/dev/null
+	cat "${ROOT}${g_cdc}/functions/$(cdc_function)/ifname" 2>/dev/null
 }
 
 has_carrier() {
@@ -445,8 +470,11 @@ cleanup_usb_network() {
     if [ "$(cat ${g_cdc}/UDC)" != "" ]; then
         echo "" > ${g_cdc}/UDC
     fi
-    rm -f ${g_cdc}/configs/c.1/ncm.usb0
-    [ -d ${g_cdc}/functions/ncm.usb0 ] && rmdir ${g_cdc}/functions/ncm.usb0
+    rm -f ${g_cdc}/os_desc/c.1
+    for func in ncm.usb0 rndis.usb0; do
+        rm -f ${g_cdc}/configs/c.1/${func}
+        [ -d "${g_cdc}/functions/${func}" ] && rmdir "${g_cdc}/functions/${func}"
+    done
     [ -d ${g_cdc}/configs/c.1/strings/0x409 ] && rmdir ${g_cdc}/configs/c.1/strings/0x409
     [ -d ${g_cdc}/configs/c.1 ] && rmdir ${g_cdc}/configs/c.1
     [ -d ${g_cdc}/strings/0x409 ] && rmdir ${g_cdc}/strings/0x409
@@ -455,6 +483,36 @@ cleanup_usb_network() {
     rm -f ${UDHCPCONF}
 
     if [ -n "$verbose" ]; then echo "Done."; fi
+}
+
+# Rebuilds the network gadget for the current USB_RNDIS; on failure leaves
+# none, so the caller can rebuild the previous one.
+rebuild_cdc() {
+	[ -d "${g_cdc}" ] && ( cleanup_usb_network ) >/dev/null 2>&1
+	( prepare_usb_network ) >/dev/null 2>&1 && return 0
+	( cleanup_usb_network ) >/dev/null 2>&1
+	return 1
+}
+
+# Saves the RNDIS switch and rebuilds the gadget at once, restarting the
+# network modes. A failed rebuild keeps the previous function and mode.
+set_compat() {
+	case "$1" in 0|1) ;; *) echo "Usage: $0 compat [0|1]" >&2; exit 2 ;; esac
+	[ "$1" = "${USB_RNDIS}" ] && return 0
+	was=${CURRENT_MODE}
+	[ "${was}" = cdc ] && usb_stop
+	old=${USB_RNDIS}
+	USB_RNDIS=$1
+	status=0
+	if ! rebuild_cdc; then
+		echo "Could not build the network gadget" >&2
+		USB_RNDIS=${old}
+		rebuild_cdc
+		status=1
+	fi
+	write_conf "${was}"
+	[ "${was}" = cdc ] && usb_start cdc
+	return ${status}
 }
 
 
@@ -632,8 +690,8 @@ usb_status() {
 	fi
 	wifi=free
 	[ -e "${WIFI_HOLD}" ] && wifi=held
-	printf 'mode=%s\nlink=%s\naddress=%s\nwifi=%s\n' \
-		"${mode}" "${link}" "$(current_ipv4)" "${wifi}"
+	printf 'mode=%s\ncompat=%s\nlink=%s\naddress=%s\nwifi=%s\n' \
+		"${mode}" "${USB_RNDIS}" "${link}" "$(current_ipv4)" "${wifi}"
 }
 
 set_usb_mode() {
@@ -702,6 +760,9 @@ case "$1" in
 		NET_WANT=internet
 		usb_start cdc
 		;;
+	"compat")
+		if [ -z "$2" ]; then echo "${USB_RNDIS}"; else set_compat "$2"; fi
+		;;
 	"status")
 		usb_status
 		;;
@@ -725,6 +786,7 @@ case "$1" in
 		echo "$0                            Show current mode"
 		echo "$0 disabled                   Disable USB gadget"
 		echo "$0 <network|internet|file_transfer>  Activate specified mode"
+		echo "$0 compat [0|1]               Show or set RNDIS instead of NCM"
 		echo "$0 address                    Show network gadget IP address"
 		echo "$0 status                     Show mode, link, address and Wi-Fi hold"
 

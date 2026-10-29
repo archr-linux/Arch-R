@@ -96,6 +96,9 @@ echo "not attached" >"${R}/sys/class/udc/${UDC}/device/usb1/1-0:1.0/usb1-port1/s
 echo cdc >"${R}/sys/class/udc/${UDC}/function"
 printf 'USB_MODE=cdc\nUSB_NET=internet\nUSB_RNDIS=0\n' >"${R}/storage/.cache/usbgadget/usbgadget.conf"
 check "current mode is internet" '[ "$(gadget)" = internet ]'
+check "compatibility off by default" '[ "$(gadget compat)" = 0 ] && [ "$(field compat)" = 0 ]'
+gadget compat 2 >/dev/null 2>&1
+check "compatibility rejects other values" '[ $? = 2 ]'
 setsid "${SCRIPT}" supervise </dev/null >/dev/null 2>&1 &
 
 wait_for "no cable: waiting" '[ "$(field link)" = waiting ]'
