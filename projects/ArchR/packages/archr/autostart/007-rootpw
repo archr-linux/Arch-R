@@ -14,4 +14,4 @@ then
 fi
 
 ROOTPASS=$(get_setting root.password)
-setrootpass "${ROOTPASS}"
+printf '%s\n' "${ROOTPASS}" | setrootpass -
