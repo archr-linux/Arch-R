@@ -22,6 +22,11 @@ SELF=$(readlink -f "$0")
 NETRUN=${ROOT}/run/usbgadget
 LINKFILE=${NETRUN}/link
 WIFI_HOLD=${NETRUN}/wifi-held
+# Set while "compat" restarts the gadget: the hold outlives the restart.
+WIFI_KEEP=${NETRUN}/wifi-keep
+# Seconds without a PC before Wi-Fi comes back: a gadget that re-enumerates
+# (RNDIS switch, host driver reload) is not an unplug.
+UNPLUG_GRACE=${USBGADGET_UNPLUG_GRACE:-5}
 # The supervisor runs as a transient unit: its own cgroup, stopped by name.
 SUPERVISOR_UNIT=usbgadget-internet
 UDHCPC_PID=${NETRUN}/udhcpc.pid
@@ -365,6 +370,7 @@ hold_wifi() {
 }
 
 release_wifi() {
+	[ -e "${WIFI_KEEP}" ] && return 0
 	# mv claims the marker: concurrent callers restore Wi-Fi only once.
 	mv "${WIFI_HOLD}" "${WIFI_HOLD}.$$" 2>/dev/null || return 0
 	rm -f "${WIFI_HOLD}.$$"
@@ -390,8 +396,8 @@ set_link() {
 	echo "$1" > "${LINKFILE}"
 }
 
-# Back to a bare interface, and Wi-Fi as the user had it. Idempotent.
-internet_down() {
+# Back to a bare interface. Idempotent.
+net_down() {
 	[ -f "${UDHCPC_PID}" ] && xargs -r kill < "${UDHCPC_PID}" 2>/dev/null
 	[ -f "${UDHCPPIDFILE}" ] && xargs -r kill < "${UDHCPPIDFILE}" 2>/dev/null
 	rm -f "${UDHCPC_PID}"
@@ -399,6 +405,11 @@ internet_down() {
 		ip -4 address flush dev "${IFACE_NAME}" 2>/dev/null
 		resolvectl revert "${IFACE_NAME}" 2>/dev/null
 	fi
+}
+
+# Leaving the mode: a bare interface, and Wi-Fi as the user had it.
+internet_down() {
+	net_down
 	release_wifi
 }
 
@@ -421,14 +432,21 @@ internet_supervise() {
 	trap 'internet_down; exit 0' TERM INT HUP
 	link=waiting
 	set_link waiting
+	absent=0
 	while internet_active; do
 		if ! has_carrier; then
 			if [ "${link}" != waiting ]; then
-				internet_down
+				net_down
 				link=waiting
 				set_link waiting
 			fi
+			absent=$((absent + 1))
+			if [ "${absent}" -ge "${UNPLUG_GRACE}" ] && [ -e "${WIFI_HOLD}" ]; then
+				rm -f "${WIFI_KEEP}"
+				release_wifi
+			fi
 		elif [ "${link}" = waiting ]; then
+			absent=0
 			hold_wifi
 			link=dhcp
 			set_link dhcp
@@ -497,18 +515,32 @@ rebuild_cdc() {
 
 # Saves the RNDIS switch and rebuilds the gadget at once, restarting the
 # network modes. A failed rebuild keeps the previous function and mode.
+# Exit 1 when the new gadget failed and the previous one runs again; exit 4
+# when neither could be built and the USB function is left off.
 set_compat() {
 	case "$1" in 0|1) ;; *) echo "Usage: $0 compat [0|1]" >&2; exit 2 ;; esac
 	[ "$1" = "${USB_RNDIS}" ] && return 0
 	was=${CURRENT_MODE}
-	[ "${was}" = cdc ] && usb_stop
+	if [ "${was}" = cdc ]; then
+		# The internet mode comes straight back: keep Wi-Fi off meanwhile.
+		# Whatever happens, the keep ends with this command, and Wi-Fi is
+		# held only if a supervisor runs again.
+		mkdir -p "${NETRUN}"
+		: > "${WIFI_KEEP}"
+		trap 'rm -f "${WIFI_KEEP}"; systemctl is-active --quiet "${SUPERVISOR_UNIT}" || release_wifi' EXIT
+		usb_stop
+	fi
 	old=${USB_RNDIS}
 	USB_RNDIS=$1
 	status=0
 	if ! rebuild_cdc; then
-		echo "Could not build the network gadget" >&2
 		USB_RNDIS=${old}
-		rebuild_cdc
+		if ! rebuild_cdc; then
+			echo "The network gadget could not be rebuilt; USB function off" >&2
+			write_conf disabled
+			exit 4
+		fi
+		echo "Could not build the network gadget; the previous one is back" >&2
 		status=1
 	fi
 	write_conf "${was}"

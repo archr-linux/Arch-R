@@ -23,7 +23,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-export USBGADGET_ROOT="${T}/root"
+export USBGADGET_ROOT="${T}/root" USBGADGET_UNPLUG_GRACE=2
 R=${USBGADGET_ROOT}
 UDC=ff300000.usb
 mkdir -p "${R}/etc/profile.d" "${R}/storage/.cache/usbgadget" "${R}/var/run" \
@@ -59,6 +59,7 @@ setsid "$@" </dev/null >/dev/null 2>&1 &
 echo $! >"$T/unit-$unit"; echo $! >>"$T/pids"'
 tool "${T}/bin/systemctl" '
 echo "systemctl $*" >>"$T/calls"
+[ "$1" = is-active ] && { kill -0 "$(cat "$T/unit-$3" 2>/dev/null)" 2>/dev/null; exit; }
 [ "$1" = stop ] || exit 0
 pid=$(cat "$T/unit-$2" 2>/dev/null) || exit 0
 kill "$pid" 2>/dev/null
