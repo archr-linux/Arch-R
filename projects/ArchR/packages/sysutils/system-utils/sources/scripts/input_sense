@@ -4,7 +4,7 @@
 # Copyright (C) 2022-24 JELOS (https://github.com/JustEnoughLinuxOS)
 # Copyright (C) 2024-present ArchR (https://github.com/archr-linux/Arch-R)
 
-. /etc/profile
+. "${INPUT_SENSE_PROFILE:-/etc/profile}"
 
 # Remove or comment out 'set -e' so the script doesn't exit on a single error:
 # set -e
@@ -35,6 +35,11 @@ set -o pipefail
 #   hotkey.brightness=BTN_DPAD_RIGHT+BTN_DPAD_LEFT  function modifier + up/down
 #   hotkey.brightness.enabled=1
 #
+#   idle.timeout=0                      minutes without any key event, then
+#   idle.timeout.game=0                 the power button's fake suspend; the
+#                                       second applies while a game runs.
+#                                       0 or unset: never.
+#
 #   Any value other than 0 enables an action. Each button should differ
 #   from the modifiers and from the other hotkeys: the first match wins.
 #   With InputPlumber, BTN_NORTH and BTN_WEST are swapped as before, so the
@@ -60,6 +65,11 @@ KEY_VOLUME_DOWN=$(get_setting key.volume.down)
 
 FUNCTION_VOLUME_UP_EVENT='*('${KEY_VOLUME_UP}'), value *'
 FUNCTION_VOLUME_DOWN_EVENT='*('${KEY_VOLUME_DOWN}'), value *'
+
+# The power button's suspend, also run after inactivity. Its flag file
+# says the device is already suspended.
+: "${FAKE_SUSPEND:=/usr/bin/archr-fake-suspend}"
+: "${FAKE_SUSPEND_FLAG:=/var/run/power-fake-suspend-active.flag}"
 
 FUNCTION_POWER_RELEASED_EVENT='*(KEY_POWER), value 0'
 FUNCTION_POWER_PRESSED_EVENT='*(KEY_POWER), value 1'
@@ -328,6 +338,58 @@ execute_action() {
   fi
 }
 
+### Inactivity, see the table at the top. Seconds per minute: the host
+### test shortens it.
+: "${IDLE_UNIT:=60}"
+idle_limit() {
+  local VALUE="$(get_setting "${1}")"
+  [[ "${VALUE}" =~ ^[0-9]{1,4}$ ]] && echo $(( 10#${VALUE} * IDLE_UNIT )) || echo 0
+}
+IDLE_MENU=$(idle_limit idle.timeout)
+IDLE_GAME=$(idle_limit idle.timeout.game)
+# The shortest limit set: the longest the event loop waits before looking.
+IDLE_STEP=${IDLE_MENU}
+if [ "${IDLE_GAME}" -gt 0 ] && { [ "${IDLE_STEP}" -eq 0 ] || [ "${IDLE_GAME}" -lt "${IDLE_STEP}" ]; }; then
+  IDLE_STEP=${IDLE_GAME}
+fi
+
+idle_suspend() {
+  [ -e "${FAKE_SUSPEND_FLAG}" ] && return
+  ${DEBUG} && log $0 "Idle: suspending"
+  ${FAKE_SUSPEND} power &
+}
+
+# Read the next event into ${line}. With a limit set the read times out when
+# the limit may have passed; the state decides which one applies (a game runs
+# while runemu.sh does, as archr-fake-suspend sees it). Past it, suspend once
+# and count again. No limit: a plain blocking read.
+IDLE_SINCE=${SECONDS}
+IDLE_WAKE=$(( SECONDS + IDLE_STEP ))
+next_event() {
+  local LIMIT RC
+  while [ "${IDLE_STEP}" -gt 0 ]; do
+    read -t "$(( IDLE_WAKE > SECONDS ? IDLE_WAKE - SECONDS : 1 ))" line
+    RC=$?
+    if [ ${RC} -le 128 ]; then
+      IDLE_SINCE=${SECONDS}
+      IDLE_WAKE=$(( SECONDS + IDLE_STEP ))
+      return ${RC}
+    fi
+    LIMIT=${IDLE_MENU}
+    pgrep -f /usr/bin/runemu.sh >/dev/null 2>&1 && LIMIT=${IDLE_GAME}
+    if [ "${LIMIT}" -gt 0 ] && [ $(( SECONDS - IDLE_SINCE )) -ge "${LIMIT}" ]; then
+      idle_suspend
+      IDLE_SINCE=${SECONDS}
+    fi
+    if [ "${LIMIT}" -gt 0 ]; then
+      IDLE_WAKE=$(( IDLE_SINCE + LIMIT ))
+    else
+      IDLE_WAKE=$(( SECONDS + IDLE_STEP ))
+    fi
+  done
+  read line
+}
+
 ### Search the system for useful devices to monitor for inputs.
 INPUT_DEVICES=()
 
@@ -407,7 +469,7 @@ set +e
   done
 
   wait  # Wait for all background loops (they never end unless forcibly stopped)
-) | grep --line-buffered "EV_KEY\|EV_SW\|error reading" | while read line; do
+) | grep --line-buffered "EV_KEY\|EV_SW\|error reading" | while next_event; do
 
     # Parse lines from any evtest instance:
     case ${line} in
@@ -481,15 +543,15 @@ set +e
       ;;
       (${FUNCTION_POWER_PRESSED_EVENT})
         ${DEBUG} && log $0 "${FUNCTION_POWER_PRESSED_EVENT}: Pressed"
-        /usr/bin/archr-fake-suspend power &
+        ${FAKE_SUSPEND} power &
       ;;
       (${FUNCTION_LID_CLOSE_EVENT})
         ${DEBUG} && log $0 "${FUNCTION_LID_CLOSE_EVENT}: Close"
-        /usr/bin/archr-fake-suspend lid close &
+        ${FAKE_SUSPEND} lid close &
       ;;
       (${FUNCTION_LID_OPEN_EVENT})
         ${DEBUG} && log $0 "${FUNCTION_LID_OPEN_EVENT}: Open"
-        /usr/bin/archr-fake-suspend lid open &
+        ${FAKE_SUSPEND} lid open &
       ;;
     esac
 
