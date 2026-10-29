@@ -47,6 +47,7 @@ aspect_ratio_index = "23"
 custom_viewport_y = "12"
 video_shader_enable = "true"
 input_overlay_enable = "true"
+input_overlay_opacity = "0.5"
 input_player1_a_btn = "1"
 config_save_on_exit = "true"'
 
@@ -97,6 +98,8 @@ check "overscale still RetroArch's" "! grep -q '^video_scale_integer_overscale' 
 run "gba.shaderset=none" "gba.overlayset=none"
 check "shader none" "has 'video_shader_enable = \"false\"' '${A}' && ! grep -q -- --set-shader '${TMP}/stdout'"
 check "overlay none blanks it" "has 'input_overlay = \"\"' '${A}' && has 'input_overlay_enable = \"false\"' '${A}'"
+check "only the whole key leaves retroarch.cfg" "has 'input_overlay_opacity = \"0.5\"' '${TMP}/ra/retroarch.cfg'"
+check "no sed scripts left behind" "! ls '${TMP}'/append.cfg.sed* >/dev/null 2>&1"
 
 # Hotkeys: once, then RetroArch's own changes stay; --force rewrites.
 HK="${SCRIPTS}/archr-retroarch-hotkeys"

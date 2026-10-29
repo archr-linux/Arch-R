@@ -234,7 +234,7 @@ then
 fi
 
 ### Clean up temp files
-for FILE in ${TMP_CONFIG} ${TMP_CONFIG}.sed
+for FILE in "${TMP_CONFIG}" "${TMP_CONFIG}".sed*
 do
   if [ -f "${FILE}" ]
   then
@@ -278,21 +278,21 @@ function game_setting() {
     fi
 }
 
+# A key to remove from retroarch.cfg: the whole key, never every key that
+# starts with it. One file per call, since the functions below run in
+# parallel; flush_settings applies them all with one sed.
 function clear_setting() {
-      log "Remove setting [${1}]"
-      if [ ! -f "${TMP_CONFIG}.sed" ]
-      then
-          echo -n 'sed -i "/^'${1}'/d;' >${TMP_CONFIG}.sed
-      else
-          echo -n ' /^'${1}'/d;' >>${TMP_CONFIG}.sed
-      fi
+    log "Remove setting [${1}]"
+    echo "/^${1}[[:space:]]*=/d" >"$(mktemp "${TMP_CONFIG}.sed.XXXXXX")"
 }
 
 function flush_settings() {
-    echo -n '" '${RETROARCH_CONFIG}' >/dev/null 2>&1' >>${TMP_CONFIG}.sed
-    chmod 0755 ${TMP_CONFIG}.sed
-    ${TMP_CONFIG}.sed >/dev/null 2>&1 ||:
-    rm -f ${TMP_CONFIG}.sed
+    local scripts=("${TMP_CONFIG}".sed.*)
+    [ -e "${scripts[0]}" ] || return 0
+    cat "${scripts[@]}" >"${TMP_CONFIG}.sed"
+    rm -f "${scripts[@]}"
+    sed -i -f "${TMP_CONFIG}.sed" "${RETROARCH_CONFIG}" >/dev/null 2>&1 ||:
+    rm -f "${TMP_CONFIG}.sed"
 }
 
 # add_setting SYSTEM_KEY RETROARCH_KEY [VALUE]: the system.cfg value of
