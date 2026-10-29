@@ -259,11 +259,19 @@ function cleanup() {
     exit
 }
 
+# Passwords and tokens never reach the log.
+function shown() {
+    case "${1}" in
+        *password*|*token*) echo "(hidden)" ;;
+        *) echo "${2}" ;;
+    esac
+}
+
 function game_setting() {
     if [ -n "${1}" ]
     then
         SETTING=$(get_setting "${1}" "${PLATFORM}" "${ROM}")
-        log "Fetch \"${1}\" \"${PLATFORM}\" \"${ROM}\"] (${SETTING})"
+        log "Fetch \"${1}\" \"${PLATFORM}\" \"${ROM}\"] ($(shown "${1}" "${SETTING}"))"
         echo ${SETTING}
     fi
 }
@@ -299,7 +307,7 @@ function add_setting() {
     fi
     clear_setting "${RETROARCH_KEY}"
     echo "${RETROARCH_KEY} = \"${RETROARCH_VALUE}\"" >>${TMP_CONFIG}
-    log "Added setting: ${RETROARCH_KEY} = \"${RETROARCH_VALUE}\""
+    log "Added setting: ${RETROARCH_KEY} = \"$(shown "${RETROARCH_KEY}" "${RETROARCH_VALUE}")\""
 }
 
 function match() {
@@ -442,7 +450,17 @@ function set_cheevos() {
     then
         add_setting "none" "cheevos_enable" "true"
         add_setting "retroachievements.username" "cheevos_username"
-        add_setting "retroachievements.password" "cheevos_password"
+        # The launcher saves only the token its sign-in returned; a password
+        # is left from an older setup and is used only without a token.
+        local CHEEVOS_TOKEN=$(game_setting "retroachievements.token")
+        if [ -n "${CHEEVOS_TOKEN}" ]
+        then
+            add_setting "none" "cheevos_token" "${CHEEVOS_TOKEN}"
+            add_setting "none" "cheevos_password" ""
+        else
+            add_setting "retroachievements.password" "cheevos_password"
+            add_setting "none" "cheevos_token" ""
+        fi
         add_setting "none" "cheevos_cmd" "/usr/share/libretro/call_achievements_hooks.sh"
         add_setting "retroachievements.hardcore" "cheevos_hardcore_mode_enable"
         add_setting "retroachievements.leaderboards" "cheevos_leaderboards_enable"
@@ -452,9 +470,9 @@ function set_cheevos() {
         add_setting "retroachievements.challengeindicators" "cheevos_challenge_indicators"
         add_setting "retroachievements.testunofficial" "cheevos_test_unofficial"
         add_setting "retroachievements.badges" "cheevos_badges_enable"
-        add_setting "retroachievements.active" "cheevos_start_active"
+        add_setting "retroachievements.encore" "cheevos_start_active"
         local CHEEVOS_SOUND_ENABLE=$(game_setting "retroachievements.sound")
-        if [ "${CHEEVOS_SOUND_ENABLE}" != "none" ]; then
+        if [ -n "${CHEEVOS_SOUND_ENABLE}" ] && [ "${CHEEVOS_SOUND_ENABLE}" != "none" ]; then
             add_setting "none" "cheevos_unlock_sound_enable" "true"
             add_setting "retroachievements.sound" "cheevos_unlock_sound"
         else
