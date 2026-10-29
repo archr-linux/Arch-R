@@ -1,0 +1,49 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2025-present ArchR (https://github.com/archr-linux/Arch-R)
+#
+# Launcher modules (archr-launcher, docs/modulos.md) run as their own uid in
+# 60600-61099. Those with network access may reach the internet, never this
+# device: every local address (127.0.0.0/8, ::1 and whatever DHCP gives the
+# Wi-Fi or USB link, now or later) is refused for their sockets, except the
+# DNS stub of systemd-resolved. The rule matches the address type, not a
+# list, so a new lease needs nothing. The launcher gives a module network
+# only when MARKER exists.
+
+IPTABLES="${ARCHR_IPTABLES:-iptables-legacy}"
+IP6TABLES="${ARCHR_IP6TABLES:-ip6tables-legacy}"
+MARKER="${ARCHR_MODULES_FIREWALL_MARKER:-/run/archr/modules-firewall}"
+IF_INET6="${ARCHR_IF_INET6:-/proc/net/if_inet6}"
+UIDS="60600-61099"
+CHAIN="ARCHR-MODULES"
+
+rm -f "${MARKER}"
+
+# The chain, filled again from scratch, and one jump to it from OUTPUT.
+setup() {
+  table="$1"
+  shift
+  "${table}" -w -N "${CHAIN}" 2>/dev/null || "${table}" -w -F "${CHAIN}" || return 1
+  for stub in "$@"; do
+    for proto in udp tcp; do
+      "${table}" -w -A "${CHAIN}" -d "${stub}" -p "${proto}" --dport 53 -j RETURN || return 1
+    done
+  done
+  "${table}" -w -A "${CHAIN}" -m addrtype --dst-type LOCAL -j REJECT || return 1
+  "${table}" -w -C OUTPUT -m owner --uid-owner "${UIDS}" -j "${CHAIN}" 2>/dev/null ||
+    "${table}" -w -I OUTPUT 1 -m owner --uid-owner "${UIDS}" -j "${CHAIN}" || return 1
+}
+
+setup "${IPTABLES}" 127.0.0.53 127.0.0.54 || {
+  echo "archr-modules-firewall: IPv4 rules failed; modules get no network" >&2
+  exit 1
+}
+# Without IPv6 in the kernel there is nothing to guard there.
+if [ -e "${IF_INET6}" ]; then
+  setup "${IP6TABLES}" || {
+    echo "archr-modules-firewall: IPv6 rules failed; modules get no network" >&2
+    exit 1
+  }
+fi
+mkdir -p "$(dirname "${MARKER}")"
+: >"${MARKER}"
