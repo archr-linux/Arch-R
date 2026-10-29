@@ -48,7 +48,9 @@ done
 # `wifictl enable` (rfkill unblock) then `wifictl connect` (scan + associate
 # to the saved iwd profile), so mirror that here. Backgrounded so the scan
 # does not delay the UI; wifictl is a no-op when there is no WiFi device.
-if [ "$(get_setting wifi.enabled)" = "1" ]; then
+# usbgadget holds WiFi off while the PC shares its internet over the cable,
+# and brings it back itself when that ends.
+if [ "$(get_setting wifi.enabled)" = "1" ] && [ ! -e /run/usbgadget/wifi-held ]; then
   /usr/bin/wifictl enable
   nohup /usr/bin/wifictl connect >/dev/null 2>&1 &
 fi

@@ -10,34 +10,95 @@
 
 # For implementation benchmark results, see the end of this file
 
-. /etc/os-release
+# The "internet" mode (the console as a DHCP client of the PC's internet
+# sharing) follows the idea of raoni07/OTG-Over-Windows and
+# ctgl1987/arkos-usb-network-mode; this is an independent implementation,
+# no code was taken from either.
 
-MACHINEIDFILE=/storage/.cache/systemd-machine-id
-SERIAL=$(cat ${MACHINEIDFILE})
+# Tests run the script against a fake tree; empty on the device.
+ROOT=${USBGADGET_ROOT:-}
+SELF=$(readlink -f "$0")
 
-CACHEDIR=/storage/.cache/usbgadget
+NETRUN=${ROOT}/run/usbgadget
+LINKFILE=${NETRUN}/link
+WIFI_HOLD=${NETRUN}/wifi-held
+SUPERVISOR_PID=${NETRUN}/internet.pid
+UDHCPC_PID=${NETRUN}/udhcpc.pid
+# Below iwd's (RoutePriorityOffset=200): the cable is the user's choice.
+ROUTE_METRIC=100
+
+# udhcpc runs this script for its events, with the lease in the environment
+# (ip, subnet, router, dns, interface). DNS goes to systemd-resolved, the
+# resolver iwd feeds too, so resolv.conf is never written here.
+# shellcheck disable=SC2154 # set by udhcpc
+dhcp_event() {
+	case "$1" in
+		deconfig)
+			ip -4 address flush dev "${interface}"
+			resolvectl revert "${interface}" 2>/dev/null
+			echo dhcp > "${LINKFILE}"
+			;;
+		bound|renew)
+			[ "$1" = bound ] && ip -4 address flush dev "${interface}"
+			ip address replace "${ip}/${subnet:-255.255.255.0}" dev "${interface}"
+			if [ -n "${router}" ]; then
+				ip route replace default via "${router%% *}" dev "${interface}" metric "${ROUTE_METRIC}"
+			fi
+			if [ -n "${dns}" ]; then
+				# shellcheck disable=SC2086 # one argument per server
+				resolvectl dns "${interface}" ${dns} 2>/dev/null
+				resolvectl domain "${interface}" '~.' 2>/dev/null
+				resolvectl default-route "${interface}" yes 2>/dev/null
+			fi
+			if [ -n "${router}" ]; then echo online; else echo local; fi > "${LINKFILE}"
+			;;
+	esac
+}
+case "$1" in
+	deconfig|bound|renew|leasefail|nak)
+		dhcp_event "$1"
+		exit 0
+		;;
+esac
+
+# shellcheck source=/dev/null
+. "${ROOT}/etc/os-release"
+
+MACHINEIDFILE=${ROOT}/storage/.cache/systemd-machine-id
+SERIAL=$(cat "${MACHINEIDFILE}")
+
+CACHEDIR=${ROOT}/storage/.cache/usbgadget
 GADGETCONF=${CACHEDIR}/usbgadget.conf
 GADGETNETCONF=${CACHEDIR}/network.conf
-UDHCPCONF=/var/run/udhcpd.conf
-UDHCPPIDFILE=/var/run/udhcpd.pid
+UDHCPCONF=${ROOT}/var/run/udhcpd.conf
+UDHCPPIDFILE=${ROOT}/var/run/udhcpd.pid
 
 for mod in usb_f_ncm usb_f_fs; do
 	modprobe -q ${mod}
 done
 
-mkdir -p ${CACHEDIR}
+mkdir -p "${CACHEDIR}"
 
-if [ -r ${GADGETCONF} ] ; then
-	. ${GADGETCONF}
+# USB_NET: "local" (fixed address, the console serves DHCP) or "internet".
+USB_NET=local
+if [ -r "${GADGETCONF}" ] ; then
+	# shellcheck source=/dev/null
+	. "${GADGETCONF}"
 fi
 
-UDC_NAME=$(ls -1 /sys/class/udc |head -n1)
-CURRENT_MODE=$(cat /sys/class/udc/${UDC_NAME}/function)
+UDC_NAME=$(ls -1 "${ROOT}/sys/class/udc" |head -n1)
+CURRENT_MODE=$(cat "${ROOT}/sys/class/udc/${UDC_NAME}/function")
 [ -z ${CURRENT_MODE} ] && CURRENT_MODE=disabled
 
 
+# Atomic, so a reader never sources half a file.
+write_conf() {
+	printf 'USB_MODE=%s\nUSB_NET=%s\n' "$1" "${USB_NET}" > "${GADGETCONF}.new" &&
+		mv "${GADGETCONF}.new" "${GADGETCONF}"
+}
+
 usb_disable() {
-	echo "USB_MODE=disabled" > ${GADGETCONF}
+	write_conf disabled
 	if [[ "${CURRENT_MODE}" == "disabled" ]]; then return; fi
 	echo "" > /sys/kernel/config/usb_gadget/${CURRENT_MODE}/UDC
 	CURRENT_MODE=disabled
@@ -87,7 +148,7 @@ usb_trigger() {
 					# OTG adapter detected, switch to host mode
 					if [ "${CURRENT_MODE}" != "disabled" ]; then
 						usb_stop
-						echo "USB_MODE=disabled" > ${GADGETCONF}
+						write_conf disabled
 					fi
 					return
 				fi
@@ -191,13 +252,19 @@ prepare_usb_network() {
     ln -s ${g_cdc}/functions/ncm.usb0 ${g_cdc}/configs/c.1
 
     if [ -n "$verbose" ]; then echo "Done."; fi
+    set +e
 }
 
-configure_iface() {
-	# Hope udev rule works well, and device gets the name 'gadget'
-	udevadm wait --timeout=5 --settle /sys/class/net/gadget
-	IFACE_NAME=$(cat "${g_cdc}/functions/ncm.usb0/ifname")
+gadget_iface() {
+	cat "${ROOT}${g_cdc}/functions/ncm.usb0/ifname" 2>/dev/null
+}
 
+has_carrier() {
+	[ "$(cat "${ROOT}/sys/class/net/${IFACE_NAME}/carrier" 2>/dev/null)" = 1 ]
+}
+
+# Fixed address, and the console's DHCP server hands the PC the other end.
+local_up() {
 	OLDIPADDRFILE=${CACHEDIR}/ip_address.conf
 	if [ ! -f ${GADGETNETCONF} ] ; then
 		NETMASK="255.255.0.0"
@@ -223,8 +290,6 @@ EOF
 
 
 	ip address add ${IP}/${NETMASK} dev ${IFACE_NAME} 2>/dev/null
-    ip -6 address add fe80::2/64 dev ${IFACE_NAME} scope link 2>/dev/null
-	ip link set ${IFACE_NAME} up
 
 	cat <<EOF > ${UDHCPCONF}
 interface ${IFACE_NAME}
@@ -241,7 +306,129 @@ lease_file /dev/null
 pidfile	${UDHCPPIDFILE}
 remaining no
 EOF
-	/usr/sbin/udhcpd -S ${UDHCPCONF}
+	"${ROOT}/usr/sbin/udhcpd" -S "${UDHCPCONF}"
+}
+
+configure_iface() {
+	# Hope udev rule works well, and device gets the name 'gadget'
+	udevadm wait --timeout=5 --settle /sys/class/net/gadget
+	IFACE_NAME=$(gadget_iface)
+
+	ip -6 address add fe80::2/64 dev "${IFACE_NAME}" scope link 2>/dev/null
+	ip link set "${IFACE_NAME}" up
+
+	if [ "${USB_NET}" = internet ]; then
+		setsid "${SELF}" supervise </dev/null >/dev/null 2>&1 &
+	else
+		local_up
+	fi
+}
+
+# Wi-Fi stays off while the PC shares its internet over the cable. The
+# marker only means "held": the user's choice stays in wifi.enabled, which
+# decides what comes back, so leaving the mode never strands the user.
+hold_wifi() {
+	[ -e "${WIFI_HOLD}" ] && return
+	mkdir -p "${NETRUN}"
+	: > "${WIFI_HOLD}"
+	"${ROOT}/usr/bin/wifictl" disable >/dev/null 2>&1
+}
+
+release_wifi() {
+	# mv claims the marker: concurrent callers restore Wi-Fi only once.
+	mv "${WIFI_HOLD}" "${WIFI_HOLD}.$$" 2>/dev/null || return 0
+	rm -f "${WIFI_HOLD}.$$"
+	# shellcheck disable=SC1091
+	if ( . "${ROOT}/etc/profile.d/001-functions" && [ "$(get_setting wifi.enabled)" = 1 ] ); then
+		"${ROOT}/usr/bin/wifictl" enable >/dev/null 2>&1
+		( "${ROOT}/usr/bin/wifictl" connect >/dev/null 2>&1 & )
+	fi
+}
+
+udhcpc_run() {
+	if [ -x "${ROOT}/usr/sbin/udhcpc" ]; then
+		"${ROOT}/usr/sbin/udhcpc" "$@"
+	else
+		busybox udhcpc "$@"
+	fi
+}
+
+set_link() {
+	mkdir -p "${NETRUN}"
+	echo "$1" > "${LINKFILE}"
+}
+
+# Back to a bare interface, and Wi-Fi as the user had it. Idempotent.
+internet_down() {
+	[ -f "${UDHCPC_PID}" ] && xargs -r kill < "${UDHCPC_PID}" 2>/dev/null
+	[ -f "${UDHCPPIDFILE}" ] && xargs -r kill < "${UDHCPPIDFILE}" 2>/dev/null
+	rm -f "${UDHCPC_PID}"
+	if [ -n "${IFACE_NAME}" ]; then
+		ip -4 address flush dev "${IFACE_NAME}" 2>/dev/null
+		resolvectl revert "${IFACE_NAME}" 2>/dev/null
+	fi
+	release_wifi
+}
+
+# "Internet pelo PC": with the cable in, Wi-Fi off and a lease from the
+# PC's sharing (Windows ICS 192.168.137.x, NetworkManager 10.42.0.x, macOS).
+# No lease in time: the fixed address of the "network" mode, Wi-Fi back.
+# Unplugged: everything undone, and tried again on the next plug.
+internet_supervise() {
+	mkdir -p "${NETRUN}"
+	pid=$(cat "${SUPERVISOR_PID}" 2>/dev/null)
+	if [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null; then
+		return
+	fi
+	echo $$ > "${SUPERVISOR_PID}"
+	IFACE_NAME=$(gadget_iface)
+	trap 'internet_down; rm -f "${SUPERVISOR_PID}"; exit 0' TERM INT HUP
+	link=waiting
+	set_link waiting
+	while [ -n "${IFACE_NAME}" ] && [ -d "${ROOT}/sys/class/net/${IFACE_NAME}" ]; do
+		if ! has_carrier; then
+			if [ "${link}" != waiting ]; then
+				internet_down
+				link=waiting
+				set_link waiting
+			fi
+		elif [ "${link}" = waiting ]; then
+			hold_wifi
+			link=dhcp
+			set_link dhcp
+			udhcpc_run -f -n -t 8 -T 3 -i "${IFACE_NAME}" -s "${SELF}" -p "${UDHCPC_PID}" \
+				>/dev/null 2>&1 &
+			dhcpc=$!
+		elif [ "${link}" = dhcp ] && ! kill -0 "${dhcpc}" 2>/dev/null; then
+			if grep -qx 'online\|local' "${LINKFILE}" 2>/dev/null; then
+				# A lease that ended: start over.
+				internet_down
+				link=waiting
+				set_link waiting
+				continue
+			fi
+			release_wifi
+			local_up
+			link=fallback
+			set_link fallback
+		fi
+		sleep 1
+	done
+	internet_down
+	rm -f "${SUPERVISOR_PID}"
+}
+
+stop_internet() {
+	pid=$(cat "${SUPERVISOR_PID}" 2>/dev/null)
+	if [ -n "${pid}" ] && kill "${pid}" 2>/dev/null; then
+		for _ in 1 2 3 4; do
+			kill -0 "${pid}" 2>/dev/null || break
+			sleep 1
+		done
+	fi
+	rm -f "${SUPERVISOR_PID}" "${LINKFILE}"
+	IFACE_NAME=${IFACE_NAME:-$(gadget_iface)}
+	internet_down
 }
 
 
@@ -329,13 +516,21 @@ usb_start() {
 
 	# Exit with error if this UDC has a downstream device. Applies to RK3326 where we use a single port
 	# Switching to device mode in this case would break USB Wifi and USB gamepad
-	grep -q configured /sys/class/udc/${UDC_NAME}/device/usb1/1-0\:1.0/usb1-port1/state 2>/dev/null && exit 3
+	grep -q configured "${ROOT}/sys/class/udc/${UDC_NAME}/device/usb1/1-0:1.0/usb1-port1/state" 2>/dev/null && exit 3
 
 	# with no argument setup previous mode
 	[[ -n "$1" ]] && USB_MODE=$1
 
+	# "network" and "internet" share the gadget: switching between them
+	# restarts it with the other addressing.
+	NET_CHANGED=0
+	if [ -n "${NET_WANT}" ] && [ "${NET_WANT}" != "${USB_NET}" ]; then
+		NET_CHANGED=1
+		USB_NET=${NET_WANT}
+	fi
+
 	# Avoid double start
-	if [ "${CURRENT_MODE}" == "${USB_MODE}" ]; then
+	if [ "${CURRENT_MODE}" == "${USB_MODE}" ] && [ "${NET_CHANGED}" = 0 ]; then
 		if [ "$verbose" -gt "0" ]; then echo "Already in target mode: ${CURRENT_MODE}; skip"; fi
 		return
 	fi
@@ -376,7 +571,7 @@ usb_start() {
 
 	# Enable selected mode
 	echo "${UDC_NAME}" > /sys/kernel/config/usb_gadget/${USB_MODE}/UDC
-	echo "USB_MODE=${USB_MODE}" > ${GADGETCONF}
+	write_conf "${USB_MODE}"
 
 	[[ "${USB_MODE}" == "cdc" ]] && configure_iface
 
@@ -386,6 +581,8 @@ usb_start() {
 }
 
 usb_stop() {
+	stop_internet >/dev/null 2>&1
+
 	# If there is a role switch, switch to host mode
 	set_role host
 
@@ -403,6 +600,40 @@ usb_stop() {
 			killall umtprd
 		fi
 	) >/dev/null 2>&1
+}
+
+current_ipv4() {
+	ip -4 -o address show dev "${IFACE_NAME}" 2>/dev/null |
+		awk '{ sub("/.*", "", $4); print $4; exit }'
+}
+
+# For the launcher, one key=value per line. link: off (no network mode),
+# waiting (no PC on the cable), dhcp (asking the PC), online (lease with a
+# gateway), local (connected, no gateway) or fallback (no lease in time).
+usb_status() {
+	link=off
+	IFACE_NAME=$(gadget_iface)
+	if [ "${CURRENT_MODE}" = cdc ]; then
+		mode=network
+		[ "${USB_NET}" = internet ] && mode=internet
+		if ! has_carrier; then
+			link=waiting
+		elif [ "${mode}" = network ]; then
+			link=local
+		else
+			# The supervisor may not have seen the cable yet.
+			link=$(cat "${LINKFILE}" 2>/dev/null)
+			case "${link}" in online|local|fallback) ;; *) link=dhcp ;; esac
+		fi
+	elif [ "${CURRENT_MODE}" = mtp ]; then
+		mode=file_transfer
+	else
+		mode=disabled
+	fi
+	wifi=free
+	[ -e "${WIFI_HOLD}" ] && wifi=held
+	printf 'mode=%s\nlink=%s\naddress=%s\nwifi=%s\n' \
+		"${mode}" "${link}" "$(current_ipv4)" "${wifi}"
 }
 
 set_usb_mode() {
@@ -446,7 +677,7 @@ case "$1" in
 	# API inspired by gpudriver
 	#
 	"--options")
-		echo "disabled network file_transfer"
+		echo "disabled network internet file_transfer"
 		;;
 	"--start")
 		prepare_usb_network
@@ -455,7 +686,7 @@ case "$1" in
 		;;
 	"")
 		case ${CURRENT_MODE} in
-			"cdc")  echo "network"; ;;
+			"cdc")  if [ "${USB_NET}" = internet ]; then echo "internet"; else echo "network"; fi ;;
 			"mtp")  echo "file_transfer"; ;;
 			*)      echo "disabled"; ;;
 		esac
@@ -464,13 +695,27 @@ case "$1" in
 		usb_stop
 		;;
 	"network")
+		NET_WANT=local
 		usb_start cdc
+		;;
+	"internet")
+		NET_WANT=internet
+		usb_start cdc
+		;;
+	"status")
+		usb_status
+		;;
+	"supervise")
+		internet_supervise
 		;;
 	"file_transfer")
 		usb_start mtp
 		;;
 	"address")
-		. ${GADGETNETCONF}
+		IFACE_NAME=$(gadget_iface)
+		IP=$(current_ipv4)
+		# shellcheck disable=SC1090
+		[ -n "${IP}" ] || . "${GADGETNETCONF}"
 		echo ${IP}
 		;;
 	*)
@@ -479,8 +724,9 @@ case "$1" in
 		echo "$0 --start                    Restore previously chosen mode"
 		echo "$0                            Show current mode"
 		echo "$0 disabled                   Disable USB gadget"
-		echo "$0 <network|file_transfer>    Activate specified mode"
+		echo "$0 <network|internet|file_transfer>  Activate specified mode"
 		echo "$0 address                    Show network gadget IP address"
+		echo "$0 status                     Show mode, link, address and Wi-Fi hold"
 
 		echo "Deprecated usage: usbgadget [prepare|start|trigger|stop|restart|cleanup|address]"
 		;;
