@@ -94,6 +94,13 @@ cat >"${TMP}/bin/df" <<'EOF'
 echo "Filesystem 1024-blocks Used Available Capacity Mounted"
 echo "/dev/root 1000000 1 ${FAKE_FREE_KB:-900000} 1% /"
 EOF
+# Records its arguments, then runs the holder command it was given.
+cat >"${TMP}/bin/systemd-inhibit" <<'EOF'
+#!/bin/bash
+echo "$*" >"${FAKE}/inhibit"
+while [ "${1#--}" != "$1" ]; do shift; done
+exec "$@"
+EOF
 chmod +x "${TMP}/bin/"*
 printf '2.1.2\n\nLauncher 1.5: "temas" e sons.\nKernel novo.\n' >"${TMP}/changelog"
 echo 80 >"${TMP}/power/battery/capacity"
@@ -121,7 +128,7 @@ wait_for() {
   done
 }
 reset() {
-  rm -rf "${TMP}/cache"/* "${TMP}/state" "${TMP}/calls" "${TMP}/installed-ok"
+  rm -rf "${TMP}/cache"/* "${TMP}/state" "${TMP}/calls" "${TMP}/installed-ok" "${TMP}/inhibit"
 }
 
 ### check --json
@@ -198,6 +205,8 @@ check "new version recorded" "$(cat "${TMP}/state/version")" 2.1.2
 check "download and install are separate" "$(grep -o 'pacman -S[a-zA-Z]*' "${TMP}/calls" | tr '\n' ' ')" \
   "pacman -Sy pacman -Sup pacman -Suw pacman -Su "
 check "the progress file holds the same lines" "$(cat "${TMP}/run/progress")" "${OUT}"
+check "install holds a sleep, shutdown and keys inhibitor" "$(cut -d' ' -f1-2 "${TMP}/inhibit")" \
+  "--what=sleep:shutdown:handle-power-key:handle-suspend-key --mode=block"
 check "pacman output in the log" "$(grep -c '^upgrading linux...' "${TMP}/log/archr-update.log")" 1
 
 reset

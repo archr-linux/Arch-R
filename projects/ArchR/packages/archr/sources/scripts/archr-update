@@ -49,7 +49,8 @@
 #     SIGINT and keeps its partial files for the next try). From the install
 #     on SIGTERM, SIGHUP and SIGINT are ignored, by this script and by
 #     pacman, and pacman writes only to a file, so a frontend that goes away
-#     cannot interrupt it.
+#     cannot interrupt it; systemd-inhibit blocks sleep, shutdown and the
+#     power and suspend keys meanwhile (logind sees the R36S power key).
 #     Every line also goes to /run/archr-update.progress, rewritten by each
 #     run once it holds the lock: archr-launcher starts the run as its own
 #     unit (systemd-run), outside its session, and follows that file, also
@@ -458,6 +459,16 @@ run_install() {
     (trap '' TERM HUP INT; LC_ALL=C exec pacman -Su --noconfirm --noprogressbar --color never) \
         >"${WORK}/install" 2>&1 </dev/null &
     PID=$!
+    # No sleep, power off or power/suspend key while pacman runs. A holder
+    # process keeps the inhibitor: pacman is not systemd-inhibit's child,
+    # whose signals it would reset. It ends with this script at the latest.
+    local holder=""
+    if command -v systemd-inhibit >/dev/null 2>&1; then
+        systemd-inhibit --what=sleep:shutdown:handle-power-key:handle-suspend-key \
+            --mode=block --who=archr-update --why="System update in progress" \
+            tail --pid="${PID}" -f /dev/null >/dev/null 2>&1 9>&- &
+        holder=$!
+    fi
     SEEN=0
     CURRENT=0
     while kill -0 "${PID}" 2>/dev/null; do
@@ -466,6 +477,7 @@ run_install() {
     done
     wait "${PID}"
     rc=$?
+    [ -n "${holder}" ] && kill "${holder}" 2>/dev/null
     install_lines
     cat "${WORK}/install" >>"${UPDATE_LOG}" 2>/dev/null
     [ "${rc}" -eq 0 ] && return 0
