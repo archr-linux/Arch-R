@@ -7,20 +7,17 @@
 
 tocon "Configuring user interface..."
 
+# Weston runs a kiosk only for a configured weston.startup program that
+# exists (older configs name EmulationStation's start_es.sh); otherwise,
+# or in desktop mode, the desktop shell.
 UIMODE=$(get_setting desktop.enabled)
+STARTUP=$(get_setting weston.startup)
 if [ "${UIMODE}" = "1" ] || \
-   [ ! -e "/usr/bin/emulationstation" ]
+   [ -z "${STARTUP}" ] || \
+   [ ! -x "${STARTUP%% *}" ]
 then
   cp -f /usr/share/weston/weston.ini /storage/.config/weston.ini
 else
   cp -f /usr/share/weston/kiosk.ini /storage/.config/weston.ini
-fi
-
-STARTUP=$(get_setting weston.startup)
-if [ -z "${STARTUP}" ] && \
-   [ -e "/usr/bin/emulationstation" ]
-then
-  STARTUP="/usr/bin/start_es.sh"
-  set_setting weston.startup "${STARTUP}"
 fi
 sed -i "s#@STARTUP@#${STARTUP}#g" /storage/.config/weston.ini

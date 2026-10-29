@@ -5,41 +5,13 @@
 # Seed the pacman *installed* (local) db on first boot so archr-update /
 # `pacman -Syu` can upgrade the BASE system, not just user-installed addons.
 #
-# The image rootfs is a squashfs, not a pacman install, so /var/lib/pacman
+# The image rootfs is not a pacman install, so /var/lib/pacman
 # (-> /storage/.pacman/db) starts empty: `pacman -Q` returns nothing and
 # `pacman -Qu` finds no upgrades even when the repo carries newer base
-# packages. scripts/repo/gen-pacman-repo publishes a matching seed
-# (<repo>-localdb.tar.gz) alongside the packages for every build, so we pull
-# it from the same release channel and extract it once. Only seed when the
-# local db is still empty, so a user who has installed/removed packages with
-# pacman is never clobbered.
+# packages. archr-update seeds it from the db the image build recorded of
+# its own packages, so no network is needed and the versions are the ones
+# this rootfs really has. It does nothing once the db holds entries (seeded
+# earlier, or by the user's own pacman activity).
 
-. /etc/profile.d/001-functions 2>/dev/null
-
-DB=/storage/.pacman/db
-REPO_NAME=archr-core
-BRANCH="$(get_setting updates.branch 2>/dev/null)"
-BRANCH="${BRANCH:-stable}"
-SEED_URL="https://github.com/archr-linux/archr-repo/releases/download/repo-${BRANCH}/${REPO_NAME}-localdb.tar.gz"
-LOG=/var/log/pacman-seed.log
-
-mkdir -p "${DB}"
-
-# Already seeded? Anything beyond ALPM_DB_VERSION means the local db is
-# populated (by this hook earlier, or by the user's own pacman activity).
-if [ -d "${DB}/local" ] &&
-   [ "$(ls -1 "${DB}/local" 2>/dev/null | grep -vc '^ALPM_DB_VERSION$')" -gt 0 ]; then
-    exit 0
-fi
-
-# Needs network; if it is not up yet we silently retry on the next boot.
-ping -c 1 -W 3 8.8.8.8 >/dev/null 2>&1 || exit 0
-
-tmp=/tmp/archr-localdb.tar.gz
-if curl -fsSL "${SEED_URL}" -o "${tmp}" 2>>"${LOG}" ||
-   wget -q -O "${tmp}" "${SEED_URL}" 2>>"${LOG}"; then
-    if tar -C "${DB}" -xzf "${tmp}" 2>>"${LOG}"; then
-        echo "$(date): seeded pacman local db from ${SEED_URL}" >>"${LOG}"
-    fi
-    rm -f "${tmp}"
-fi
+mkdir -p /storage/.pacman/db
+/usr/bin/archr-update seed >>/var/log/pacman-seed.log 2>&1 || :

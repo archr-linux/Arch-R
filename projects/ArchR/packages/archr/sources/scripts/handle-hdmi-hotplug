@@ -3,7 +3,9 @@
 # Copyright (C) 2025 ArchR (https://github.com/archr-linux/Arch-R)
 
 . /etc/profile
-if ! pgrep -x emulationstation > /dev/null; then
+# Only while the launcher is on screen: during a game it is not running,
+# and the session starts it again (at the new output) when the game ends.
+if ! pgrep -x archr-launcher > /dev/null; then
   exit 0
 fi
 
@@ -28,7 +30,8 @@ case "${HDMI_STATE}" in
     if [ -n "${DSI_OUTPUT}" ]; then
       wlr-randr --output "${DSI_OUTPUT}" --off
     fi
-    killall emulationstation
+    # The session restarts the launcher on the new output.
+    killall archr-launcher
     ;;
   disconnected)
 
@@ -42,7 +45,7 @@ case "${HDMI_STATE}" in
     if [ -n "${DSI_OUTPUT}" ]; then
       wlr-randr --output "${DSI_OUTPUT}" --preferred --on
     fi
-    killall emulationstation
+    killall archr-launcher
     ;;
 esac
 

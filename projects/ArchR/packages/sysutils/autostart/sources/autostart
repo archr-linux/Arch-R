@@ -177,16 +177,13 @@ log "Startup complete..."
 ### Re-source the profile so we fetch the correct UI_SERVICE variable.
 . /etc/profile
 
-### Lock is a prerequisite for emustation
-rm /var/lock/start.games 2>&1 >>${BOOTLOG}
-touch /var/lock/start.games 2>&1 >>${BOOTLOG}
 log "Starting ${UI_SERVICE}..."
 systemctl start ${UI_SERVICE} 2>&1 >>${BOOTLOG} &
 
 ### Phase C: what the UI does not need, now that it is on its way. At
-### the lowest CPU and I/O priority: EmulationStation is reading its
-### themes and gamelists off the SD card right now, and at normal
-### priority this phase made it take ~3s longer to show its window.
+### the lowest CPU and I/O priority: the UI is loading off the SD card
+### right now, and at normal priority this phase made EmulationStation,
+### the previous UI, take ~3s longer to show its window.
 for script in "${DEFERRED[@]}"; do
   ( renice -n 19 -p ${BASHPID} >/dev/null 2>&1
     ionice -c 3 -p ${BASHPID} >/dev/null 2>&1

@@ -1,7 +1,7 @@
 [Unit]
 Description=Fix unset volumes on RK3566 devices 
 After=archr.target
-Before=essway.service
+Before=archr-launcher-session.service
 
 [Service]
 Type=oneshot

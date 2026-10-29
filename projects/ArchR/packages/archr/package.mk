@@ -19,7 +19,8 @@ PKG_VERSION="$(date +%Y%m%d)"
 PKG_LICENSE="GPLv2"
 PKG_SITE=""
 PKG_URL=""
-PKG_DEPENDS_TARGET="toolchain autostart mergerfs"
+# drm_tool: 055-hdmi-check and paneladj (it used to come with emulationstation).
+PKG_DEPENDS_TARGET="toolchain autostart mergerfs drm_tool"
 PKG_LONGDESC="Arch R Meta Package"
 PKG_TOOLCHAIN="make"
 
@@ -31,10 +32,59 @@ makeinstall_target() {
 
   mkdir -p ${INSTALL}/usr/config/
   rsync -av ${PKG_DIR}/config/* ${INSTALL}/usr/config/
+
+  ### es_input.cfg stays where ArchR scripts read it; emulator and core
+  ### options are read-only data for the launcher.
+  mkdir -p ${INSTALL}/usr/share/archr
+  mv ${INSTALL}/usr/config/emulationstation/es_features.cfg ${INSTALL}/usr/share/archr/es_features.cfg
+  ### Without Vulkan, drop the Vulkan options.
+  if [ ! "${VULKAN_SUPPORT}" = "yes" ]
+  then
+    sed -i '/vulkan/d' ${INSTALL}/usr/share/archr/es_features.cfg
+  fi
+  ### Vertical arcade games, for vertical-check.
+  install -Dm644 ${PKG_DIR}/sources/arcaderoms.xml ${INSTALL}/usr/share/archr/arcaderoms.xml
   ln -sf /storage/.config/system ${INSTALL}/system
   find ${INSTALL}/usr/config/system/ -type f -exec chmod o+x {} \;
 
   mkdir -p ${INSTALL}/usr/bin/
+
+  ### Without emulation (virtual/emulators not built) the UI still needs a
+  ### systems catalog: just the tools.
+  if [ "${EMULATION_DEVICE}" = "no" ] || [ "${BASE_ONLY}" = "true" ]
+  then
+    mkdir -p ${INSTALL}/usr/share/archr
+    cat <<EOF >${INSTALL}/usr/share/archr/systems.cfg
+<?xml version="1.0" encoding="UTF-8"?>
+<systemList>
+        <system>
+                <name>tools</name>
+                <fullname>Tools</fullname>
+                <manufacturer>ArchR</manufacturer>
+                <release>2024</release>
+                <hardware>system</hardware>
+                <path>/storage/.config/modules</path>
+                <extension>.sh</extension>
+                <command>%ROM%</command>
+                <platform>tools</platform>
+                <theme>tools</theme>
+        </system>
+</systemList>
+EOF
+  fi
+
+  ### Pre-generate the default locale (en_US.UTF-8): generating it on the
+  ### device takes a minute or two on RK3326, for about 1 MB here.
+  ### userconfig-setup copies it to /storage/.config/locale, where
+  ### archr-apply-locale generates any other language.
+  mkdir -p ${INSTALL}/usr/config/locale
+  I18NPATH=$(get_install_dir glibc)/usr/share/i18n/locales/ \
+    localedef --force --verbose --inputfile=en_US --charmap=UTF-8 \
+    ${INSTALL}/usr/config/locale/en_US.UTF-8 || true
+
+  ### archr-apply-locale writes the zone here.
+  mkdir -p ${INSTALL}/etc
+  ln -sf /storage/.cache/system_timezone ${INSTALL}/etc/timezone
 
   ### Compatibility links for ports
   ln -s /storage/roms ${INSTALL}/roms
@@ -136,6 +186,13 @@ EOF
 
 post_install() {
   ln -sf archr.target ${INSTALL}/usr/lib/systemd/system/default.target
+
+  ### Locales live on /storage (generated on the device for the chosen
+  ### language); glibc's default lookup, /usr/lib/locale, reaches them.
+  ### Image-only links, like before: pacman never owned them.
+  mkdir -p ${INSTALL}/usr/share ${INSTALL}/usr/lib
+  ln -sf /storage/.config/locale ${INSTALL}/usr/share/locale
+  ln -sf /usr/share/locale ${INSTALL}/usr/lib/locale
 
   if [ ! -d "${INSTALL}/usr/share" ]
   then

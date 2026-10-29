@@ -30,7 +30,7 @@ do
 		pactl set-default-sink ${SPEAKER}
         ;;
       esac
-      killall emulationstation
+      killall archr-launcher
 
       HDMI_VALUE=${HDMI_NEW_VALUE}
     fi

@@ -2,7 +2,7 @@
 
 Every built-in platform pad must exist in THREE shipped artifacts:
 
-1. `packages/ui/emulationstation/config/common/es_input.cfg` (EmulationStation)
+1. `packages/archr/config/emulationstation/es_input.cfg` (EmulationStation format, read by `mkcontroller`, the game controller functions and PortMaster)
 2. `packages/emulators/libretro/retroarch/retroarch-joypads/gamepads/<name>.cfg` (RetroArch)
 3. `packages/apps/gamecontrollerdb/config/gamecontrollerdb.txt` (SDL games and ports)
 

@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026 ArchR (https://github.com/archr-linux/Arch-R)
+#
+# gen-image-localdb: the pacman installed-package db of one image.
+#
+# Usage: gen-image-localdb INSTALL_PKG_DIR STAMPS_DIR BUILD_ID OUT.tar.gz
+#
+# The image's rootfs is not a pacman install, so a device starts with an
+# empty local db. Seeding it from the repo's latest seed recorded the
+# repo's newest versions as installed: pacman -Syu then saw nothing to
+# do and every migration in those updates was skipped. This writes the
+# db of exactly what this image contains: the packages installed into it
+# (STAMPS_DIR/<name>/install_target), named and versioned as
+# gen-pacman-repo publishes them (pkg-identity), with their file lists.
+# The archive also holds archr-image-build (BUILD_ID), so a device only
+# seeds from the db of the image it runs (archr-update seed).
+#
+# Run from the top of the source tree.
+
+set -euo pipefail
+
+IN="$1"; STAMPS="$2"; BUILD_ID="$3"; OUT="$4"
+. "$(dirname "$(realpath "$0")")/pkg-identity"
+
+work="$(mktemp -d)"
+trap 'rm -rf "${work}"' EXIT
+mkdir -p "${work}/local"
+echo 9 >"${work}/local/ALPM_DB_VERSION"
+printf '%s\n' "${BUILD_ID}" >"${work}/archr-image-build"
+
+now="$(date +%s)"
+count=0
+for src in "${IN}"/*; do
+    [ -d "${src}" ] && [ -f "${src}/.archr-package" ] || continue
+    real="$(sed -n 's/^INFO_PKG_NAME="\(.*\)"$/\1/p' "${src}/.archr-package")"
+    [ -n "${real}" ] && [ -f "${STAMPS}/${real}/install_target" ] || continue
+
+    name="" version="" pkgrel="" replaces="" pkgmk="" relmk=""
+    pkg_identity "${src}"
+    entry="${work}/local/${name}-${version}-${pkgrel}"
+    mkdir -p "${entry}"
+    {
+        printf '%%NAME%%\n%s\n\n%%VERSION%%\n%s-%s\n\n%%BASE%%\n%s\n\n' "${name}" "${version}" "${pkgrel}" "${name}"
+        printf '%%DESC%%\nArchR %s (image)\n\n%%URL%%\nhttps://arch-r.io\n\n%%ARCH%%\naarch64\n\n' "${name}"
+        printf '%%BUILDDATE%%\n%s\n\n%%INSTALLDATE%%\n%s\n\n' "${now}" "${now}"
+        printf '%%PACKAGER%%\nArchR Build <build@arch-r.io>\n\n%%SIZE%%\n%s\n\n' "$(du -sb "${src}" | cut -f1)"
+        printf '%%REASON%%\n0\n\n%%LICENSE%%\nGPL\n\n%%VALIDATION%%\nnone\n\n'
+        if [ -n "${replaces}" ]; then
+            printf '%%REPLACES%%\n'; printf '%s\n' ${replaces}; printf '\n'
+            printf '%%CONFLICTS%%\n'; printf '%s\n' ${replaces}; printf '\n'
+        fi
+    } >"${entry}/desc"
+    # The file list pacman records: everything the package archive holds
+    # (top-level dot files are metadata, PKG_ID_EXCLUDES never ship),
+    # directories with a trailing slash, in byte order.
+    {
+        printf '%%FILES%%\n'
+        (
+            cd "${src}"
+            find . -mindepth 1 -not -path './.*' \( -type d -printf '%P/\n' -o -printf '%P\n' \) |
+            while IFS= read -r f; do
+                skip=0
+                for pat in "${PKG_ID_EXCLUDES[@]}"; do
+                    # shellcheck disable=SC2053
+                    [[ "${f}" == ${pat#\*/} || "${f}" == ${pat} ]] && { skip=1; break; }
+                done
+                [ "${skip}" = 1 ] || printf '%s\n' "${f}"
+            done | LC_ALL=C sort
+        )
+        printf '\n'
+    } >"${entry}/files"
+    count=$((count + 1))
+done
+
+mkdir -p "$(dirname "${OUT}")"
+tar -C "${work}" -czf "${OUT}" --owner=0 --group=0 local archr-image-build
+echo "gen-image-localdb: ${count} packages for build ${BUILD_ID} -> ${OUT}"

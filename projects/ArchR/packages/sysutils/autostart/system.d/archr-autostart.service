@@ -1,10 +1,8 @@
 [Unit]
 Description=ArchR user autostart script
-# weston.service não existe em ArchR (UI é via sway.service); mantê-lo
-# em Before= mostrava o weston como "not-found inactive". sway.service
-# já está coberto pelo After=graphical.target abaixo (sway é o
-# display-manager.service do graphical.target).
-Before=emustation.service
+# No Before= on the UI: this script starts it (UI_SERVICE) as soon as the
+# scripts it needs are done, then runs the deferred ones. Ordering the UI
+# after this unit would hold it behind those too.
 # Only what the scripts need: /storage config (userconfig) on top of the
 # implicit basic.target. Waiting for network.target and graphical.target
 # held the UI behind iwd, connman, sshd and the rest of multi-user.target
@@ -19,8 +17,7 @@ ExecStart=/bin/bash -a -c 'source /etc/profile && exec /usr/bin/autostart'
 RemainAfterExit=yes
 # Cap the autostart at 60s so that a misbehaving script (drm_tool with
 # DRM not ready, a daemon source hanging, etc.) doesn't lock the boot
-# indefinitely — emustation will still come up. Without this the
-# Before=emustation.service ordering blocks the UI forever.
+# indefinitely.
 TimeoutStartSec=60s
 
 [Install]

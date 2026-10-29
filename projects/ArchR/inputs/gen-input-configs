@@ -5,7 +5,8 @@
 # Single source of truth for the built-in gamepad configs.
 #
 # Every platform pad historically needed THREE hand-maintained files:
-#   1. es_input.cfg               (EmulationStation)
+#   1. es_input.cfg               (EmulationStation format; read by mkcontroller,
+#                                  the game controller functions and PortMaster)
 #   2. retroarch-joypads/gamepads/<name>.cfg  (RetroArch udev autoconfig)
 #   3. gamecontrollerdb.txt       (SDL games and ports)
 # and nothing checked they agreed. The Soysauce pad shipped with only
@@ -45,7 +46,7 @@ ROOT = os.path.abspath(os.path.join(HERE, '..', '..', '..'))
 DEFS = os.path.join(HERE, 'defs')
 
 ES_INPUT = os.path.join(
-    ROOT, 'projects/ArchR/packages/ui/emulationstation/config/common/es_input.cfg')
+    ROOT, 'projects/ArchR/packages/archr/config/emulationstation/es_input.cfg')
 RA_DIR = os.path.join(
     ROOT, 'projects/ArchR/packages/emulators/libretro/retroarch/retroarch-joypads/gamepads')
 GCDB = os.path.join(

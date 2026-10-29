@@ -1,42 +1,43 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+# Copyright (C) 2026-present ArchR (https://github.com/archr-linux/Arch-R)
+
+# Usage: run PROGRAM [ARGUMENT...]
+#
+# Runs PROGRAM in a terminal of the current UI. Every argument stays one
+# argv word: names with spaces, quotes, $ or ; are never split, expanded
+# or executed. The only layer that needs a command string (weston-terminal
+# --command, run by the shell) gets each word single-quoted.
 
 . /etc/profile
+
+[ "$#" -gt 0 ] || exit 2
 
 ui_state() {
   clear >/dev/console
   systemctl ${1} ${UI_SERVICE}
 }
 
+# One shell word that a POSIX shell reads back as exactly $1.
+shell_word() {
+  printf "'%s'" "${1//\'/\'\\\'\'}"
+}
+
 if [ "${UI_SERVICE}" = "weston.service" ]
 then
-  if [ -f "${*}" ]
-  then
-    RUN=$(echo ${*} | sed 's# #\\ #g')
-    weston-terminal --command="${RUN}"
-  else
-    weston-terminal --command="${*}"
-  fi
-elif echo "${UI_SERVICE}" | grep "sway"; then
-  if [ -f "${*}" ]
-  then
-    foot -F "${*}"
-  else
-    foot -F ${*}
-  fi
+  COMMAND=""
+  for word in "$@"; do
+    COMMAND+="${COMMAND:+ }$(shell_word "${word}")"
+  done
+  weston-terminal --command="${COMMAND}"
+elif [[ "${UI_SERVICE}" == *sway* ]]; then
+  foot -F -- "$@"
 else
   ui_state stop
   clear >/dev/console
-  $* >/dev/console
-  if [ "$?" == 0 ]
-  then
-    ui_state start
-    exit 0
-  else
-    "$*" >/dev/console
-    ui_state start
-    exit 0
-  fi
+  "$@" >/dev/console
+  RC=$?
+  ui_state start
+  exit ${RC}
 fi
-

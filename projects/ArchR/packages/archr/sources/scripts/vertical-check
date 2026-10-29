@@ -2,7 +2,7 @@
 
 . /etc/profile
 
-ARCADEROMS_XML="/usr/config/emulationstation/resources/arcaderoms.xml"
+ARCADEROMS_XML="/usr/share/archr/arcaderoms.xml"
 
 RUNEMU_LINE=$(ps aux | grep '[r]unemu.sh' | head -n 1)
 CURRENT_CORE=$(echo "${RUNEMU_LINE}" | sed -n 's/.*--core=\([^ ]*\).*/\1/p')

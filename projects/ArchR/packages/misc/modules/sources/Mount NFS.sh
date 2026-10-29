@@ -200,8 +200,8 @@ if [ $? -eq 0 ]; then
     if [ -n "${UI_SERVICE}" ]; then
         systemctl restart ${UI_SERVICE}
     else
-        if systemctl is-active --quiet emulationstation; then
-             systemctl restart emulationstation
+        if systemctl is-active --quiet archr-launcher-session; then
+             systemctl restart archr-launcher-session
         elif systemctl is-active --quiet retroarch; then
              systemctl restart retroarch
         else

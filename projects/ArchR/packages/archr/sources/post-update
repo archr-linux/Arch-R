@@ -26,21 +26,16 @@ then
   EXCLUDE="--exclude=configs"
 fi
 
-### Remove and link es configs so they are managed with OS updates.
-for es_cfg in es_features.cfg es_systems.cfg
-do
-  mv /storage/.config/emulationstation/${es_cfg} /storage/.config/emulationstation/last_${es_cfg} >/dev/null 2>&1
-  ln -s /usr/config/emulationstation/${es_cfg} /storage/.config/emulationstation/${es_cfg}  >/dev/null 2>&1
-done
+### The systems catalog is /usr/share/archr/systems.cfg (user override:
+### /storage/.config/archr/systems.cfg). Drop the old per-user link to it.
+if [ -L /storage/.config/emulationstation/es_systems.cfg ]
+then
+  rm -f /storage/.config/emulationstation/es_systems.cfg
+fi
 
 rsync -a --delete ${EXCLUDE} /usr/config/system/ /storage/.config/system/
 rsync -a --ignore-existing /usr/config/game /storage/.config/
 rsync -a /usr/config/modules /storage/.config/
-
-if [ -f "/storage/.config/emulationstation/resources/logo.png" ]
-then
-  rm -f /storage/.config/emulationstation/resources/logo.png
-fi
 
 echo "Sync modules..." >>${LOG}
 tocon "Update tool modules..."
@@ -94,8 +89,6 @@ fi
 ### Sync locale data
 tocon "Re-sync locale data..."
 rsync -a --delete /usr/config/locale/* /storage/.config/locale/ >>/var/log/configure.log 2>&1
-rm -rf /storage/.config/emulationstation/locale >>/var/log/configure.log 2>&1 ||:
-ln -sf /usr/share/locale /storage/.config/emulationstation/locale >>/var/log/configure.log 2>&1 ||:
 
 ### Handle assets folder for ppsspp v1.20+ upgrade
 if [ ! -d "/storage/.config/ppsspp/assets/ui_images" ]

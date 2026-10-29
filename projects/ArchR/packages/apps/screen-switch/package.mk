@@ -3,6 +3,7 @@
 
 PKG_NAME="screen-switch"
 PKG_VERSION="1.0"
+PKG_REV="2"
 PKG_LICENSE="GPLv3"
 PKG_DEPENDS_TARGET="toolchain sway"
 PKG_LONGDESC="A simple script to swap sway output screens"

@@ -186,6 +186,13 @@ HW_DEVICE="${DEVICE}"
 HW_ARCH="${ARCH}"
 EOF
 
+# The pacman db of what this image contains, for archr-update to seed an
+# empty local db from (never the repo's newest versions). Image-only:
+# it must always describe the rootfs it ships in.
+${SCRIPTS}/repo/gen-image-localdb "${BUILD}/install_pkg" "${STAMPS_INSTALL}" \
+  "${GIT_HASH}" "${INSTALL}/usr/share/archr/pacman-image-db.tar.gz" ||
+  die "Failed to create the image's pacman db"
+
 # Arch Linux family sentinel file (empty by convention, see /etc/arch-release on Arch)
 # Allows third-party tools that detect Arch via this file to recognize ArchR.
 : >${INSTALL}/etc/archr-release
