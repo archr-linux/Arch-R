@@ -142,7 +142,7 @@ makeinstall_target() {
   ### short note (written only when missing).
   add_system_dir /storage/roms/retroarch-import
   cat <<'EOF' >>${ESTMP}/system-dirs.conf
-f	/storage/roms/retroarch-import/LEIAME.txt	0644 root root - Copie aqui o retroarch.cfg e as pastas config, remaps e shaders de outro RetroArch e use Configurações > Sistema > Importar do RetroArch.\nCopy retroarch.cfg and the config, remaps and shaders folders of another RetroArch here, then use Settings > System > Import from RetroArch.\n
+f	/storage/roms/retroarch-import/LEIAME.txt	0644 root root - pt-BR: Copie aqui o retroarch.cfg e as pastas config, remaps e shaders de outro RetroArch e use Configurações > Sistema > Importar do RetroArch.\nen: Copy retroarch.cfg and the config, remaps and shaders folders of another RetroArch here, then use Settings > System > Import from RetroArch.\nes: Copia aquí el retroarch.cfg y las carpetas config, remaps y shaders de otro RetroArch y usa Configuración > Sistema > Importar de RetroArch.\nru: Скопируйте сюда retroarch.cfg и папки config, remaps и shaders другого RetroArch, затем откройте Настройки > Система > Импорт из RetroArch.\n
 EOF
 
   ### Apply documentation header
