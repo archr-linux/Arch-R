@@ -193,10 +193,6 @@ if echo ${QUIRK_DEVICE} | grep R33S; then
     done
 fi
 
-# set the default global.bezel if it doesn't already exist
-grep -q "^global\.bezel=" /storage/.config/system/configs/system.cfg ||
-  sed -i '$ a\global.bezel=thebezelproject' /storage/.config/system/configs/system.cfg
-
 # set the default suspend shutdown delays if they doesn't already exist
 grep -q "^system\.shutdown_delay=" /storage/.config/system/configs/system.cfg ||
   sed -i '$ a\system.shutdown_delay=900' /storage/.config/system/configs/system.cfg
