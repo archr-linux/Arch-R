@@ -46,7 +46,7 @@ case "$*" in
 esac
 exit 0'
 tool "${T}/bin/resolvectl" 'echo "resolvectl $*" >>"$T/calls"'
-tool "${T}/bin/modprobe" ':'
+tool "${T}/bin/modprobe" 'echo "modprobe $*" >>"$T/calls"'
 # Transient units: a named one runs detached and is stopped by name,
 # waiting for it as systemd does; a second start of a running one fails.
 tool "${T}/bin/systemd-run" '
@@ -116,6 +116,9 @@ echo "not attached" >"${R}/sys/class/udc/${UDC}/device/usb1/1-0:1.0/usb1-port1/s
 echo cdc >"${R}/sys/class/udc/${UDC}/function"
 printf 'USB_MODE=cdc\nUSB_NET=internet\nUSB_RNDIS=0\n' >"${R}/storage/.cache/usbgadget/usbgadget.conf"
 check "current mode is internet" '[ "$(gadget)" = internet ]'
+loaded=$(calls modprobe)
+gadget status >/dev/null; gadget address >/dev/null 2>&1; gadget --options >/dev/null
+check "queries load no modules" '[ "$(calls modprobe)" = "${loaded}" ]'
 check "compatibility off by default" '[ "$(gadget compat)" = 0 ] && [ "$(field compat)" = 0 ]'
 gadget compat 2 >/dev/null 2>&1
 check "compatibility rejects other values" '[ $? = 2 ]'

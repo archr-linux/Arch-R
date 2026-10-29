@@ -79,9 +79,16 @@ GADGETNETCONF=${CACHEDIR}/network.conf
 UDHCPCONF=${ROOT}/var/run/udhcpd.conf
 UDHCPPIDFILE=${ROOT}/var/run/udhcpd.pid
 
-for mod in usb_f_ncm usb_f_rndis usb_f_fs; do
-	modprobe -q ${mod}
-done
+# Queries (the launcher polls status every 2 s) need no modules; udhcpc's
+# events left above, before any of this.
+case "$1" in
+	""|status|address|--options) ;;
+	*)
+		for mod in usb_f_ncm usb_f_rndis usb_f_fs; do
+			modprobe -q ${mod}
+		done
+		;;
+esac
 
 mkdir -p "${CACHEDIR}"
 
