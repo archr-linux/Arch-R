@@ -416,7 +416,7 @@ internet_down() {
 # "Internet pelo PC": with the cable in, Wi-Fi off and a lease from the
 # PC's sharing (Windows ICS 192.168.137.x, NetworkManager 10.42.0.x, macOS).
 # No lease in time, or a lease lost: the fixed address of the "network"
-# mode, Wi-Fi back.
+# mode; Wi-Fi stays off until the PC is gone or the mode is left.
 # Unplugged: everything undone, and tried again on the next plug.
 # Still bound as the network gadget in "internet" mode: anything else
 # (another mode, the UDC released, the interface gone) ends the supervisor.
@@ -455,8 +455,10 @@ internet_supervise() {
 			dhcpc=$!
 		elif [ "${link}" = dhcp ] && ! kill -0 "${dhcpc}" 2>/dev/null; then
 			# udhcpc (-n) ends without a lease, at first or once one is lost:
-			# either way the PC does not share now.
-			release_wifi
+			# either way the PC does not share now. Wi-Fi stays off while
+			# the PC is on the cable: on clones whose OTG lines go through
+			# the usb_switch_gpio mux, "wifictl enable" turns the mux back to
+			# the internal Wi-Fi and would cut the PC off.
 			local_up
 			link=fallback
 			set_link fallback

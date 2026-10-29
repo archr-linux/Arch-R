@@ -146,11 +146,13 @@ carrier 1
 wait_for "no sharing: falls back to the network mode" '[ "$(field link)" = fallback ]'
 check "no sharing: fixed address" '[ "$(field address)" = 169.254.170.2 ]'
 check "no sharing: local DHCP server" '[ "$(calls "udhcpd -S")" = 1 ]'
-check "no sharing: Wi-Fi back" '[ "$(field wifi)" = free ] && [ "$(calls "wifictl enable")" = 2 ]'
+check "no sharing: Wi-Fi stays off while the PC is there" \
+  '[ "$(field wifi)" = held ] && [ "$(calls "wifictl enable")" = 1 ]'
 
 # Plugged again with sharing on, and the user had Wi-Fi off: it stays off.
 carrier 0
-wait_for "replug: waiting" 'seen waiting'
+wait_for "unplugged after no sharing: Wi-Fi back" \
+  'seen waiting && [ "$(field wifi)" = free ] && [ "$(calls "wifictl enable")" = 2 ]'
 echo 0 >"${T}/wifi.enabled"
 echo "${LEASE}" >"${T}/lease"
 carrier 1
