@@ -9,8 +9,9 @@
 # stop, the lease handling and the status the launcher reads.
 #   bash projects/ArchR/packages/archr/tests/usbgadget_test.sh
 
-# Checks are eval'd strings and the fakes expand at run time.
-# shellcheck disable=SC2016,SC2317
+# Checks are eval'd strings (variables read only there) and the fakes
+# expand at run time.
+# shellcheck disable=SC2016,SC2317,SC2034
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 SCRIPT="$(dirname "${HERE}")/sources/scripts/usbgadget"
@@ -92,7 +93,7 @@ wait_for() {
   fail "$1 (link file: $(cat "${R}/run/usbgadget/link" 2>/dev/null), status: $(field link))"
 }
 gadget() { "${SCRIPT}" "$@"; }
-field() { gadget status | sed -n "s/^$1=//p"; }
+field() { gadget status 2>/dev/null | sed -n "s/^$1=//p"; }
 calls() { grep -c "$1" "${T}/calls" 2>/dev/null; }
 carrier() { echo "$1" >"${R}/sys/class/net/gadget/carrier"; }
 # What the supervisor has seen; status reads the carrier itself.
@@ -181,5 +182,82 @@ check "disabled: state file keeps the net choice" \
 # A lease without a gateway is a local link, not internet.
 env interface=gadget ip=10.42.0.5 subnet=255.255.255.0 "${SCRIPT}" bound
 check "lease without gateway: local" '[ "$(cat "${R}/run/usbgadget/link")" = local ]'
+
+# The whole flow through the commands: configfs comes from fake mkdir and
+# rmdir (attributes appear with their directory, a name in $T/no-<func>
+# refuses that function). The UDC is renamed "cdc" so that its function
+# file can be a link to the gadget's UDC file: binding writes the UDC name
+# there, and the kernel's at-once "cdc" in the function file follows.
+tool "${T}/bin/mkdir" '
+for d; do
+  case $d in -*) continue ;; esac
+  /usr/bin/mkdir -p "$d" || exit 1
+  case $d in
+    */usb_gadget/cdc|*/usb_gadget/mtp)
+      /usr/bin/mkdir -p "$d/strings" "$d/configs" "$d/functions" "$d/os_desc"; : >"$d/UDC" ;;
+    */configs/c.1) /usr/bin/mkdir -p "$d/strings" ;;
+    */functions/ncm.usb0|*/functions/rndis.usb0)
+      f=${d##*/}; f=${f%.usb0}
+      [ -e "$T/no-$f" ] && { rm -r "$d"; exit 1; }
+      /usr/bin/mkdir -p "$d/os_desc/interface.$f"; echo gadget >"$d/ifname" ;;
+  esac
+done'
+tool "${T}/bin/rmdir" 'rm -r "$@"'
+CFG="${R}/sys/kernel/config/usb_gadget"
+rm -f "${R}/storage/.cache/usbgadget/usbgadget.conf"
+mv "${R}/sys/class/udc/${UDC}" "${R}/sys/class/udc/cdc"
+UDC=cdc
+ln -sf "${CFG}/cdc/UDC" "${R}/sys/class/udc/cdc/function"
+echo 1 >"${T}/wifi.enabled"
+echo "${LEASE}" >"${T}/lease"
+carrier 1
+unit_up() { kill -0 "$(cat "${T}/unit-usbgadget-internet" 2>/dev/null)" 2>/dev/null; }
+
+gadget prepare >/dev/null 2>&1
+check "prepare: NCM with its OS descriptor served" \
+  '[ -d "${CFG}/cdc/functions/ncm.usb0" ] && [ -L "${CFG}/cdc/os_desc/c.1" ] && [ "$(cat "${CFG}/cdc/functions/ncm.usb0/os_desc/interface.ncm/compatible_id")" = WINNCM ]'
+
+gadget network >/dev/null 2>&1
+check "network: started" '[ $? = 0 ]'
+wait_for "network: fixed address, no supervisor" \
+  '[ "$(field mode)" = network ] && [ "$(field link)" = local ] && [ "$(field address)" = 169.254.170.2 ] && ! unit_up'
+udhcpd=$(cat "${R}/var/run/udhcpd.pid")
+
+gadget internet >/dev/null 2>&1
+check "network to internet: supervisor launched as a unit" 'grep -q "systemd-run .*--unit=usbgadget-internet .* supervise" "${T}/calls"'
+wait_for "network to internet: online, Wi-Fi held" '[ "$(field link)" = online ] && [ "$(field wifi)" = held ]'
+check "network to internet: local DHCP server stopped" '! kill -0 "${udhcpd}" 2>/dev/null'
+
+offs=$(calls "wifictl disable"); ons=$(calls "wifictl enable")
+gadget compat 1 >/dev/null 2>&1
+check "compat on: done" '[ $? = 0 ]'
+check "compat on: RNDIS gadget" \
+  '[ -d "${CFG}/cdc/functions/rndis.usb0" ] && [ ! -d "${CFG}/cdc/functions/ncm.usb0" ] && [ "$(cat "${CFG}/cdc/bDeviceClass")" = 0xEF ] && [ "$(cat "${CFG}/cdc/functions/rndis.usb0/os_desc/interface.rndis/compatible_id")" = RNDIS ]'
+wait_for "compat on: internet again, compat reported" '[ "$(field link)" = online ] && [ "$(field compat)" = 1 ] && unit_up'
+check "compat on: Wi-Fi never toggled" \
+  '[ "$(calls "wifictl disable")" = "${offs}" ] && [ "$(calls "wifictl enable")" = "${ons}" ] && [ "$(field wifi)" = held ]'
+
+touch "${T}/no-ncm" "${T}/no-rndis"
+gadget compat 0 >/dev/null 2>&1
+check "compat with no gadget possible: exit 4" '[ $? = 4 ]'
+check "compat with no gadget possible: function off" \
+  'grep -qx USB_MODE=disabled "${R}/storage/.cache/usbgadget/usbgadget.conf" && [ ! -d "${CFG}/cdc" ] && ! unit_up'
+wait_for "compat with no gadget possible: Wi-Fi back" '[ "$(field wifi)" = free ] && [ "$(calls "wifictl enable")" = $((ons + 1)) ]'
+rm -f "${T}/no-ncm" "${T}/no-rndis"
+
+gadget compat 0 >/dev/null 2>&1
+check "compat off while off: NCM rebuilt" '[ $? = 0 ] && [ -d "${CFG}/cdc/functions/ncm.usb0" ]'
+gadget internet >/dev/null 2>&1
+wait_for "internet again: online" '[ "$(field link)" = online ] && [ "$(field wifi)" = held ]'
+
+# Two stops at once: one release of Wi-Fi, nothing left running.
+ons=$(calls "wifictl enable")
+gadget disabled >/dev/null 2>&1 &
+first=$!
+gadget disabled >/dev/null 2>&1 &
+wait "${first}" "$!"
+check "concurrent stop: supervisor gone" '! unit_up && ! pgrep -f "${SCRIPT} supervise" >/dev/null'
+check "concurrent stop: Wi-Fi released once" '[ "$(field wifi)" = free ] && [ "$(calls "wifictl enable")" = $((ons + 1)) ]'
+wait_for "concurrent stop: function off" '[ "$(field mode)" = disabled ]'
 
 exit "${FAILED}"

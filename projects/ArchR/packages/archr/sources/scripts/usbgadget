@@ -115,7 +115,7 @@ write_conf() {
 usb_disable() {
 	write_conf disabled
 	if [[ "${CURRENT_MODE}" == "disabled" ]]; then return; fi
-	echo "" > /sys/kernel/config/usb_gadget/${CURRENT_MODE}/UDC
+	echo "" > "${ROOT}/sys/kernel/config/usb_gadget/${CURRENT_MODE}/UDC"
 	CURRENT_MODE=disabled
 }
 
@@ -194,7 +194,7 @@ usb_trigger() {
 # https://github.com/rundekugel/USBGadgetNetwork
 # and adapted for ArchR
 #############################################
-g_cdc="/sys/kernel/config/usb_gadget/cdc"
+g_cdc="${ROOT}/sys/kernel/config/usb_gadget/cdc"
 verbose=${verbose:-0}
 devversion=0x$(echo $OS_VERSION | cut -b 3-6)   # 0xYYMM; 20241025 -> 0x2410
 
@@ -215,8 +215,8 @@ prepare_usb_network() {
     ms_qw_sign="MSFT100" # also Microsoft (if you couldn't tell)
     func=$(cdc_function)
 
-    if [ -d ${g_cdc} ]; then
-        if [ "$(cat ${g_cdc}/UDC)" != "" ]; then
+    if [ -d "${g_cdc}" ]; then
+        if [ "$(cat "${g_cdc}/UDC")" != "" ]; then
             if [ "$verbose" -gt "0" ];then echo "Gadget is already up."; fi
             exit 1
         fi
@@ -227,24 +227,24 @@ prepare_usb_network() {
 
     # Create a new gadget
 
-    mkdir ${g_cdc}
-    echo "${usb_ver}" > ${g_cdc}/bcdUSB
-    echo "${dev_class}" > ${g_cdc}/bDeviceClass
-    echo "0x1d6b" > ${g_cdc}/idVendor
-    echo "0x0104" > ${g_cdc}/idProduct
-    echo "${devversion}" > ${g_cdc}/bcdDevice
-    mkdir ${g_cdc}/strings/0x409
-    echo "${OS_NAME}" > ${g_cdc}/strings/0x409/manufacturer
-    echo "${QUIRK_DEVICE}" > ${g_cdc}/strings/0x409/product
-    echo "${SERIAL}" > ${g_cdc}/strings/0x409/serialnumber
+    mkdir "${g_cdc}"
+    echo "${usb_ver}" > "${g_cdc}/bcdUSB"
+    echo "${dev_class}" > "${g_cdc}/bDeviceClass"
+    echo "0x1d6b" > "${g_cdc}/idVendor"
+    echo "0x0104" > "${g_cdc}/idProduct"
+    echo "${devversion}" > "${g_cdc}/bcdDevice"
+    mkdir "${g_cdc}/strings/0x409"
+    echo "${OS_NAME}" > "${g_cdc}/strings/0x409/manufacturer"
+    echo "${QUIRK_DEVICE}" > "${g_cdc}/strings/0x409/product"
+    echo "${SERIAL}" > "${g_cdc}/strings/0x409/serialnumber"
 
     # config 1 is for CDC
 
-    mkdir ${g_cdc}/configs/c.1
-    echo "${attr}" > ${g_cdc}/configs/c.1/bmAttributes
-    echo "${pwr}" > ${g_cdc}/configs/c.1/MaxPower
-    mkdir ${g_cdc}/configs/c.1/strings/0x409
-    echo "${cfg1}" > ${g_cdc}/configs/c.1/strings/0x409/configuration
+    mkdir "${g_cdc}/configs/c.1"
+    echo "${attr}" > "${g_cdc}/configs/c.1/bmAttributes"
+    echo "${pwr}" > "${g_cdc}/configs/c.1/MaxPower"
+    mkdir "${g_cdc}/configs/c.1/strings/0x409"
+    echo "${cfg1}" > "${g_cdc}/configs/c.1/strings/0x409/configuration"
 
     # Create the CDC function
 
@@ -253,19 +253,19 @@ prepare_usb_network() {
         # Windows binds its inbox RNDIS driver by this compatible id. The
         # interface association needs the composite class, and a release of
         # its own keeps Windows from reusing what it cached for NCM.
-        echo "0xEF" > ${g_cdc}/bDeviceClass
-        echo "0x02" > ${g_cdc}/bDeviceSubClass
-        echo "0x01" > ${g_cdc}/bDeviceProtocol
-        printf '0x%04x\n' $(( devversion ^ 0x8000 )) > ${g_cdc}/bcdDevice
+        echo "0xEF" > "${g_cdc}/bDeviceClass"
+        echo "0x02" > "${g_cdc}/bDeviceSubClass"
+        echo "0x01" > "${g_cdc}/bDeviceProtocol"
+        printf '0x%04x\n' $(( devversion ^ 0x8000 )) > "${g_cdc}/bcdDevice"
         echo "RNDIS" > "${g_cdc}/functions/${func}/os_desc/interface.rndis/compatible_id"
         echo "5162001" > "${g_cdc}/functions/${func}/os_desc/interface.rndis/sub_compatible_id"
     else
         echo "WINNCM" > "${g_cdc}/functions/${func}/os_desc/interface.ncm/compatible_id"
     fi
 
-    echo "1" > ${g_cdc}/os_desc/use
-    echo "${ms_vendor_code}" > ${g_cdc}/os_desc/b_vendor_code
-    echo "${ms_qw_sign}" > ${g_cdc}/os_desc/qw_sign
+    echo "1" > "${g_cdc}/os_desc/use"
+    echo "${ms_vendor_code}" > "${g_cdc}/os_desc/b_vendor_code"
+    echo "${ms_qw_sign}" > "${g_cdc}/os_desc/qw_sign"
 
 
     smac=$(echo ${SERIAL} | cut -b 1-12)
@@ -280,7 +280,7 @@ prepare_usb_network() {
     echo "${host_mac}" > "${g_cdc}/functions/${func}/host_addr"
     # max_segment_size allows higher MTUs which lead to higher transfer rates and lower CPU usage.
     # However it needs some more work to be done as host needs to set high MTU as well
-    #echo "8000" > ${g_cdc}/functions/ncm.usb0/max_segment_size # f_ncm.c: #define MAX_DATAGRAM_SIZE	8000
+    #echo "8000" > "${g_cdc}/functions/ncm.usb0/max_segment_size" # f_ncm.c: #define MAX_DATAGRAM_SIZE	8000
 
     # Make the network function the first configuration
     ln -s "${g_cdc}/functions/${func}" "${g_cdc}/configs/c.1"
@@ -290,14 +290,14 @@ prepare_usb_network() {
     # MS_COMP_WINNCM, so the id only names the same driver; Linux and
     # macOS ignore it. A new bcdDevice each release keeps Windows from
     # mixing it with what it cached before.
-    ln -s ${g_cdc}/configs/c.1 ${g_cdc}/os_desc
+    ln -s "${g_cdc}/configs/c.1" "${g_cdc}/os_desc"
 
     if [ -n "$verbose" ]; then echo "Done."; fi
     set +e
 }
 
 gadget_iface() {
-	cat "${ROOT}${g_cdc}/functions/$(cdc_function)/ifname" 2>/dev/null
+	cat "${g_cdc}/functions/$(cdc_function)/ifname" 2>/dev/null
 }
 
 has_carrier() {
@@ -352,7 +352,7 @@ EOF
 
 configure_iface() {
 	# Hope udev rule works well, and device gets the name 'gadget'
-	udevadm wait --timeout=5 --settle /sys/class/net/gadget
+	udevadm wait --timeout=5 --settle "${ROOT}/sys/class/net/gadget"
 	IFACE_NAME=$(gadget_iface)
 
 	ip -6 address add fe80::2/64 dev "${IFACE_NAME}" scope link 2>/dev/null
@@ -489,7 +489,7 @@ stop_internet() {
 
 
 cleanup_usb_network() {
-    if [ ! -d ${g_cdc} ]; then
+    if [ ! -d "${g_cdc}" ]; then
         if [ "$verbose" -gt "0" ];then echo "Gadget is already down."; fi
         exit 1
     fi
@@ -498,19 +498,19 @@ cleanup_usb_network() {
     # Have to unlink and remove directories in reverse order.
     # Checks allow to finish takedown after error.
 
-    if [ "$(cat ${g_cdc}/UDC)" != "" ]; then
-        echo "" > ${g_cdc}/UDC
+    if [ "$(cat "${g_cdc}/UDC")" != "" ]; then
+        echo "" > "${g_cdc}/UDC"
     fi
-    rm -f ${g_cdc}/os_desc/c.1
+    rm -f "${g_cdc}/os_desc/c.1"
     # Not "func": prepare_usb_network calls this and still needs its own.
     for old_func in ncm.usb0 rndis.usb0; do
-        rm -f ${g_cdc}/configs/c.1/${old_func}
+        rm -f "${g_cdc}/configs/c.1/${old_func}"
         [ -d "${g_cdc}/functions/${old_func}" ] && rmdir "${g_cdc}/functions/${old_func}"
     done
-    [ -d ${g_cdc}/configs/c.1/strings/0x409 ] && rmdir ${g_cdc}/configs/c.1/strings/0x409
-    [ -d ${g_cdc}/configs/c.1 ] && rmdir ${g_cdc}/configs/c.1
-    [ -d ${g_cdc}/strings/0x409 ] && rmdir ${g_cdc}/strings/0x409
-    rmdir ${g_cdc}
+    [ -d "${g_cdc}/configs/c.1/strings/0x409" ] && rmdir "${g_cdc}/configs/c.1/strings/0x409"
+    [ -d "${g_cdc}/configs/c.1" ] && rmdir "${g_cdc}/configs/c.1"
+    [ -d "${g_cdc}/strings/0x409" ] && rmdir "${g_cdc}/strings/0x409"
+    rmdir "${g_cdc}"
 
     rm -f ${UDHCPCONF}
 
@@ -564,7 +564,7 @@ set_compat() {
 
 
 
-g_mtp="/sys/kernel/config/usb_gadget/mtp"
+g_mtp="${ROOT}/sys/kernel/config/usb_gadget/mtp"
 
 prepare_usb_mtp() {
     usb_ver="0x0200" # USB 2.0
@@ -572,44 +572,45 @@ prepare_usb_mtp() {
     attr="0xC0" # Self powered
     pwr="0xfe" #
 
-    mkdir ${g_mtp}
-    echo "${usb_ver}" > ${g_mtp}/bcdUSB
-    echo "${dev_class}" > ${g_mtp}/bDeviceClass
-    echo "0x1d6b" > ${g_mtp}/idVendor
-    echo "0x0104" > ${g_mtp}/idProduct
-    echo "${devversion}" > ${g_mtp}/bcdDevice
-    mkdir ${g_mtp}/strings/0x409
-    echo "${OS_NAME}" > ${g_mtp}/strings/0x409/manufacturer
-    echo "${QUIRK_DEVICE}" > ${g_mtp}/strings/0x409/product
-    echo "${SERIAL}" > ${g_mtp}/strings/0x409/serialnumber
+    mkdir "${g_mtp}"
+    echo "${usb_ver}" > "${g_mtp}/bcdUSB"
+    echo "${dev_class}" > "${g_mtp}/bDeviceClass"
+    echo "0x1d6b" > "${g_mtp}/idVendor"
+    echo "0x0104" > "${g_mtp}/idProduct"
+    echo "${devversion}" > "${g_mtp}/bcdDevice"
+    mkdir "${g_mtp}/strings/0x409"
+    echo "${OS_NAME}" > "${g_mtp}/strings/0x409/manufacturer"
+    echo "${QUIRK_DEVICE}" > "${g_mtp}/strings/0x409/product"
+    echo "${SERIAL}" > "${g_mtp}/strings/0x409/serialnumber"
 
     # config 1 for MTP
-    mkdir ${g_mtp}/configs/c.1
-    echo "${attr}" > ${g_mtp}/configs/c.1/bmAttributes
-    echo "${pwr}" > ${g_mtp}/configs/c.1/MaxPower
-    mkdir ${g_mtp}/configs/c.1/strings/0x409
-    echo mtp > ${g_mtp}/configs/c.1/strings/0x409/configuration
+    mkdir "${g_mtp}/configs/c.1"
+    echo "${attr}" > "${g_mtp}/configs/c.1/bmAttributes"
+    echo "${pwr}" > "${g_mtp}/configs/c.1/MaxPower"
+    mkdir "${g_mtp}/configs/c.1/strings/0x409"
+    echo mtp > "${g_mtp}/configs/c.1/strings/0x409/configuration"
 
-    mkdir ${g_mtp}/functions/ffs.mtp
-    ln -s ${g_mtp}/functions/ffs.mtp ${g_mtp}/configs/c.1
+    mkdir "${g_mtp}/functions/ffs.mtp"
+    ln -s "${g_mtp}/functions/ffs.mtp" "${g_mtp}/configs/c.1"
 }
 
 cleanup_usb_mtp() {
     rm -f \
-        ${g_mtp}/configs/c.1/ffs.mtp
+        "${g_mtp}/configs/c.1/ffs.mtp"
 
     rmdir \
-        ${g_mtp}/configs/c.1/strings/0x409 \
-        ${g_mtp}/configs/c.1 \
-        ${g_mtp}/functions/ffs.mtp \
-        ${g_mtp}/strings/0x409 \
-        ${g_mtp}
+        "${g_mtp}/configs/c.1/strings/0x409" \
+        "${g_mtp}/configs/c.1" \
+        "${g_mtp}/functions/ffs.mtp" \
+        "${g_mtp}/strings/0x409" \
+        "${g_mtp}"
 }
 
 set_role() {
-	for sw in $(ls -1 /sys/class/udc/${UDC_NAME}/device/usb_role/*/role 2>/dev/null); do
+	for sw in "${ROOT}/sys/class/udc/${UDC_NAME}"/device/usb_role/*/role; do
+		[ -e "${sw}" ] || continue
 		if [ "$verbose" -gt "0" ]; then echo "swithing usb role to $1: $sw"; fi
-		echo $1 > $sw
+		echo "$1" > "${sw}"
 	done
 }
 
@@ -675,7 +676,7 @@ usb_start() {
 	fi
 
 	# Enable selected mode
-	echo "${UDC_NAME}" > /sys/kernel/config/usb_gadget/${USB_MODE}/UDC
+	echo "${UDC_NAME}" > "${ROOT}/sys/kernel/config/usb_gadget/${USB_MODE}/UDC"
 	write_conf "${USB_MODE}"
 
 	[[ "${USB_MODE}" == "cdc" ]] && configure_iface
