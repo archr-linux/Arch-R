@@ -104,7 +104,8 @@ run() {
     MIRRORLIST="${TMP}/mirrorlist" PACMAN_DB="${TMP}/db" PACMAN_CACHE="${TMP}/cache" \
     OS_RELEASE="${TMP}/os-release" UPDATE_LOG="${TMP}/log/archr-update.log" \
     UPDATE_LOCK="${TMP}/run/archr-update.lock" UPDATE_STATE="${TMP}/state" \
-    POWER_SUPPLY="${TMP}/power" TICK=0.2 "$@" bash "${SCRIPT}" "${ARGS[@]}"
+    POWER_SUPPLY="${TMP}/power" UPDATE_PROGRESS="${TMP}/run/progress" \
+    UPDATE_CANCEL="${TMP}/run/cancel" TICK=0.2 "$@" bash "${SCRIPT}" "${ARGS[@]}"
 }
 # A field of the last JSON line on stdin.
 field() {
@@ -196,6 +197,7 @@ check "done reports the reboot and versions" "$(field reboot_reason <<<"${OUT}")
 check "new version recorded" "$(cat "${TMP}/state/version")" 2.1.2
 check "download and install are separate" "$(grep -o 'pacman -S[a-zA-Z]*' "${TMP}/calls" | tr '\n' ' ')" \
   "pacman -Sy pacman -Sup pacman -Suw pacman -Su "
+check "the progress file holds the same lines" "$(cat "${TMP}/run/progress")" "${OUT}"
 check "pacman output in the log" "$(grep -c '^upgrading linux...' "${TMP}/log/archr-update.log")" 1
 
 reset
@@ -235,6 +237,22 @@ kill -TERM "$(pgrep -P "${RUN}" -f "${SCRIPT}" || echo "${RUN}")" 2>/dev/null
 wait "${RUN}"
 check "cancel during the download" "$(field reason <"${TMP}/out")" cancelled
 check "cancel installs nothing" "$(grep -c 'pacman -Su ' "${TMP}/calls")" 0
+# The launcher cancels with a file: it may not be this script's parent.
+reset
+run FAKE_STEP=1 >"${TMP}/out" &
+RUN=$!
+wait_for '"download"' "${TMP}/out"
+touch "${TMP}/run/cancel"
+wait "${RUN}"
+check "cancel file during the download" "$(field reason <"${TMP}/out")" cancelled
+check "cancel file removed" "$([ -e "${TMP}/run/cancel" ] && echo left || echo gone)" gone
+# A run that finds the lock taken leaves the followed file alone.
+echo '{"phase":"install"}' >"${TMP}/run/progress"
+flock -n 8
+OUT=$(run)
+check "busy run: reason" "$(field reason <<<"${OUT}")" busy
+check "busy run: progress file untouched" "$(cat "${TMP}/run/progress")" '{"phase":"install"}'
+flock -u 8
 reset
 run FAKE_STEP=0.6 >"${TMP}/out" &
 RUN=$!

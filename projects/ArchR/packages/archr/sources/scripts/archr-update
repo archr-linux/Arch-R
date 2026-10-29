@@ -45,10 +45,15 @@
 #     cancelled, install. "line" is pacman's own error line, when there is
 #     one; "changed" is true once pacman started replacing packages.
 #     The download (pacman -Suw) is separate from the install (pacman -Su):
-#     SIGTERM cancels it (pacman gets SIGINT and keeps its partial files for
-#     the next try). From the install on SIGTERM, SIGHUP and SIGINT are
-#     ignored, by this script and by pacman, and pacman writes only to a
-#     file, so a frontend that goes away cannot interrupt it.
+#     SIGTERM or the file /run/archr-update.cancel cancels it (pacman gets
+#     SIGINT and keeps its partial files for the next try). From the install
+#     on SIGTERM, SIGHUP and SIGINT are ignored, by this script and by
+#     pacman, and pacman writes only to a file, so a frontend that goes away
+#     cannot interrupt it.
+#     Every line also goes to /run/archr-update.progress, rewritten by each
+#     run once it holds the lock: archr-launcher starts the run as its own
+#     unit (systemd-run), outside its session, and follows that file, also
+#     after a restart of its own.
 #     Before downloading: network, battery (at least 30% or charging, read
 #     like archr-launcher reads it) and free space for the download; the
 #     battery is checked again before installing. pacman's CheckSpace
@@ -78,6 +83,8 @@
 : "${UPDATE_LOCK:=/run/archr-update.lock}"
 : "${UPDATE_STATE:=/var/lib/archr-update}"
 : "${POWER_SUPPLY:=/sys/class/power_supply}"
+: "${UPDATE_PROGRESS:=/run/archr-update.progress}"
+: "${UPDATE_CANCEL:=/run/archr-update.cancel}"
 : "${TICK:=1}"
 REPO="https://github.com/archr-linux/archr-repo/releases/download"
 MIN_BATTERY=30
@@ -197,6 +204,9 @@ json() {
 
 emit() {
     printf '{%s}\n' "$1"
+    if [ -n "${FOLLOWED}" ]; then
+        printf '{%s}\n' "$1" >>"${UPDATE_PROGRESS}"
+    fi
 }
 
 # fail REASON MESSAGE [PACMAN_LINE]: report in the mode in use and exit 1.
@@ -397,6 +407,7 @@ run_download() {
         kill -0 "${PID}" 2>/dev/null || break
         emit "\"phase\":\"download\",\"package\":$(json "${package}"),\"bytes\":${bytes},\"total\":${TOTAL},\"percent\":${percent},\"speed\":${speed}"
         sleep "${TICK}"
+        [ -e "${UPDATE_CANCEL}" ] && [ -z "${CANCELLED}" ] && cancel
         # pacman stops at SIGINT; one that does not is ended after 10 ticks.
         if [ -n "${CANCELLED}" ]; then
             waited=$((waited + 1))
@@ -468,8 +479,11 @@ run_install() {
 
 cmd_update_progress() {
     local low targets old space cached reason
-    emit '"phase":"sync"'
     take_lock
+    # Only the lock's holder rewrites the file a frontend follows.
+    rm -f "${UPDATE_CANCEL}"
+    : >"${UPDATE_PROGRESS}" && FOLLOWED=1
+    emit '"phase":"sync"'
     network_ok || fail network "Network connection unavailable."
     low="$(battery_low)" &&
         fail battery "Battery at ${low}%; connect the charger (needs ${MIN_BATTERY}%)."
@@ -556,7 +570,7 @@ if [ "${MODE}" != plain ]; then
     trap '' PIPE
     mkdir -p "${UPDATE_LOG%/*}" 2>/dev/null
     WORK="$(mktemp -d)" || exit 1
-    trap 'rm -rf "${WORK}"' EXIT
+    trap 'rm -rf "${WORK}"; if [ -n "${FOLLOWED}" ]; then rm -f "${UPDATE_CANCEL}"; fi' EXIT
     logf "archr-update ${1} ${2} (channel ${BRANCH})"
     if [ "${MODE}" = json ]; then
         cmd_check_json
