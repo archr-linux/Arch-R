@@ -83,3 +83,6 @@
 
   # Disk Swap
     SWAP_FILE_SIZE="0"
+
+  # KSM: no emulator marks memory MADV_MERGEABLE, so ksmd only wakes the CPU
+    KSM_ENABLE="disable"
