@@ -16,8 +16,7 @@ xres="$(cat /sys/class/graphics/fb0/modes 2>/dev/null | grep -o -P '(?<=:).*(?=p
 # drm_tool source available at https://github.com/christianhaitian/drm_tool.git
 # Wrap with a timeout: drm_tool can block on the DRM master if
 # rockchipdrm is still binding, which on a slow microSD has been
-# observed to hang this autostart script and (via Before=emustation)
-# the entire boot.
+# observed to hang this autostart script and the UI start behind it.
 mode="$(timeout 10 /usr/bin/drm_tool list 2>/dev/null | awk '/1280x720.*60/ {print substr($2,1,length($2)-1); exit}')"
 mode2="$(timeout 10 /usr/bin/drm_tool list 2>/dev/null | awk '/1920x1080.*60/ {print substr($2,1,length($2)-1); exit}')"
 

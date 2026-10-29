@@ -9,7 +9,8 @@ ACTIVE_APPID=$(swaymsg -t get_tree | awk '
   }
 ')
 
-if [[ -n "$ACTIVE_APPID" && "$ACTIVE_APPID" = "emulationstation"  ]]; then
+# Never move the launcher itself.
+if [[ -n "$ACTIVE_APPID" && "$ACTIVE_APPID" = "archr-launcher"  ]]; then
   exit 0
 fi
 

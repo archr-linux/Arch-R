@@ -17,7 +17,7 @@ PKG_DEPENDS_TARGET="toolchain squashfs-tools:host squashfs-tools dosfstools:host
                     gzip six xmlstarlet pyudev dialog network mako-osd archr \
                     pacman"
 
-PKG_UI="emulationstation es-themes textviewer"
+PKG_UI="archr-launcher textviewer"
 
 PKG_UI_TOOLS="fbgrab grim"
 
@@ -25,7 +25,7 @@ PKG_GRAPHICS="imagemagick"
 
 PKG_FONTS="corefonts"
 
-PKG_MULTIMEDIA="ffmpeg vlc mpv gmu m8c"
+PKG_MULTIMEDIA="ffmpeg mpv gmu m8c"
 
 PKG_SOUND="espeak libao"
 

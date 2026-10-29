@@ -57,3 +57,11 @@ not extend trust to packages signed by it.
 
 The promotion workflow (dev -> next -> stable) is documented in
 `docs/release-policy.md`.
+
+## Release notes (optional)
+
+`archr-update check --json` shows a release's notes on the launcher's
+Updates page when the release carries a `changelog.txt` asset next to
+the repo (`repo-<channel>/changelog.txt`). Its first line is the version
+the release brings (for example `2.1.2`); the following lines are the
+notes, in plain text. Without the asset the page simply has no notes.

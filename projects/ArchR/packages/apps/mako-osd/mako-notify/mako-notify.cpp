@@ -75,28 +75,19 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // check for -no-es / -no-ra option
-    bool no_es_flag = false;
+    // -no-ra: RetroArch draws its own notification. (-no-es went with
+    // EmulationStation; the launcher draws none, so the OSD shows over it.
+    // Unknown options are ignored.)
     bool no_ra_flag = false;
     for (int i = 2; i < argc; ++i) {
-        if (std::string(argv[i]) == "-no-es") {
-            no_es_flag = true;
-        }
         if (std::string(argv[i]) == "-no-ra") {
             no_ra_flag = true;
         }
     }
 
-    if (no_es_flag || no_ra_flag) {
-        std::string focused_app = get_focused_app();
-        // skip notification if -no-es and EmulationStation focused
-        if (no_es_flag && focused_app == "emulationstation") {
-            return 0;
-        }
-        // skip notification if -no-ra and Retorarch focused
-        if (no_ra_flag && focused_app == "com.libretro.RetroArch") {
-            return 0;
-        }
+    // skip notification if -no-ra and RetroArch focused
+    if (no_ra_flag && get_focused_app() == "com.libretro.RetroArch") {
+        return 0;
     }
 
     // Ensure the Mako config exists

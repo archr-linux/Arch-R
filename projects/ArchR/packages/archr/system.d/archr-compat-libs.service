@@ -1,6 +1,6 @@
 [Unit]
 Description=ArchR PortMaster compat library symlinks
-# Ports are launched from EmulationStation, which archr-autostart.service
+# Ports are launched from the UI (archr-launcher), which archr-autostart.service
 # brings up; ordering before it guarantees the compat SONAMEs are linked
 # into /usr/lib before any port (or its runtime) can dlopen them.
 Before=archr-autostart.service

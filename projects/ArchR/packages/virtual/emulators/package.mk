@@ -1449,21 +1449,25 @@ EOF
   ### Screenshots
   add_es_system imageviewer
 
-  ### Create es_systems
+  ### Create the systems catalog
   mk_es_systems
 
   ### Generate document
   mk_system_doc
 
-  mkdir -p ${INSTALL}/usr/config/emulationstation
-  cp -f ${ESTMP}/es_systems.cfg ${INSTALL}/usr/config/emulationstation
+  # The systems catalog keeps the es_systems.cfg format. It lives outside
+  # /usr/config: it is never copied to /storage, and a user override goes
+  # to /storage/.config/archr/systems.cfg.
+  CATALOG="${INSTALL}/usr/share/archr/systems.cfg"
+  mkdir -p ${INSTALL}/usr/share/archr
+  cp -f ${ESTMP}/es_systems.cfg ${CATALOG}
 
   if [ "${WINDOWMANAGER}" = "weston" ]; then
-    sed -i 's~%RUNCOMMAND%~weston-terminal --command="%ROM%"~g' ${INSTALL}/usr/config/emulationstation/es_systems.cfg
+    sed -i 's~%RUNCOMMAND%~weston-terminal --command="%ROM%"~g' ${CATALOG}
   elif [ "${WINDOWMANAGER}" = "swaywm-env" ]; then
-    sed -i 's~%RUNCOMMAND%~/usr/bin/foot %ROM%~g' ${INSTALL}/usr/config/emulationstation/es_systems.cfg
+    sed -i 's~%RUNCOMMAND%~/usr/bin/foot %ROM%~g' ${CATALOG}
   else
-    sed -i 's~%RUNCOMMAND%~/usr/bin/run %ROM%~g' ${INSTALL}/usr/config/emulationstation/es_systems.cfg
+    sed -i 's~%RUNCOMMAND%~/usr/bin/run %ROM%~g' ${CATALOG}
   fi
 
   ### Automount should handle this.

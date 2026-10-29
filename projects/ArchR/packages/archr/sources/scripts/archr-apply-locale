@@ -7,20 +7,30 @@
 # Applies system.timezone and system.language from system.cfg. Split out
 # of es_settings so any frontend can run it, not only EmulationStation.
 #
-# Usage: archr-apply-locale
+# Usage: archr-apply-locale [--no-generate]
 #
 #   - timezone: writes /storage/.cache/timezone and restarts tz-data,
 #     only when the zone changed since the last run;
 #   - language: generates the locale on first use (can take minutes on
-#     RK3326) and imports LANG, LANGUAGE and LOCPATH into the systemd
+#     RK3326) into /storage/.config/locale, where glibc finds it through
+#     /usr/lib/locale, and imports LANG and LANGUAGE into the systemd
 #     manager, so units started afterwards get them. With no language
-#     set the three are removed from it.
+#     set both are removed from it. LOCPATH is never set: the default
+#     lookup already reaches the generated locales, and an old value
+#     (the EmulationStation folder) is removed from the manager.
+#
+#   --no-generate  only the fast part: timezone, and the language if its
+#                  locale is already generated. Exits 3 when generation
+#                  is still needed (run again without the option for it).
 #
 # Prints the applied variables as KEY=VALUE lines (nothing when no
 # language is set). Exits 1 when the locale cannot be generated; the
 # variables are still applied, as es_settings always did.
 
 . /etc/profile
+
+GENERATE=1
+[ "${1}" = "--no-generate" ] && GENERATE=0
 
 TZ=$(get_setting system.timezone)
 echo -n "TIMEZONE=${TZ}" > /storage/.cache/timezone
@@ -43,30 +53,31 @@ fi
 
 MYCHARMAP="UTF-8"
 MYLANG="${MYLOCALE}.${MYCHARMAP}"
-MYLOCPATH="/storage/.config/emulationstation/locale"
+MYLOCDIR="/storage/.config/locale"
+LOG="/var/log/archr-apply-locale.log"
 
-if [ ! -e "${MYLOCPATH}/${MYLANG}/LC_NAME" ]; then
-  mkdir -p "${MYLOCPATH}"
+if [ ! -e "${MYLOCDIR}/${MYLANG}/LC_NAME" ]; then
+  [ "${GENERATE}" = 1 ] || exit 3
+  mkdir -p "${MYLOCDIR}"
   performance
   I18NPATH="/usr/share/i18n" \
   localedef -i ${MYLOCALE} \
             -c \
             -v \
             -f ${MYCHARMAP} \
-            "${MYLOCPATH}/${MYLANG}" >/var/log/start_es.log 2>&1
+            "${MYLOCDIR}/${MYLANG}" >${LOG} 2>&1
   ${DEVICE_CPU_GOVERNOR}
-  if [ ! -e "${MYLOCPATH}/${MYLANG}/LC_NAME" ]; then
-    echo "archr-apply-locale: could not generate ${MYLANG}, see /var/log/start_es.log" >&2
+  if [ ! -e "${MYLOCDIR}/${MYLANG}/LC_NAME" ]; then
+    echo "archr-apply-locale: could not generate ${MYLANG}, see ${LOG}" >&2
     RC=1
   fi
 fi
 
-export LOCPATH="${MYLOCPATH}"
 export LANG="${MYLANG}"
 export LANGUAGE="${MYLANG}"
-systemctl import-environment LANG LANGUAGE LOCPATH
+systemctl unset-environment LOCPATH
+systemctl import-environment LANG LANGUAGE
 
 echo "LANG=${LANG}"
 echo "LANGUAGE=${LANGUAGE}"
-echo "LOCPATH=${LOCPATH}"
 exit ${RC}

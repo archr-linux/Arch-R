@@ -19,6 +19,6 @@ RemainAfterExit=yes
 # Was WantedBy=basic.target, which put the ~3.9s modprobe zram + udev wait
 # + sysctl tuning loop on the critical path before sockets.target →
 # sysinit.target. Moving to multi-user.target keeps swap+KSM+VM tuning
-# functional (it still happens before EmulationStation starts) but
+# functional (it still happens before the UI starts) but
 # unblocks sysinit/basic for the rest of the boot.
 WantedBy=multi-user.target

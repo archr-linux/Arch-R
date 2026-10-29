@@ -6,7 +6,6 @@
 
 OPTIONS="distributions/ArchR/options"
 PACKAGES=("projects/ArchR/packages/virtual/emulators/package.mk" \
-          "projects/ArchR/packages/virtual/es-themes/package.mk" \
           "projects/ArchR/packages/virtual/gamesupport/package.mk" )
 BLOCKLIST="config/blocklist"
 

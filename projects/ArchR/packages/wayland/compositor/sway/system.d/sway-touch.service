@@ -1,6 +1,6 @@
 [Unit]
 Description=Set up touchscreen devices on sway
-After=essway.service
+After=archr-launcher-session.service
 
 [Service]
 Type=simple

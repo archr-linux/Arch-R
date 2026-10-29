@@ -4,6 +4,7 @@
 
 PKG_NAME="systemd"
 PKG_VERSION="255.8"
+PKG_REV="5"
 PKG_LICENSE="LGPL2.1+"
 PKG_SITE="http://www.freedesktop.org/wiki/Software/systemd"
 PKG_URL="https://github.com/systemd/systemd-stable/archive/v${PKG_VERSION}.tar.gz"
@@ -87,7 +88,7 @@ PKG_MESON_OPTS_TARGET="--libdir=/usr/lib \
                        -Dnss-myhostname=false \
                        -Dnss-mymachines=false \
                        -Dnss-resolve=true \
-                       -Dnss-systemd=false \
+                       -Dnss-systemd=true \
                        -Dman=false \
                        -Dhtml=false \
                        -Dlink-udev-shared=true \

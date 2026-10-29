@@ -97,7 +97,6 @@ GAMEFOLDER="${ROMNAME//${BASEROMNAME}}"
 
 ### Define the variables used throughout the script
 BLUETOOTH_STATE=$(get_setting controllers.bluetooth.enabled)
-ES_CONFIG="/storage/.emulationstation/es_settings.cfg"
 VERBOSE=false
 LOG_DIRECTORY="/var/log"
 LOG_FILE="exec.log"
@@ -211,7 +210,7 @@ function quit() {
         bluetooth enable
         resume_background_services
         restore_ksm
-        set_kill set "emulationstation"
+        set_kill set "archr-launcher"
         clear_screen
         # Restore CPU governor to user pref (or ondemand fallback). Gameplay
         # switches to the performance governor, so without the fallback the
