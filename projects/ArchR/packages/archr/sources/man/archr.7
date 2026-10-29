@@ -26,10 +26,17 @@ The following helpers are installed under
 and are the public interface of the distro:
 .TP
 .B archr-update
-Check for and apply an OS update. Pulls a signed image from
-.IR https://update.arch-r.io ;
-during a future release, this will become a wrapper around
-.BR pacman -Syu .
+Check for and apply an OS update with
+.B pacman -Syu
+against the channel in
+.I updates.branch
+(stable, next or dev).
+.B check --json
+and
+.B update --progress
+are the machine interface archr-launcher uses; the script header documents it.
+The log is
+.IR /storage/.config/archr-update.log .
 .TP
 .B archr-config
 Read or write a runtime setting persisted in

@@ -48,6 +48,14 @@ check_charging() {
   fi
 }
 
+# archr-update holds this lock while it checks or installs. Suspending then
+# would end, after the delay, in a power off in the middle of pacman; the
+# inactivity suspend (input_sense) comes through here too.
+UPDATE_LOCK="/run/archr-update.lock"
+check_update_running() {
+  [[ -e "${UPDATE_LOCK}" ]] && ! flock -n "${UPDATE_LOCK}" true 2>/dev/null
+}
+
 # A game is running whenever runemu.sh is, whichever frontend started it.
 check_running_game() {
   pgrep -f /usr/bin/runemu.sh >/dev/null 2>&1
@@ -385,6 +393,8 @@ if [[ "${SOURCE}" = "power" ]]; then
   else
     if [[ $HDMI_CONNECTED -eq 0 ]]; then
       ${DEBUG} && log $0 "HDMI connected, not suspending"
+    elif check_update_running; then
+      ${DEBUG} && log $0 "System update running, not suspending"
     else
       # Create flag file and suspend
       ${DEBUG} && log $0 "Suspending"
@@ -402,6 +412,8 @@ elif [[ "${SOURCE}" = "lid" && "${ACTION}" = "close" ]]; then
   else
     if [[ $HDMI_CONNECTED -eq 0 ]]; then
       ${DEBUG} && log $0 "HDMI connected, not suspending"
+    elif check_update_running; then
+      ${DEBUG} && log $0 "System update running, not suspending"
     else
       # Suspend
       ${DEBUG} && log $0 "Suspending"
