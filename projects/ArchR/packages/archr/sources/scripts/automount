@@ -22,6 +22,8 @@ STORAGE="${AUTOMOUNT_STORAGE:-/storage}"
 PROC="${AUTOMOUNT_PROC:-/proc}"
 SYS_BLOCK="${AUTOMOUNT_SYS:-/sys/class/block}"
 ROMS2="${AUTOMOUNT_RUN:-/run/archr}/roms2"
+# Present while the mounted card failed its check; the Storage page warns.
+ERRORS="${ROMS2}.errors"
 MS_PATH="${STORAGE}/roms"
 EXTERNAL="${STORAGE}/games-external"
 INTERNAL_BIND="${STORAGE}/.games-internal-bind/roms"
@@ -29,8 +31,8 @@ INTERNAL_BIND="${STORAGE}/.games-internal-bind/roms"
 # 8 GiB floor (JELOS: skip a handheld's internal eMMC) hid real 4/8 GB cards;
 # the system card is now skipped by name (system_disk) instead.
 MIN_KIB=65536
-# Bounded so a damaged card delays the boot by at most this; a card that
-# needs longer is better checked on a PC.
+# The check is read-only (never repairs at boot), so cutting it is harmless;
+# bounded so a damaged card delays the boot by at most this.
 FSCK_TIMEOUT=${AUTOMOUNT_FSCK_TIMEOUT:-60}
 
 ### Mount table helpers (no octal escapes: our mount points have no spaces).
@@ -123,7 +125,7 @@ release() {
   device=$(mounted_at "${EXTERNAL}")
   [ -n "${device}" ] || return 0
   [ -z "${1}" ] || [ "${1}" = "${device}" ] || return 0
-  rm -f "${ROMS2}"
+  rm -f "${ROMS2}" "${ERRORS}"
   if [ "$(fstype_at "${MS_PATH}")" = "overlay" ]
   then
     umount ${2} "${MS_PATH}" || return 1
@@ -193,9 +195,15 @@ mount_games() {
   log $0 "Mounting ${1} (${FSTYPE}) on ${EXTERNAL}"
   if ! mount_card "${1}" || ! touch "${EXTERNAL}/.tmp-archr" 2>/dev/null
   then
-    log $0 "Checking filesystem ${1}."
+    # Look, never repair: errors (or no verdict in time) are reported, and
+    # the card is still mounted as it is.
     umount "${EXTERNAL}" >/dev/null 2>&1
-    timeout ${FSCK_TIMEOUT} fsck -Mly "${1}" >/dev/null 2>&1
+    if ! timeout ${FSCK_TIMEOUT} fsck -n "${1}" >/dev/null 2>&1
+    then
+      log $0 "${1} has filesystem errors (or the check timed out); repair it on a PC."
+      mkdir -p "${ERRORS%/*}"
+      touch "${ERRORS}"
+    fi
     if ! mount_card "${1}"
     then
       log $0 "Cannot mount ${1}."
@@ -269,7 +277,7 @@ then
   exit 0
 fi
 [ -z "${CURRENT}" ] || release "" -l
-rm -f "${ROMS2}"
+rm -f "${ROMS2}" "${ERRORS}"
 
 if [ -e "${STORAGE}/.please_resize_me" ]
 then

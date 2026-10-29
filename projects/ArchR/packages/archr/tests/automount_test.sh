@@ -53,7 +53,7 @@ dst=${!#}
 grep -q " $dst " "$T/proc/mounts" || exit 1
 awk -v p="$dst" "\$2 != p" "$T/proc/mounts" >"$T/m" && mv "$T/m" "$T/proc/mounts"
 case $dst in */games-external) find "$dst" -mindepth 1 -delete ;; esac'
-tool fsck 'echo "fsck $*" >>"$T/calls"; [ -e "$T/slow" ] && sleep 5'
+tool fsck 'echo "fsck $*" >>"$T/calls"; [ -e "$T/slow" ] && sleep 5; exit "$(cat "$T/fsck-rc" 2>/dev/null || echo 0)"'
 
 for t in lsmod modprobe sync systemd-tmpfiles; do tool "$t" ':'; done
 export PATH="${BIN}:${PATH}"
@@ -67,7 +67,7 @@ SD2="${TMP}/dev/mmcblk0p1"
 # A fresh device: SD1 (system) mounted, its ROMs in place, and the card
 # described by: type, size in KiB, and files relative to the card root.
 setup() {
-  rm -rf "${TMP:?}"/{storage,proc,run,dev,calls,log,busy,system.cfg}
+  rm -rf "${TMP:?}"/{storage,proc,run,dev,calls,log,busy,system.cfg,fsck-rc}
   mkdir -p "${STORAGE}/roms/snes" "${EXT}" "${TMP}/proc" "${TMP}/dev" "${TMP}/sys"
   touch "${STORAGE}/roms/snes/Internal.sfc"
   printf 'system.merged.storage=%s\n' "${MERGED:-0}" >"${TMP}/system.cfg"
@@ -140,16 +140,24 @@ setup swap 8000000
 run
 check "swap partition ignored" '! mounted "${EXT}"'
 
-# A card that fails to mount is checked (bounded) and mounted again.
+# A card that fails to mount is checked read-only and mounted anyway.
 setup exfat 62000000 "snes/A.sfc"
 touch "${SD2}.failonce"
 run
-check "fsck after a failed mount, then mounted" 'called "fsck -Mly ${SD2}" && mounted "${EXT}"'
+check "clean check: fsck -n, mounted, no warning" 'called "fsck -n ${SD2}" && mounted "${EXT}" && ! [ -e "${LINK}.errors" ]'
+check "never repairs" '! grep -qE "fsck.* -[a-zA-Z]*[ya]" "${TMP}/calls"'
+setup exfat 62000000 "snes/A.sfc"
+touch "${SD2}.failonce"
+echo 4 >"${TMP}/fsck-rc"
+run
+check "errors found: mounted anyway, warning published" 'mounted "${EXT}" && [ -L "${LINK}" ] && [ -e "${LINK}.errors" ]'
+run remove "${SD2}"
+check "remove clears the warning" '! [ -e "${LINK}.errors" ]'
 setup exfat 62000000 "snes/A.sfc"
 touch "${SD2}.failonce" "${TMP}/slow"
 START=${SECONDS}
 AUTOMOUNT_FSCK_TIMEOUT=1 run
-check "a hung fsck is cut at its time limit" '[ $((SECONDS - START)) -lt 4 ] && mounted "${EXT}"'
+check "a hung check is cut at its limit, mounted, warning published" '[ $((SECONDS - START)) -lt 4 ] && mounted "${EXT}" && [ -e "${LINK}.errors" ]'
 rm -f "${TMP}/slow"
 
 # Eject: none, busy (link restored), done.
