@@ -1,0 +1,26 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026 ArchR (https://github.com/archr-linux/Arch-R)
+#
+# Carry saved emulator choices over to renamed standalone emulators.
+# ArchR's standalone emulators are named <name>-arch; a core saved under
+# the old name, system-wide (<system>.core=) or per game
+# (<system>["rom"].core=), is rewritten in system.cfg. The emulator key
+# keeps its value. Run by post-update; idempotent, since a line already on
+# the new name no longer matches.
+
+CONF="${ARCHR_SYSTEM_CFG:-/storage/.config/system/configs/system.cfg}"
+[ -f "${CONF}" ] || exit 0
+
+# One rename per line: system, old core, new core.
+RENAMES="
+n64 mupen64plus-sa mupen64plus-arch
+"
+
+script=""
+while read -r system old new; do
+  [ -n "${system}" ] || continue
+  script+="s/^(${system}(\\[\"[^\"]*\"\\])?\\.core=)${old}\$/\\1${new}/;"
+done <<<"${RENAMES}"
+
+sed -i -E "${script}" "${CONF}"
