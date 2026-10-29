@@ -12,7 +12,7 @@ idtech-lr # Just a dummy package
 kronos-sa # Using the release version of kronos had better results.
 melonds-sa # Broken OpenGL renderer upstream
 minivmac-lr # Upstream Makefile change breaks build
-mupen64plus-sa-ui-console # Causes segfaults
+mupen64plus-arch-ui-console # Causes segfaults
 nanoboyadvance-sa # SDL version removed after this commit
 np2kai # Last major commit before hiatus is broken.
 openbor # Newer versions break controls, needs research.
