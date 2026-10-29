@@ -4,6 +4,12 @@ ENV{installer}=="1", GOTO="exit"
 
 SUBSYSTEM!="block", KERNEL!="mmc*", GOTO="exit"
 
+# A card pulled out: drop its mount at once, lazily (a running game's open
+# files do not block it). The script ignores anything but the second card.
+# udevd has PrivateMounts=yes: an umount run here would not reach the system.
+ACTION=="remove", KERNEL=="mmcblk[0-9]*", RUN+="/usr/bin/systemd-run --no-block --collect /usr/bin/automount remove /dev/%k"
+ACTION=="remove", GOTO="exit"
+
 # check for special partitions we dont want mount
 IMPORT{builtin}="blkid"
 ENV{ID_FS_LABEL}=="EFI|BOOT|Recovery|RECOVERY|SETTINGS|boot|root0|share0", GOTO="exit"
@@ -14,7 +20,7 @@ GOTO="exit"
 
 # mount or umount for hdds
 LABEL="harddisk"
-ACTION=="add", PROGRAM="/usr/bin/sh -c '/usr/bin/grep -E ^/dev/%k\  /proc/mounts || true'", RESULT=="", RUN+="/usr/bin/systemctl restart archr-automount.service"
+ACTION=="add", PROGRAM="/usr/bin/sh -c '/usr/bin/grep -E ^/dev/%k\  /proc/mounts || true'", RESULT=="", RUN+="/usr/bin/systemctl --no-block restart archr-automount.service"
 GOTO="exit"
 
 # Exit
