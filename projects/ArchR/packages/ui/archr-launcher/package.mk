@@ -11,7 +11,7 @@ PKG_ARCH="aarch64"
 PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/archr-linux/archr-launcher"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain SDL2 SDL2_image SDL2_ttf cargo:host rust:host"
+PKG_DEPENDS_TARGET="toolchain SDL2 SDL2_image SDL2_ttf SDL2_mixer cargo:host rust:host"
 PKG_LONGDESC="ArchR's game launcher and its UI session (SDL2, under sway)"
 # Devices updated with pacman get the launcher in place of the old UI.
 PKG_REPLACES="emulationstation es-theme-art-book-next"
