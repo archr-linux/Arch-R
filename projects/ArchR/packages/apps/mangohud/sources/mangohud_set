@@ -1,85 +1,205 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (C) 2025-present ArchR (https://github.com/archr-linux/Arch-R)
+#
+# mangohud_set on|off|toggle   show or hide the overlay (archr.mangohud.state)
+# mangohud_set enable|disable  wrap games with MangoHud (archr.mangohud.enabled)
+# mangohud_set apply           rebuild the managed block of MangoHud.conf
+#
+# The launcher owns archr.mangohud.{layout,items,position,font_size,alpha,
+# fps_limit}; this script owns .state and .enabled and is the only writer of
+# MangoHud.conf. Options outside the managed block are the user's: they stay,
+# except that a managed option found there is commented out so MangoHud never
+# sees it twice. The paths can be overridden for tests.
 
-. /etc/profile
+. "${MANGOHUD_PROFILE:-/etc/profile}"
 
-MHUD_SET=${1}
+CONF_DIR="${MANGOHUD_CONF_DIR:-/storage/.config/MangoHud}"
+DEFAULT_CONF="${MANGOHUD_DEFAULT_CONF:-/usr/config/MangoHud/MangoHud.conf}"
+CONF="${CONF_DIR}/MangoHud.conf"
+BEGIN_MARK="### BEGIN ArchR managed options (mangohud_set apply rewrites this block)"
+END_MARK="### END ArchR managed options"
 
-### Enable logging
+# Options this script writes; every one of them lives only in the block.
+MANAGED="legacy_layout fps_only horizontal hud_compact hud_no_margin table_columns
+position font_size background_alpha fps_limit no_display time exec_name
+gpu_stats gpu_temp gpu_core_clock cpu_stats cpu_temp cpu_mhz ram procmem
+battery battery_watt fps frame_timing"
+
+# Overlay items per layout; "custom" takes archr.mangohud.items instead.
+ITEMS_ALL="fps frametime cpu_load cpu_temp cpu_freq gpu_load gpu_temp gpu_freq ram battery time game"
+ITEMS_FPS="fps"
+ITEMS_HORIZONTAL="fps cpu_load gpu_load ram battery"
+ITEMS_COMPACT="fps cpu_load cpu_temp gpu_load gpu_temp battery"
+ITEMS_DETAILED="fps frametime cpu_load cpu_temp cpu_freq gpu_load gpu_temp gpu_freq ram battery"
+
 case $(get_setting system.loglevel) in
-  verbose)
-    DEBUG=true
-  ;;
-  *)
-    DEBUG=false
-  ;;
+  verbose) DEBUG=true ;;
+  *) DEBUG=false ;;
 esac
 
-### Confirm MangoHud dir exists
-if [ ! -d "/storage/.config/MangoHud" ]; then
-     cp -r "/usr/config/MangoHud" "/storage/.config/"
+# $1 when it is one of the remaining words, else the default $2.
+one_of() {
+  local value="${1}" fallback="${2}" choice
+  shift 2
+  for choice in "$@"; do
+    [ "${value}" = "${choice}" ] && { echo "${value}"; return; }
+  done
+  echo "${fallback}"
+}
+
+# $1 when it is a plain integer within [$2, $3], else the default $4.
+int_in() {
+  if [[ "${1}" =~ ^[0-9]{1,3}$ ]] && [ $((10#${1})) -ge "${2}" ] && [ $((10#${1})) -le "${3}" ]; then
+    echo $((10#${1}))
+  else
+    echo "${4}"
+  fi
+}
+
+# Known items of a comma list, in the canonical order, without repeats.
+known_items() {
+  local item out=""
+  for item in ${ITEMS_ALL}; do
+    [[ ",${1}," == *",${item},"* ]] && out="${out} ${item}"
+  done
+  echo "${out# }"
+}
+
+# The managed block for the current settings, on stdout.
+managed_block() {
+  local layout items position font_size alpha fps_limit state
+  layout=$(one_of "$(get_setting archr.mangohud.layout)" compact fps horizontal compact detailed custom)
+  case ${layout} in
+    fps) items=${ITEMS_FPS} ;;
+    horizontal) items=${ITEMS_HORIZONTAL} ;;
+    detailed) items=${ITEMS_DETAILED} ;;
+    custom) items=$(known_items "$(get_setting archr.mangohud.items)") ;;
+    *) items=${ITEMS_COMPACT} ;;
+  esac
+  [ -n "${items}" ] || items=${ITEMS_COMPACT}
+  position=$(one_of "$(get_setting archr.mangohud.position)" top-left \
+    top-left top-center top-right bottom-left bottom-center bottom-right)
+  font_size=$(int_in "$(get_setting archr.mangohud.font_size)" 12 48 24)
+  alpha=$(int_in "$(get_setting archr.mangohud.alpha)" 0 100 50)
+  fps_limit=$(int_in "$(get_setting archr.mangohud.fps_limit)" 0 240 0)
+  state=$(one_of "$(get_setting archr.mangohud.state)" off on off)
+
+  has() { [[ " ${items} " == *" ${1} "* ]] && echo 1 || echo 0; }
+  any() { local i; for i in "$@"; do [ "$(has "${i}")" = 1 ] && { echo 1; return; }; done; echo 0; }
+  flag() { [ "${1}" = "${2}" ] && echo 1 || echo 0; }
+
+  local columns=3
+  case ${layout} in
+    fps) columns=1 ;;
+    horizontal) columns=20 ;;
+  esac
+  echo "${BEGIN_MARK}"
+  # Elements are drawn in the order of these lines (legacy_layout=0).
+  cat <<EOF
+legacy_layout=0
+fps_only=$(flag "${layout}" fps)
+horizontal=$(flag "${layout}" horizontal)
+hud_compact=$(flag "${layout}" compact)
+hud_no_margin=$(flag "${layout}" horizontal)
+table_columns=${columns}
+position=${position}
+font_size=${font_size}
+background_alpha=$(printf '%d.%02d' $((alpha / 100)) $((alpha % 100)))
+fps_limit=${fps_limit}
+no_display=$(flag "${state}" off)
+time=$(has time)
+exec_name=$(has game)
+gpu_stats=$(any gpu_load gpu_temp gpu_freq)
+gpu_temp=$(has gpu_temp)
+gpu_core_clock=$(has gpu_freq)
+cpu_stats=$(any cpu_load cpu_temp cpu_freq)
+cpu_temp=$(has cpu_temp)
+cpu_mhz=$(has cpu_freq)
+ram=$(has ram)
+procmem=0
+battery=$(has battery)
+battery_watt=$(has battery)
+fps=$(has fps)
+frame_timing=$(has frametime)
+EOF
+  echo "${END_MARK}"
+}
+
+# The user's options without the old block, managed ones commented out.
+user_options() {
+  awk -v keys="$(echo ${MANAGED})" -v begin="${BEGIN_MARK}" -v end="${END_MARK}" '
+    BEGIN { n = split(keys, list, " "); for (i = 1; i <= n; i++) managed[list[i]] = 1 }
+    $0 == begin { inside = 1; next }
+    $0 == end { inside = 0; next }
+    inside { next }
+    {
+      key = $0
+      sub(/#.*/, "", key)
+      sub(/=.*/, "", key)
+      gsub(/^[ \t]+|[ \t]+$/, "", key)
+      print ((key in managed) ? "# " $0 : $0)
+    }' "${CONF}"
+}
+
+# Rebuild MangoHud.conf in a temp file beside it and rename it into place.
+apply() {
+  local tmp
+  tmp=$(mktemp "${CONF}.XXXXXX") || return 1
+  if { user_options && managed_block; } >"${tmp}" && chmod 644 "${tmp}" && mv -f "${tmp}" "${CONF}"; then
+    ${DEBUG} && log $0 "MangoHud configuration applied."
+    return 0
+  fi
+  rm -f "${tmp}"
+  return 1
+}
+
+set_state() {
+  set_setting "archr.mangohud.state" "${1}" && apply
+}
+
+### The user's configuration starts from the shipped one.
+mkdir -p "${CONF_DIR}" || exit 1
+if [ ! -f "${CONF}" ]; then
+  cp "${DEFAULT_CONF}" "${CONF}" || exit 1
 fi
 
-### Confirm MangoHud conf exists
-if [ ! -f "/storage/.config/MangoHud/MangoHud.conf" ]; then
-     cp -r "/usr/config/MangoHud/MangoHud.conf" "/storage/.config/MangoHud"
+if [ -z "$(get_setting "archr.mangohud.state")" ]; then
+  set_setting "archr.mangohud.state" "off"
 fi
 
-# Enable MangoHud support
-MANGOHUD_INIT_STATE=$(get_setting "archr.mangohud.state")
-if [ ! -n "${MANGOHUD_INIT_STATE}" ]; then
-  MANGOHUD_INIT_STATE="off"
-  set_setting "archr.mangohud.state" "${MANGOHUD_INIT_STATE}"
-fi
-
-### Check if a value was sent to mangohud_set
-if [ ! -n "${MHUD_SET}" ]; then
- MHUD_SET="NULL"
-fi
-
-### Check that the value sent to manghud_set is a valid selection
-if [[ "${MHUD_SET}" != "on" && "$MHUD_SET" != "off" && "${MHUD_SET}" != "toggle" && "$MHUD_SET" != "enable" && "$MHUD_SET" != "disable" ]]; then
-    ${DEBUG} && log $0 "$MHUD_SET is not a valid choice, valid options are on | off | toggle, setting MangoHud to off."
-    set_setting "archr.mangohud.state" "off"
-    MHUD_SET="off"
-fi
-
-CONF_DIR="/storage/.config/MangoHud"
-MANGOHUD_CONF="MangoHud.conf"
-
-case $MHUD_SET  in
-  "disable")
-    set_setting "archr.mangohud.enabled" "0"
+case ${1} in
+  disable)
     ${DEBUG} && log $0 "Disabling MangoHud."
+    set_setting "archr.mangohud.enabled" "0"
   ;;
-  "enable")
-    set_setting "archr.mangohud.enabled" "1"
+  enable)
     ${DEBUG} && log $0 "Enabling MangoHud."
+    set_setting "archr.mangohud.enabled" "1"
   ;;
-  "off")
-    sed -i '/no_display/c\no_display' ${CONF_DIR}/${MANGOHUD_CONF}
-    set_setting "archr.mangohud.state" "off"
-    ${DEBUG} && log $0 "Turning MangoHud off."
-  ;;
-  "on")
-    sed -i '/no_display/c\# no_display' ${CONF_DIR}/${MANGOHUD_CONF}
-    set_setting "archr.mangohud.state" "on"
+  on)
     ${DEBUG} && log $0 "Turning MangoHud on."
+    set_state on
   ;;
-  "toggle")
-    MHUD_STATE=$(get_setting "archr.mangohud.state")
-    case ${MHUD_STATE} in
-      "on")
-        sed -i '/no_display/c\no_display' ${CONF_DIR}/${MANGOHUD_CONF}
-        set_setting "archr.mangohud.state" "off"
-        ${DEBUG} && log $0 "Toggle MangoHud, turning MangoHud off."
-      ;;
-      "off")
-        sed -i '/no_display/c\# no_display' ${CONF_DIR}/${MANGOHUD_CONF}
-        set_setting "archr.mangohud.state" "on"
-        ${DEBUG} && log $0 "Toggle MangoHud, turning MangoHud on."
-      ;;
-    esac
+  toggle)
+    if [ "$(get_setting "archr.mangohud.state")" = "on" ]; then
+      ${DEBUG} && log $0 "Toggle MangoHud, turning MangoHud off."
+      set_state off
+    else
+      ${DEBUG} && log $0 "Toggle MangoHud, turning MangoHud on."
+      set_state on
+    fi
+  ;;
+  apply)
+    apply
+  ;;
+  off)
+    ${DEBUG} && log $0 "Turning MangoHud off."
+    set_state off
+  ;;
+  *)
+    # Unknown or missing argument: hide the overlay, as before.
+    ${DEBUG} && log $0 "${1} is not a valid choice (on | off | toggle | enable | disable | apply), setting MangoHud to off."
+    set_state off
   ;;
 esac
