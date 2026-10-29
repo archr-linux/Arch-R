@@ -773,7 +773,7 @@ function set_savestates() {
 }
 
 function set_autosave() {
-    local SETAUTOSAVE=""
+    local SETAUTOSAVE=false
 
     # argument overrides user setting
     case ${AUTOSAVE} in
@@ -786,13 +786,8 @@ function set_autosave() {
         *)
             local AUTOSAVE_SETTING="$(game_setting autosave)"
             case ${AUTOSAVE_SETTING} in
-                "")
-                ;;
                 [1-3])
                    SETAUTOSAVE=true
-                ;;
-                *)
-                   SETAUTOSAVE=false
                 ;;
             esac
         ;;

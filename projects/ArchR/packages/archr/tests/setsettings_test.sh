@@ -78,6 +78,8 @@ check "no empty value in the append config" "! grep -q '= \"\"' '${A}'"
 check "no bogus 'false' key" "! grep -q '^false = ' '${A}'"
 check "no --set-shader" "! grep -q -- --set-shader '${TMP}/stdout'"
 check "autosave default still applies" "has 'savestate_auto_load = \"true\"' '${A}'"
+check "awaiting a decision: analog d-pad, menu driver, savestate folder stay" \
+  "has 'input_player1_analog_dpad_mode = \"1\"' '${A}' && has 'menu_driver = \"ozone\"' '${A}' && grep -q '^savestate_directory = ' '${A}'"
 check "achievements off stays explicit" "has 'cheevos_enable = \"false\"' '${A}'"
 while IFS= read -r line; do
   check "retroarch.cfg keeps: ${line}" "has '${line}' '${TMP}/ra/retroarch.cfg'"
