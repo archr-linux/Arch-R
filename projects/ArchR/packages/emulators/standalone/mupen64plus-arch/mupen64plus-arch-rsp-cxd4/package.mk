@@ -3,12 +3,13 @@
 # Copyright (C) 2023 Nicholas Ricciuti (rishooty@gmail.com)
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
-PKG_NAME="mupen64plus-sa-rsp-cxd4"
+PKG_NAME="mupen64plus-arch-rsp-cxd4"
+PKG_REPLACES="mupen64plus-sa-rsp-cxd4"
 PKG_VERSION="f6ff3719cb68d3e1c1497fc87a661921671db719"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/mupen64plus/mupen64plus-rsp-cxd4"
 PKG_URL="${PKG_SITE}.git"
-PKG_DEPENDS_TARGET="toolchain libpng SDL2 SDL2_net zlib freetype nasm:host mupen64plus-sa-core"
+PKG_DEPENDS_TARGET="toolchain libpng SDL2 SDL2_net zlib freetype nasm:host mupen64plus-arch-core"
 PKG_LONGDESC="mupen64plus-rsp-cxd4"
 PKG_LONGDESC="Mupen64Plus Standalone RSP CXD4"
 PKG_TOOLCHAIN="manual"
@@ -16,7 +17,7 @@ PKG_BUILD_FLAGS="-fpic"
 
 case ${DEVICE} in
   RK3588|S922X|RK3399|RK3566*|SM8250|SM8550|SM8650)
-    PKG_DEPENDS_TARGET+=" mupen64plus-sa-simplecore"
+    PKG_DEPENDS_TARGET+=" mupen64plus-arch-simplecore"
   ;;
 esac
 
@@ -48,7 +49,7 @@ make_target() {
   esac
 
   export BINUTILS="$(get_build_dir binutils)/.${TARGET_NAME}"
-  export APIDIR=$(get_build_dir mupen64plus-sa-core)/src/api
+  export APIDIR=$(get_build_dir mupen64plus-arch-core)/src/api
   export SDL_CFLAGS="-I${SYSROOT_PREFIX}/usr/include/SDL2 -pthread -D_REENTRANT"
   export SDL_LDLIBS="-lSDL2_net -lSDL2"
   export CROSS_COMPILE="${TARGET_PREFIX}"
@@ -62,7 +63,7 @@ make_target() {
   case ${DEVICE} in
     RK3588|S922X|RK3399|RK3566*|SM8250|SM8550|SM8650)
       PKG_MAKE_OPTS_TARGET+=" cxd4VIDEO=1"
-      export APIDIR=$(get_build_dir mupen64plus-sa-simplecore)/src/api
+      export APIDIR=$(get_build_dir mupen64plus-arch-simplecore)/src/api
       make -C projects/unix all ${PKG_MAKE_OPTS_TARGET}
       cp ${PKG_BUILD}/projects/unix/mupen64plus-rsp-cxd4${SUFFIX}.so ${PKG_BUILD}/projects/unix/mupen64plus-rsp-cxd4-simple.so
     ;;

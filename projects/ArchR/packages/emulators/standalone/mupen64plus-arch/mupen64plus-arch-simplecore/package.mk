@@ -3,12 +3,13 @@
 # Copyright (C) 2023 Nicholas Ricciuti (rishooty@gmail.com)
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
-PKG_NAME="mupen64plus-sa-simplecore"
+PKG_NAME="mupen64plus-arch-simplecore"
+PKG_REPLACES="mupen64plus-sa-simplecore"
 PKG_VERSION="5340dafcc0f5e8284057ab931dd5c66222d3d49e"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/simple64/mupen64plus-core"
 PKG_URL="https://github.com/simple64/mupen64plus-core/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain boost libpng SDL2 SDL2_net zlib freetype nasm:host mupen64plus-sa-core"
+PKG_DEPENDS_TARGET="toolchain boost libpng SDL2 SDL2_net zlib freetype nasm:host mupen64plus-arch-core"
 PKG_LONGDESC="simple64"
 PKG_LONGDESC="Simple64's core"
 PKG_TOOLCHAIN="manual"

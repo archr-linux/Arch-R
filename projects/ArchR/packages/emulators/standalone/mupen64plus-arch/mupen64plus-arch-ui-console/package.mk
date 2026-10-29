@@ -3,19 +3,20 @@
 # Copyright (C) 2023 Nicholas Ricciuti (rishooty@gmail.com)
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
-PKG_NAME="mupen64plus-sa-ui-console"
+PKG_NAME="mupen64plus-arch-ui-console"
+PKG_REPLACES="mupen64plus-sa-ui-console"
 PKG_VERSION="1340c4bdfc9ec53d3fccda5e085930dd79eb08b3"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/mupen64plus/mupen64plus-ui-console"
 PKG_URL="https://github.com/mupen64plus/mupen64plus-ui-console/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain libpng SDL2 SDL2_net zlib freetype nasm:host mupen64plus-sa-core"
+PKG_DEPENDS_TARGET="toolchain libpng SDL2 SDL2_net zlib freetype nasm:host mupen64plus-arch-core"
 PKG_LONGDESC="mupen64plus-ui-console"
 PKG_LONGDESC="Mupen64Plus Standalone Console"
 PKG_TOOLCHAIN="manual"
 
 case ${DEVICE} in
   RK3588|S922X|RK3399|RK3566*|SM8250|SM8550|SM8650)
-    PKG_DEPENDS_TARGET+=" mupen64plus-sa-simplecore"
+    PKG_DEPENDS_TARGET+=" mupen64plus-arch-simplecore"
   ;;
 esac
 
@@ -37,7 +38,7 @@ make_target() {
          VC=0
 
   export BINUTILS="$(get_build_dir binutils)/.${TARGET_NAME}"
-  export APIDIR=$(get_build_dir mupen64plus-sa-core)/src/api
+  export APIDIR=$(get_build_dir mupen64plus-arch-core)/src/api
   export SDL_CFLAGS="-I${SYSROOT_PREFIX}/usr/include/SDL2 -pthread -D_REENTRANT"
   export SDL_LDLIBS="-lSDL2_net -lSDL2"
   export CROSS_COMPILE="${TARGET_PREFIX}"
@@ -50,7 +51,7 @@ make_target() {
 
   case ${DEVICE} in
     RK3588|S922X|RK3399|RK3566*|SM8250|SM8550|SM8650)
-      export APIDIR=$(get_build_dir mupen64plus-sa-simplecore)/src/api
+      export APIDIR=$(get_build_dir mupen64plus-arch-simplecore)/src/api
       export CFLAGS="${CFLAGS} -DSIMPLECORE"
       make -C projects/unix all ${PKG_MAKE_OPTS_TARGET}
       cp ${PKG_BUILD}/projects/unix/mupen64plus ${PKG_BUILD}/projects/unix/mupen64plus-simple

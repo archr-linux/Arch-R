@@ -3,19 +3,20 @@
 # Copyright (C) 2023 Nicholas Ricciuti (rishooty@gmail.com)
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
-PKG_NAME="mupen64plus-sa-video-gliden64"
+PKG_NAME="mupen64plus-arch-video-gliden64"
+PKG_REPLACES="mupen64plus-sa-video-gliden64"
 PKG_VERSION="85bdd452d7090f78a0f76d02121fa59ad079b7f6"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/gonetz/GLideN64"
 PKG_URL="${PKG_SITE}.git"
-PKG_DEPENDS_TARGET="toolchain boost libpng SDL2 SDL2_net zlib freetype nasm:host mupen64plus-sa-core"
+PKG_DEPENDS_TARGET="toolchain boost libpng SDL2 SDL2_net zlib freetype nasm:host mupen64plus-arch-core"
 PKG_LONGDESC="mupen64plus-video-gliden64"
 PKG_LONGDESC="Mupen64Plus Standalone GLide64 Video Driver"
 PKG_TOOLCHAIN="manual"
 
 case ${DEVICE} in
   RK3588|S922X|RK3399|RK3566*|SM8250|SM8550|SM8650)
-    PKG_DEPENDS_TARGET+=" mupen64plus-sa-simplecore"
+    PKG_DEPENDS_TARGET+=" mupen64plus-arch-simplecore"
   ;;
 esac
 
@@ -46,7 +47,7 @@ make_target() {
   esac
 
   export BINUTILS="$(get_build_dir binutils)/.${TARGET_NAME}"
-  export APIDIR=$(get_build_dir mupen64plus-sa-core)/src/api
+  export APIDIR=$(get_build_dir mupen64plus-arch-core)/src/api
   export SDL_CFLAGS="-I${SYSROOT_PREFIX}/usr/include/SDL2 -pthread -D_REENTRANT"
   export SDL_LDLIBS="-lSDL2_net -lSDL2"
   export CROSS_COMPILE="${TARGET_PREFIX}"
@@ -59,7 +60,7 @@ make_target() {
   make -Wno-unused-variable -C projects/cmake
   cp ${PKG_BUILD}/projects/cmake/plugin/Release/mupen64plus-video-GLideN64.so ${PKG_BUILD}/projects/cmake/plugin/Release/mupen64plus-video-GLideN64-base.so
 
-  export APIDIR=$(get_build_dir mupen64plus-sa-simplecore)/src/api
+  export APIDIR=$(get_build_dir mupen64plus-arch-simplecore)/src/api
   cmake ${PKG_MAKE_OPTS_TARGET} -DAPIDIR=${APIDIR} -DMUPENPLUSAPI=On -DGLIDEN64_BUILD_TYPE=Release -DCMAKE_C_COMPILER="${CC}" -DCMAKE_CXX_COMPILER="${CXX}" -DCMAKE_C_FLAGS="${CFLAGS}" -DCMAKE_CXX_FLAGS="${CXXFLAGS} -pthread" -S src -B projects/cmake
   make -Wno-unused-variable -C projects/cmake
   cp ${PKG_BUILD}/projects/cmake/plugin/Release/mupen64plus-video-GLideN64.so ${PKG_BUILD}/projects/cmake/plugin/Release/mupen64plus-video-GLideN64-simple.so

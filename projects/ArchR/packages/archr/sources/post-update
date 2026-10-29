@@ -211,7 +211,10 @@ grep -q "^system\.suspend\.dpms=" /storage/.config/system/configs/system.cfg ||
 # Wipe azahar gptokeyb mappings as they have changed
 rm -rf /storage/.config/azahar/*.gptk
 
-# Clean RGB10X mupen64plus-sa config
+# Standalone emulators renamed to <name>-arch keep the user's saved choice
+/usr/bin/archr-emulator-renames
+
+# Clean RGB10X mupen64plus config
 if echo ${QUIRK_DEVICE} | grep RGB10X; then
   rm -rf /storage/.config/mupen64plus
 fi
