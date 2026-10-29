@@ -29,6 +29,9 @@ fi
 ### Clean up settings
 sort_settings
 
+### Once: drop the old RetroArch defaults the user never changed.
+/usr/bin/archr-retroarch-defaults
+
 ### We do not want to mount the cloud drive on startup
 ### so we'll reset the mount option to 0.
 set_setting clouddrive.mounted 0

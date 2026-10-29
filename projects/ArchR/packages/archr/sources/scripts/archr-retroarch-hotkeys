@@ -1,0 +1,100 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+# Copyright (C) 2024-present Arch R
+#
+# RetroArch hotkeys (hotkey enable, exit, menu, FPS, save and load state,
+# fast forward, rewind) for the built-in pad, from its autoconfig, written
+# into retroarch.cfg. setsettings.sh runs this before the first game; the
+# launcher runs it with --force when the in-game hotkeys change. Between
+# those, hotkeys changed inside RetroArch stay.
+#   archr-retroarch-hotkeys [--force] [retroarch.cfg]
+
+# shellcheck source=/dev/null
+. "${SETSETTINGS_PROFILE:-/etc/profile}"
+
+FORCE=0
+if [ "${1}" = "--force" ]
+then
+    FORCE=1
+    shift
+fi
+CONFIG="${1:-/storage/.config/retroarch/retroarch.cfg}"
+STAMP="$(dirname "${CONFIG}")/.archr-hotkeys"
+JOYPADS="${ARCHR_JOYPADS:-/tmp/joypads}"
+DEVICES="${ARCHR_INPUT_DEVICES:-/proc/bus/input/devices}"
+
+# system.autohotkeys=0 leaves the hotkeys to RetroArch alone.
+[ "$(get_setting system.autohotkeys)" = "1" ] || exit 0
+[ -f "${CONFIG}" ] || exit 1
+
+# The built-in pad: a joystick on the host bus (0019), never just js0, which
+# may be a USB pad. Else the InputPlumber virtual DualSense (SM8550/SM8650),
+# else a joystick named like a joypad.
+builtin() {
+    awk -F'"' -v want="${1}" '
+        /^I:/ { host = ($0 ~ /Bus=0019/) }
+        /^N:/ { name = $2 }
+        /^H:/ && /js[0-9]/ {
+            if ((want == "host" && host) || (want != "host" && name ~ want)) { print name; exit }
+        }' "${DEVICES}"
+}
+PAD=$(builtin host)
+[ -n "${PAD}" ] || PAD=$(builtin "DualSense Wireless Controller")
+[ -n "${PAD}" ] || PAD=$(builtin joypad)
+# Without the pad's autoconfig nothing is written, and the next game retries.
+[ -n "${PAD}" ] && [ -f "${JOYPADS}/${PAD}.cfg" ] || exit 1
+# Done for this pad already; another built-in pad gets its own hotkeys.
+[ "${FORCE}" = 1 ] || [ "$(cat "${STAMP}" 2>/dev/null)" != "${PAD}" ] || exit 0
+
+# The autoconfig value of an input_* key, quotes removed.
+value() {
+    sed -n "s/^${1}[[:space:]]*=[[:space:]]*\"\{0,1\}\([^\"]*\)\"\{0,1\}[[:space:]]*\$/\1/p" \
+        "${JOYPADS}/${PAD}.cfg" | head -n 1
+}
+# A hotkey line, left out when the pad has no such button.
+put() {
+    [ -z "${2}" ] || echo "${1} = \"${2}\""
+}
+SELECT=$(value input_select_btn)
+HOTKEY=$(value input_enable_hotkey_btn)
+R2_BTN=$(value input_r2_btn)
+L2_BTN=$(value input_l2_btn)
+R2_AXIS=$(value input_r2_axis)
+L2_AXIS=$(value input_l2_axis)
+
+{
+    put input_enable_hotkey_btn "${HOTKEY:-${SELECT}}"
+    put input_bind_hold "${SELECT}"
+    put input_exit_emulator_btn "$(value input_start_btn)"
+    put input_fps_toggle_btn "$(value input_y_btn)"
+    put input_menu_toggle_btn "$(value input_x_btn)"
+    put input_save_state_btn "$(value input_r_btn)"
+    put input_load_state_btn "$(value input_l_btn)"
+    if [ -n "${R2_BTN}" ] && [ -n "${L2_BTN}" ]
+    then
+        put input_toggle_fast_forward_axis nul
+        put input_toggle_fast_forward_btn "${R2_BTN}"
+        put input_rewind_axis nul
+        put input_rewind_btn "${L2_BTN}"
+    elif [ -n "${R2_AXIS}" ] && [ -n "${L2_AXIS}" ]
+    then
+        put input_toggle_fast_forward_axis "${R2_AXIS}"
+        put input_toggle_fast_forward_btn nul
+        put input_rewind_axis "${L2_AXIS}"
+        put input_rewind_btn nul
+    fi
+} >"${CONFIG}.hotkeys"
+
+# Replace those keys, keep everything else, publish with one rename.
+KEYS=$(sed 's/ = .*//' "${CONFIG}.hotkeys" | paste -sd'|')
+if grep -Ev "^(${KEYS})[[:space:]]*=" "${CONFIG}" >"${CONFIG}.new" &&
+   cat "${CONFIG}.hotkeys" >>"${CONFIG}.new" &&
+   mv -f "${CONFIG}.new" "${CONFIG}"
+then
+    rm -f "${CONFIG}.hotkeys"
+    echo "${PAD}" >"${STAMP}"
+else
+    rm -f "${CONFIG}.new" "${CONFIG}.hotkeys"
+    exit 1
+fi

@@ -2,22 +2,22 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
-. /etc/profile
+# The overrides exist for the host test (tests/setsettings_test.sh).
+# shellcheck source=/dev/null
+. "${SETSETTINGS_PROFILE:-/etc/profile}"
 
 ###
 ### System configuration variables
 ###
 
-SYSTEM_CONFIG="/storage/.config/system/configs/system.cfg"
-RETROARCH_PATH="/storage/.config/retroarch"
+RETROARCH_PATH="${SETSETTINGS_RETROARCH:-/storage/.config/retroarch}"
 RETROARCH_CONFIG="${RETROARCH_PATH}/retroarch.cfg"
-RETROARCH_TEMPLATE="/usr/config/retroarch/retroarch.cfg"
 
-ROMS_DIR="/storage/roms"
+ROMS_DIR="${SETSETTINGS_ROMS:-/storage/roms}"
 SNAPSHOTS="${ROMS_DIR}/savestates"
-BEZEL_DIR="/storage/roms/bezels"
+BEZEL_DIR="${ROMS_DIR}/bezels"
 
-TMP_CONFIG="/tmp/.retroarch.cfg"
+TMP_CONFIG="${SETSETTINGS_APPEND:-/tmp/.retroarch.cfg}"
 LOG_DIR="/var/log"
 LOG_FILE="exec.log"
 LOCK_FILE="/tmp/.retroarch.lock"
@@ -234,13 +234,15 @@ then
 fi
 
 ### Clean up temp files
-for FILE in ${TMP_CONFIG} ${TMP_CONFIG}.sed
+for FILE in "${TMP_CONFIG}" "${TMP_CONFIG}".sed*
 do
   if [ -f "${FILE}" ]
   then
     rm -f "${FILE}"
   fi
 done
+# RetroArch gets an append config even when nothing is set.
+: >"${TMP_CONFIG}"
 
 ###
 ### Core functions
@@ -276,38 +278,50 @@ function game_setting() {
     fi
 }
 
+# A key to remove from retroarch.cfg: the whole key, never every key that
+# starts with it. One file per call, since the functions below run in
+# parallel; flush_settings applies them all with one sed.
 function clear_setting() {
-      log "Remove setting [${1}]"
-      if [ ! -f "${TMP_CONFIG}.sed" ]
-      then
-          echo -n 'sed -i "/^'${1}'/d;' >${TMP_CONFIG}.sed
-      else
-          echo -n ' /^'${1}'/d;' >>${TMP_CONFIG}.sed
-      fi
+    log "Remove setting [${1}]"
+    echo "/^${1}[[:space:]]*=/d" >"$(mktemp "${TMP_CONFIG}.sed.XXXXXX")"
 }
 
 function flush_settings() {
-    echo -n '" '${RETROARCH_CONFIG}' >/dev/null 2>&1' >>${TMP_CONFIG}.sed
-    chmod 0755 ${TMP_CONFIG}.sed
-    ${TMP_CONFIG}.sed >/dev/null 2>&1 ||:
-    rm -f ${TMP_CONFIG}.sed
+    local scripts=("${TMP_CONFIG}".sed.*)
+    [ -e "${scripts[0]}" ] || return 0
+    cat "${scripts[@]}" >"${TMP_CONFIG}.sed"
+    rm -f "${scripts[@]}"
+    sed -i -f "${TMP_CONFIG}.sed" "${RETROARCH_CONFIG}" >/dev/null 2>&1 ||:
+    rm -f "${TMP_CONFIG}.sed"
 }
 
+# add_setting SYSTEM_KEY RETROARCH_KEY [VALUE]: the system.cfg value of
+# SYSTEM_KEY ("none" for no key), else VALUE, goes to the append config.
+# Without either nothing is written, so RetroArch keeps what the user saved
+# (retroarch.cfg, core and game overrides). retroarch.cfg is never touched.
 function add_setting() {
+    local RETROARCH_KEY="${2}"
+    local RETROARCH_VALUE=""
     if [ ! "${1}" = "none" ]
     then
-        local OS_SETTING="$(game_setting ${1})"
+        RETROARCH_VALUE="$(game_setting "${1}")"
     fi
-    local RETROARCH_KEY="${2}"
-    local RETROARCH_VALUE="${3}"
-    if [ -z "${RETROARCH_VALUE}" ]& \
-       [ ! "${1}" = "none" ]
+    RETROARCH_VALUE="${RETROARCH_VALUE:-${3}}"
+    if [ -z "${RETROARCH_VALUE}" ]
     then
-        RETROARCH_VALUE="${OS_SETTING}"
+        log "Left to RetroArch: ${RETROARCH_KEY}"
+        return
     fi
-    clear_setting "${RETROARCH_KEY}"
-    echo "${RETROARCH_KEY} = \"${RETROARCH_VALUE}\"" >>${TMP_CONFIG}
+    echo "${RETROARCH_KEY} = \"${RETROARCH_VALUE}\"" >>"${TMP_CONFIG}"
     log "Added setting: ${RETROARCH_KEY} = \"$(shown "${RETROARCH_KEY}" "${RETROARCH_VALUE}")\""
+}
+
+# An empty value on purpose (no filter, no overlay, a stale credential),
+# also removed from retroarch.cfg.
+function blank_setting() {
+    clear_setting "${1}"
+    echo "${1} = \"\"" >>"${TMP_CONFIG}"
+    log "Blanked setting: ${1}"
 }
 
 function match() {
@@ -352,78 +366,6 @@ video_shader_dir = "/tmp/shaders"
 EOF
 }
 
-### Configure retroarch hotkeys
-function configure_hotkeys() {
-    log "Configure hotkeys..."
-    local MY_CONTROLLER
-
-    if grep -q "Sony Interactive Entertainment DualSense Wireless Controller" /proc/bus/input/devices; then
-        # InputPlumber virtual DS5
-        MY_CONTROLLER="Sony Interactive Entertainment DualSense Wireless Controller"
-    elif grep -q "js0" /proc/bus/input/devices; then
-        MY_CONTROLLER=$(grep -b4 js0 /proc/bus/input/devices | awk 'BEGIN {FS="\""}; /Name/ {printf $2}')
-    else
-        MY_CONTROLLER=$(grep -b4 joypad /proc/bus/input/devices | awk 'BEGIN {FS="\""}; /Name/ {printf $2}')
-    fi
-
-    ### Remove any input settings retroarch may have added.
-    sed -i '/input_player[0-9]/d' ${RETROARCH_CONFIG}
-
-    if [ "$(get_setting system.autohotkeys)" == "1" ]
-    then
-        if [ -e "/tmp/joypads/${MY_CONTROLLER}.cfg" ]
-        then
-            cp /tmp/joypads/"${MY_CONTROLLER}.cfg" /tmp
-            sed -i "s# = #=#g" /tmp/"${MY_CONTROLLER}.cfg"
-            source /tmp/"${MY_CONTROLLER}.cfg"
-            for HKEYSETTING in input_enable_hotkey_btn input_bind_hold            \
-                               input_exit_emulator_btn input_fps_toggle_btn       \
-                               input_menu_toggle_btn input_save_state_btn         \
-                               input_load_state_btn input_toggle_fast_forward_btn \
-                               input_toggle_fast_forward_axis input_rewind_axis   \
-                               input_rewind_btn
-            do
-                clear_setting "${HKEYSETTING}"
-            done
-            flush_settings
-            if [ -z ${input_enable_hotkey_btn+x} ]
-            then
-                echo 'input_enable_hotkey_btn = '\"${input_select_btn}\" >>${RETROARCH_CONFIG}
-            else
-                echo 'input_enable_hotkey_btn = '\"${input_enable_hotkey_btn}\" >>${RETROARCH_CONFIG}
-            fi
-            cat <<EOF >>${RETROARCH_CONFIG}
-input_bind_hold = "${input_select_btn}"
-input_exit_emulator_btn = "${input_start_btn}"
-input_fps_toggle_btn = "${input_y_btn}"
-input_menu_toggle_btn = "${input_x_btn}"
-input_save_state_btn = "${input_r_btn}"
-input_load_state_btn = "${input_l_btn}"
-EOF
-            if [ -n "${input_r2_btn}" ] && \
-               [ -n "${input_l2_btn}" ]
-            then
-                cat <<EOF >>${RETROARCH_CONFIG}
-input_toggle_fast_forward_axis = "nul"
-input_toggle_fast_forward_btn = "${input_r2_btn}"
-input_rewind_axis = "nul"
-input_rewind_btn = "${input_l2_btn}"
-EOF
-            elif [ -n "${input_r2_axis}" ] && \
-                 [ -n "${input_l2_axis}" ]
-            then
-                cat <<EOF >>${RETROARCH_CONFIG}
-input_toggle_fast_forward_axis = "${input_r2_axis}"
-input_toggle_fast_forward_btn = "nul"
-input_rewind_axis = "${input_l2_axis}"
-input_rewind_btn = "nul"
-EOF
-            fi
-            rm -f /tmp/"${MY_CONTROLLER}.cfg"
-        fi
-    fi
-}
-
 function set_ra_menudriver() {
     add_setting "retroarch.menu_driver" "menu_driver"
     local MENU_DRIVER=$(game_setting retroarch.menu_driver)
@@ -436,10 +378,6 @@ function set_ra_menudriver() {
 
 function set_fps() {
     add_setting "showFPS" "fps_show"
-}
-
-function set_config_save() {
-    add_setting "config_save_on_exit" "false"
 }
 
 function set_cheevos() {
@@ -456,10 +394,10 @@ function set_cheevos() {
         if [ -n "${CHEEVOS_TOKEN}" ]
         then
             add_setting "none" "cheevos_token" "${CHEEVOS_TOKEN}"
-            add_setting "none" "cheevos_password" ""
+            blank_setting "cheevos_password"
         else
             add_setting "retroachievements.password" "cheevos_password"
-            add_setting "none" "cheevos_token" ""
+            blank_setting "cheevos_token"
         fi
         add_setting "none" "cheevos_cmd" "/usr/share/libretro/call_achievements_hooks.sh"
         add_setting "retroachievements.hardcore" "cheevos_hardcore_mode_enable"
@@ -672,6 +610,8 @@ EOF
 function set_translation() {
     local USE_AI_SERVICE="$(game_setting ai_service_enabled)"
     case ${USE_AI_SERVICE} in
+        "")
+        ;;
         0|false|none)
             add_setting "none" "ai_service_enable" "false"
         ;;
@@ -729,8 +669,12 @@ function set_rgascale() {
 }
 
 function set_shader() {
+    # Only a shader chosen in system.cfg is passed on: --set-shader would
+    # beat the presets saved as core or game overrides.
     local SHADER="$(game_setting shaderset)"
     case ${SHADER} in
+        "")
+        ;;
         0|false|none)
             add_setting "none" "video_shader_enable" "false"
         ;;
@@ -745,8 +689,10 @@ function set_shader() {
 function set_filter() {
     local FILTER="$(game_setting videofilter)"
     case ${FILTER} in
+        "")
+        ;;
         0|false|none)
-            add_setting "none" "video_filter" ""
+            blank_setting "video_filter"
         ;;
         *)
             local FILTER_PATH="/usr/share/retroarch/filters"
@@ -768,7 +714,7 @@ function set_filter() {
 function set_overlay() {
     local BEZEL="$(game_setting bezel)"
     case ${BEZEL} in
-        0|false|none)
+        ""|0|false|none)
         ;;
         *)
             write_bezel_config
@@ -778,9 +724,11 @@ function set_overlay() {
 
     local OVERLAY="$(game_setting overlayset)"
     case ${OVERLAY} in
+        "")
+        ;;
         0|false|none)
             add_setting "none" "input_overlay_enable" "false"
-            add_setting "none" "input_overlay" ""
+            blank_setting "input_overlay"
         ;;
         *)
             local OVERLAY_PATH="/storage/overlays"
@@ -791,17 +739,16 @@ function set_overlay() {
 }
 
 function set_rewind() {
-    local REWIND="$(game_setting rewind)"
-    case ${REWIND} in
+    if [ "$(match "${PLATFORM}" "${NO_REWIND[@]}")" = 1 ]
+    then
+        add_setting "none" "rewind_enable" "false"
+        return
+    fi
+    case "$(game_setting rewind)" in
+        "")
+        ;;
         1)
-            case $(match ${PLATFORM} ${NO_REWIND[@]}) in
-                0)
-                    add_setting "none" "rewind_enable" "true"
-                ;;
-                *)
-                    add_setting "none" "rewind_enable" "false"
-                ;;
-            esac
+            add_setting "none" "rewind_enable" "true"
         ;;
         *)
             add_setting "none" "rewind_enable" "false"
@@ -813,6 +760,8 @@ function set_savestates() {
     local SAVESTATES="$(game_setting incrementalsavestates)"
     local MAXINCREMENTALSAVES="$(game_setting maxincrementalsaves)"
     case ${SAVESTATES} in
+        "")
+        ;;
         0|false|none)
             add_setting "none" "savestate_auto_index" "false"
         ;;
@@ -868,7 +817,10 @@ function set_runahead() {
             add_setting "none" "run_ahead_frames" "0"
         ;;
         *)
-            if [ "${RUNAHEAD}" -gt 0 ]
+            if [ -z "${RUNAHEAD}" ]
+            then
+                log "Left to RetroArch: run_ahead_*"
+            elif [ "${RUNAHEAD}" -gt 0 ] 2>/dev/null
             then
                 add_setting "none" "run_ahead_enabled" "true"
                 add_setting "none" "run_ahead_frames" "${RUNAHEAD}"
@@ -1297,7 +1249,9 @@ EOF
 
 set_retroarch_paths
 setup_controllers
-configure_hotkeys
+# Written once (first game) and when the in-game hotkeys change in the
+# launcher; hotkeys changed inside RetroArch then last.
+archr-retroarch-hotkeys "${RETROARCH_CONFIG}" >/dev/null 2>&1 ||:
 
 ###
 ### Game specific functions
@@ -1314,7 +1268,6 @@ flush_settings
 ###
 
 set_ra_menudriver &
-set_config_save &
 set_fps &
 set_cheevos &
 set_translation &
