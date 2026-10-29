@@ -138,6 +138,13 @@ makeinstall_target() {
   ### Add themes directory
   add_system_dir /storage/roms/themes
 
+  ### Add the folder Settings > System > Import from RetroArch reads, with a
+  ### short note (written only when missing).
+  add_system_dir /storage/roms/retroarch-import
+  cat <<'EOF' >>${ESTMP}/system-dirs.conf
+f	/storage/roms/retroarch-import/LEIAME.txt	0644 root root - Copie aqui o retroarch.cfg e as pastas config, remaps e shaders de outro RetroArch e use Configurações > Sistema > Importar do RetroArch.\nCopy retroarch.cfg and the config, remaps and shaders folders of another RetroArch here, then use Settings > System > Import from RetroArch.\n
+EOF
+
   ### Apply documentation header
   start_system_doc
 
