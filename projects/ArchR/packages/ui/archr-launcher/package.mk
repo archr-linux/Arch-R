@@ -2,10 +2,8 @@
 # Copyright (C) 2026 ArchR (https://github.com/archr-linux/Arch-R)
 
 PKG_NAME="archr-launcher"
-# Needs the systems catalog at /usr/share/archr, the archr-launcher app_id
-# and the session's locale handling. Publish this commit (or bump to the
-# final upstream revision); use ARCHR_LAUNCHER_SOURCE_DIR until then.
-PKG_VERSION="4d4a935858e4df8b6932defd19a5085fbcb025ec"
+PKG_VERSION="ca54433e89c3e7a9dd5189e4a71e34acbd2902d3"
+PKG_SHA256="233f4680a549a56e53053ce415d765e378311d361c7d033c6f177b443a93c0e9"
 PKG_ARCH="aarch64"
 # Bundled fonts retain their separate OFL licenses.
 PKG_LICENSE="GPL-2.0-or-later"
@@ -27,6 +25,7 @@ if [ -n "${ARCHR_LAUNCHER_SOURCE_DIR}" ]; then
   esac
   [ -f "${ARCHR_LAUNCHER_SOURCE_DIR}/Cargo.toml" ] || die "Invalid launcher source directory"
   PKG_URL="file://${ARCHR_LAUNCHER_SOURCE_DIR}"
+  PKG_SHA256=""
   PKG_TAR_COPY_OPTS="--exclude=./.git --exclude=./.svn --exclude=./target --exclude=./.superpowers --exclude=./.serena --exclude=./supertool"
   PKG_NEED_UNPACK+=" ${ARCHR_LAUNCHER_SOURCE_DIR}/LICENSE ${ARCHR_LAUNCHER_SOURCE_DIR}/Cargo.toml ${ARCHR_LAUNCHER_SOURCE_DIR}/Cargo.lock ${ARCHR_LAUNCHER_SOURCE_DIR}/crates ${ARCHR_LAUNCHER_SOURCE_DIR}/session ${ARCHR_LAUNCHER_SOURCE_DIR}/themes ${ARCHR_LAUNCHER_SOURCE_DIR}/locales"
 elif [ "${0##*/}" = "get" ] && \
@@ -45,6 +44,13 @@ fi
 make_target() {
   # config/functions supplies CARGO_HOME, CARGO_TARGET_DIR, RUST_TARGET_PATH
   # and the toolchain's cargo/rustc + target linker, as for touchhle-sa.
+  # The ScreenScraper developer login reaches option_env! in archr-scraper
+  # only through the inherited environment; never echo its value.
+  if [ -n "${SCREENSCRAPER_DEV_LOGIN}" ]; then
+    export SCREENSCRAPER_DEV_LOGIN
+  else
+    echo "WARNING: SCREENSCRAPER_DEV_LOGIN not set: scraper built without a developer login"
+  fi
   cargo build --locked --release --target "${TARGET_NAME}" \
     --manifest-path "${PKG_BUILD}/Cargo.toml" --package archr-launcher
 }
