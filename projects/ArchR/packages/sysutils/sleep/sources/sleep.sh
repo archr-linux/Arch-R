@@ -155,9 +155,12 @@ case $1 in
     inputsense start
     bluetooth start
 
-    if [ "$(get_setting wifi.enabled)" == "1" ]; then
+    # Not while usbgadget holds it off for the PC's internet over the cable.
+    if [ "$(get_setting wifi.enabled)" == "1" ] && [ ! -e /run/usbgadget/wifi-held ]; then
       log $0 "Enabling WIFI."
       nohup wifictl enable >${EVENTLOG} 2>&1
+      # A hold that started meanwhile wins (see 099-networkservices).
+      [ -e /run/usbgadget/wifi-held ] && nohup wifictl disable >${EVENTLOG} 2>&1
     fi
 
     DEVICE_VOLUME=$(get_setting "audio.volume" 2>/dev/null)

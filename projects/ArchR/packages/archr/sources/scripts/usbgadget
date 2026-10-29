@@ -10,36 +10,112 @@
 
 # For implementation benchmark results, see the end of this file
 
-. /etc/os-release
+# The "internet" mode (the console as a DHCP client of the PC's internet
+# sharing) and the RNDIS compatibility switch follow the idea of
+# raoni07/OTG-Over-Windows and ctgl1987/arkos-usb-network-mode; this is an
+# independent implementation, no code was taken from either.
 
-MACHINEIDFILE=/storage/.cache/systemd-machine-id
-SERIAL=$(cat ${MACHINEIDFILE})
+# Tests run the script against a fake tree; empty on the device.
+ROOT=${USBGADGET_ROOT:-}
+SELF=$(readlink -f "$0")
 
-CACHEDIR=/storage/.cache/usbgadget
+NETRUN=${ROOT}/run/usbgadget
+LINKFILE=${NETRUN}/link
+WIFI_HOLD=${NETRUN}/wifi-held
+# Set while "compat" restarts the gadget: the hold outlives the restart.
+WIFI_KEEP=${NETRUN}/wifi-keep
+# Seconds without a PC before Wi-Fi comes back: a gadget that re-enumerates
+# (RNDIS switch, host driver reload) is not an unplug.
+UNPLUG_GRACE=${USBGADGET_UNPLUG_GRACE:-5}
+# The supervisor runs as a transient unit: its own cgroup, stopped by name.
+SUPERVISOR_UNIT=usbgadget-internet
+UDHCPC_PID=${NETRUN}/udhcpc.pid
+# Below iwd's (RoutePriorityOffset=200): the cable is the user's choice.
+ROUTE_METRIC=100
+
+# udhcpc runs this script for its events, with the lease in the environment
+# (ip, subnet, router, dns, interface). DNS goes to systemd-resolved, the
+# resolver iwd feeds too, so resolv.conf is never written here.
+# shellcheck disable=SC2154 # set by udhcpc
+dhcp_event() {
+	case "$1" in
+		deconfig)
+			ip -4 address flush dev "${interface}"
+			resolvectl revert "${interface}" 2>/dev/null
+			echo dhcp > "${LINKFILE}"
+			;;
+		bound|renew)
+			[ "$1" = bound ] && ip -4 address flush dev "${interface}"
+			ip address replace "${ip}/${subnet:-255.255.255.0}" dev "${interface}"
+			if [ -n "${router}" ]; then
+				ip route replace default via "${router%% *}" dev "${interface}" metric "${ROUTE_METRIC}"
+			fi
+			if [ -n "${dns}" ]; then
+				# shellcheck disable=SC2086 # one argument per server
+				resolvectl dns "${interface}" ${dns} 2>/dev/null
+				resolvectl domain "${interface}" '~.' 2>/dev/null
+				resolvectl default-route "${interface}" yes 2>/dev/null
+			fi
+			if [ -n "${router}" ]; then echo online; else echo local; fi > "${LINKFILE}"
+			;;
+	esac
+}
+case "$1" in
+	deconfig|bound|renew|leasefail|nak)
+		dhcp_event "$1"
+		exit 0
+		;;
+esac
+
+# shellcheck source=/dev/null
+. "${ROOT}/etc/os-release"
+
+MACHINEIDFILE=${ROOT}/storage/.cache/systemd-machine-id
+SERIAL=$(cat "${MACHINEIDFILE}")
+
+CACHEDIR=${ROOT}/storage/.cache/usbgadget
 GADGETCONF=${CACHEDIR}/usbgadget.conf
 GADGETNETCONF=${CACHEDIR}/network.conf
-UDHCPCONF=/var/run/udhcpd.conf
-UDHCPPIDFILE=/var/run/udhcpd.pid
+UDHCPCONF=${ROOT}/var/run/udhcpd.conf
+UDHCPPIDFILE=${ROOT}/var/run/udhcpd.pid
 
-for mod in usb_f_ncm usb_f_fs; do
-	modprobe -q ${mod}
-done
+# Queries (the launcher polls status every 2 s) need no modules; udhcpc's
+# events left above, before any of this.
+case "$1" in
+	""|status|address|--options) ;;
+	*)
+		for mod in usb_f_ncm usb_f_rndis usb_f_fs; do
+			modprobe -q ${mod}
+		done
+		;;
+esac
 
-mkdir -p ${CACHEDIR}
+mkdir -p "${CACHEDIR}"
 
-if [ -r ${GADGETCONF} ] ; then
-	. ${GADGETCONF}
+# USB_NET: "local" (fixed address, the console serves DHCP) or "internet".
+# USB_RNDIS: 1 builds the network gadget with RNDIS instead of NCM.
+USB_NET=local
+USB_RNDIS=0
+if [ -r "${GADGETCONF}" ] ; then
+	# shellcheck source=/dev/null
+	. "${GADGETCONF}"
 fi
 
-UDC_NAME=$(ls -1 /sys/class/udc |head -n1)
-CURRENT_MODE=$(cat /sys/class/udc/${UDC_NAME}/function)
+UDC_NAME=$(ls -1 "${ROOT}/sys/class/udc" |head -n1)
+CURRENT_MODE=$(cat "${ROOT}/sys/class/udc/${UDC_NAME}/function")
 [ -z ${CURRENT_MODE} ] && CURRENT_MODE=disabled
 
 
+# Atomic, so a reader never sources half a file.
+write_conf() {
+	printf 'USB_MODE=%s\nUSB_NET=%s\nUSB_RNDIS=%s\n' "$1" "${USB_NET}" "${USB_RNDIS}" > "${GADGETCONF}.new" &&
+		mv "${GADGETCONF}.new" "${GADGETCONF}"
+}
+
 usb_disable() {
-	echo "USB_MODE=disabled" > ${GADGETCONF}
+	write_conf disabled
 	if [[ "${CURRENT_MODE}" == "disabled" ]]; then return; fi
-	echo "" > /sys/kernel/config/usb_gadget/${CURRENT_MODE}/UDC
+	echo "" > "${ROOT}/sys/kernel/config/usb_gadget/${CURRENT_MODE}/UDC"
 	CURRENT_MODE=disabled
 }
 
@@ -87,7 +163,7 @@ usb_trigger() {
 					# OTG adapter detected, switch to host mode
 					if [ "${CURRENT_MODE}" != "disabled" ]; then
 						usb_stop
-						echo "USB_MODE=disabled" > ${GADGETCONF}
+						write_conf disabled
 					fi
 					return
 				fi
@@ -118,9 +194,15 @@ usb_trigger() {
 # https://github.com/rundekugel/USBGadgetNetwork
 # and adapted for ArchR
 #############################################
-g_cdc="/sys/kernel/config/usb_gadget/cdc"
+g_cdc="${ROOT}/sys/kernel/config/usb_gadget/cdc"
 verbose=${verbose:-0}
 devversion=0x$(echo $OS_VERSION | cut -b 3-6)   # 0xYYMM; 20241025 -> 0x2410
+
+# NCM by default; RNDIS for Windows 10 builds without an NCM driver. RNDIS
+# costs about twice the CPU of NCM here (benchmarks at the end of this file).
+cdc_function() {
+    if [ "${USB_RNDIS}" = 1 ]; then echo rndis.usb0; else echo ncm.usb0; fi
+}
 
 prepare_usb_network() {
     set -e
@@ -131,9 +213,10 @@ prepare_usb_network() {
     cfg1="CDC"
     ms_vendor_code="0xcd" # Microsoft
     ms_qw_sign="MSFT100" # also Microsoft (if you couldn't tell)
+    func=$(cdc_function)
 
-    if [ -d ${g_cdc} ]; then
-        if [ "$(cat ${g_cdc}/UDC)" != "" ]; then
+    if [ -d "${g_cdc}" ]; then
+        if [ "$(cat "${g_cdc}/UDC")" != "" ]; then
             if [ "$verbose" -gt "0" ];then echo "Gadget is already up."; fi
             exit 1
         fi
@@ -144,33 +227,45 @@ prepare_usb_network() {
 
     # Create a new gadget
 
-    mkdir ${g_cdc}
-    echo "${usb_ver}" > ${g_cdc}/bcdUSB
-    echo "${dev_class}" > ${g_cdc}/bDeviceClass
-    echo "0x1d6b" > ${g_cdc}/idVendor
-    echo "0x0104" > ${g_cdc}/idProduct
-    echo "${devversion}" > ${g_cdc}/bcdDevice
-    mkdir ${g_cdc}/strings/0x409
-    echo "${OS_NAME}" > ${g_cdc}/strings/0x409/manufacturer
-    echo "${QUIRK_DEVICE}" > ${g_cdc}/strings/0x409/product
-    echo "${SERIAL}" > ${g_cdc}/strings/0x409/serialnumber
+    mkdir "${g_cdc}"
+    echo "${usb_ver}" > "${g_cdc}/bcdUSB"
+    echo "${dev_class}" > "${g_cdc}/bDeviceClass"
+    echo "0x1d6b" > "${g_cdc}/idVendor"
+    echo "0x0104" > "${g_cdc}/idProduct"
+    echo "${devversion}" > "${g_cdc}/bcdDevice"
+    mkdir "${g_cdc}/strings/0x409"
+    echo "${OS_NAME}" > "${g_cdc}/strings/0x409/manufacturer"
+    echo "${QUIRK_DEVICE}" > "${g_cdc}/strings/0x409/product"
+    echo "${SERIAL}" > "${g_cdc}/strings/0x409/serialnumber"
 
     # config 1 is for CDC
 
-    mkdir ${g_cdc}/configs/c.1
-    echo "${attr}" > ${g_cdc}/configs/c.1/bmAttributes
-    echo "${pwr}" > ${g_cdc}/configs/c.1/MaxPower
-    mkdir ${g_cdc}/configs/c.1/strings/0x409
-    echo "${cfg1}" > ${g_cdc}/configs/c.1/strings/0x409/configuration
+    mkdir "${g_cdc}/configs/c.1"
+    echo "${attr}" > "${g_cdc}/configs/c.1/bmAttributes"
+    echo "${pwr}" > "${g_cdc}/configs/c.1/MaxPower"
+    mkdir "${g_cdc}/configs/c.1/strings/0x409"
+    echo "${cfg1}" > "${g_cdc}/configs/c.1/strings/0x409/configuration"
 
     # Create the CDC function
 
-    mkdir ${g_cdc}/functions/ncm.usb0
-    echo "WINNCM" > ${g_cdc}/functions/ncm.usb0/os_desc/interface.ncm/compatible_id
+    mkdir "${g_cdc}/functions/${func}"
+    if [ "${func}" = rndis.usb0 ]; then
+        # Windows binds its inbox RNDIS driver by this compatible id. The
+        # interface association needs the composite class, and a release of
+        # its own keeps Windows from reusing what it cached for NCM.
+        echo "0xEF" > "${g_cdc}/bDeviceClass"
+        echo "0x02" > "${g_cdc}/bDeviceSubClass"
+        echo "0x01" > "${g_cdc}/bDeviceProtocol"
+        printf '0x%04x\n' $(( devversion ^ 0x8000 )) > "${g_cdc}/bcdDevice"
+        echo "RNDIS" > "${g_cdc}/functions/${func}/os_desc/interface.rndis/compatible_id"
+        echo "5162001" > "${g_cdc}/functions/${func}/os_desc/interface.rndis/sub_compatible_id"
+    else
+        echo "WINNCM" > "${g_cdc}/functions/${func}/os_desc/interface.ncm/compatible_id"
+    fi
 
-    echo "1" > ${g_cdc}/os_desc/use
-    echo "${ms_vendor_code}" > ${g_cdc}/os_desc/b_vendor_code
-    echo "${ms_qw_sign}" > ${g_cdc}/os_desc/qw_sign
+    echo "1" > "${g_cdc}/os_desc/use"
+    echo "${ms_vendor_code}" > "${g_cdc}/os_desc/b_vendor_code"
+    echo "${ms_qw_sign}" > "${g_cdc}/os_desc/qw_sign"
 
 
     smac=$(echo ${SERIAL} | cut -b 1-12)
@@ -181,23 +276,36 @@ prepare_usb_network() {
     dev_mac="82ba1c9278b1"  # Static to make all devices the same network for Windows, switch to "Private" once for all
     host_mac="12$(echo ${smac} | cut -b 3-)"
 
-    echo "${dev_mac}"  > ${g_cdc}/functions/ncm.usb0/dev_addr
-    echo "${host_mac}" > ${g_cdc}/functions/ncm.usb0/host_addr
+    echo "${dev_mac}"  > "${g_cdc}/functions/${func}/dev_addr"
+    echo "${host_mac}" > "${g_cdc}/functions/${func}/host_addr"
     # max_segment_size allows higher MTUs which lead to higher transfer rates and lower CPU usage.
     # However it needs some more work to be done as host needs to set high MTU as well
-    #echo "8000" > ${g_cdc}/functions/ncm.usb0/max_segment_size # f_ncm.c: #define MAX_DATAGRAM_SIZE	8000
+    #echo "8000" > "${g_cdc}/functions/ncm.usb0/max_segment_size" # f_ncm.c: #define MAX_DATAGRAM_SIZE	8000
 
-    # Make NCM the first configuration
-    ln -s ${g_cdc}/functions/ncm.usb0 ${g_cdc}/configs/c.1
+    # Make the network function the first configuration
+    ln -s "${g_cdc}/functions/${func}" "${g_cdc}/configs/c.1"
+    # The OS descriptors only reach Windows from the configuration linked
+    # here; before, WINNCM was set but never served. Windows 11 binds
+    # UsbNcm by the NCM class anyway, and its UsbNcm.inf also lists
+    # MS_COMP_WINNCM, so the id only names the same driver; Linux and
+    # macOS ignore it. A new bcdDevice each release keeps Windows from
+    # mixing it with what it cached before.
+    ln -s "${g_cdc}/configs/c.1" "${g_cdc}/os_desc"
 
     if [ -n "$verbose" ]; then echo "Done."; fi
+    set +e
 }
 
-configure_iface() {
-	# Hope udev rule works well, and device gets the name 'gadget'
-	udevadm wait --timeout=5 --settle /sys/class/net/gadget
-	IFACE_NAME=$(cat "${g_cdc}/functions/ncm.usb0/ifname")
+gadget_iface() {
+	cat "${g_cdc}/functions/$(cdc_function)/ifname" 2>/dev/null
+}
 
+has_carrier() {
+	[ "$(cat "${ROOT}/sys/class/net/${IFACE_NAME}/carrier" 2>/dev/null)" = 1 ]
+}
+
+# Fixed address, and the console's DHCP server hands the PC the other end.
+local_up() {
 	OLDIPADDRFILE=${CACHEDIR}/ip_address.conf
 	if [ ! -f ${GADGETNETCONF} ] ; then
 		NETMASK="255.255.0.0"
@@ -223,8 +331,6 @@ EOF
 
 
 	ip address add ${IP}/${NETMASK} dev ${IFACE_NAME} 2>/dev/null
-    ip -6 address add fe80::2/64 dev ${IFACE_NAME} scope link 2>/dev/null
-	ip link set ${IFACE_NAME} up
 
 	cat <<EOF > ${UDHCPCONF}
 interface ${IFACE_NAME}
@@ -241,12 +347,149 @@ lease_file /dev/null
 pidfile	${UDHCPPIDFILE}
 remaining no
 EOF
-	/usr/sbin/udhcpd -S ${UDHCPCONF}
+	"${ROOT}/usr/sbin/udhcpd" -S "${UDHCPCONF}"
+}
+
+configure_iface() {
+	# Hope udev rule works well, and device gets the name 'gadget'
+	udevadm wait --timeout=5 --settle "${ROOT}/sys/class/net/gadget"
+	IFACE_NAME=$(gadget_iface)
+
+	ip -6 address add fe80::2/64 dev "${IFACE_NAME}" scope link 2>/dev/null
+	ip link set "${IFACE_NAME}" up
+
+	if [ "${USB_NET}" = internet ]; then
+		# KillMode=mixed: TERM reaches the supervisor alone, whose cleanup
+		# then runs before the rest of the unit is killed.
+		systemd-run --quiet --collect --unit="${SUPERVISOR_UNIT}" \
+			--property=KillMode=mixed --property=TimeoutStopSec=15 \
+			"${SELF}" supervise >/dev/null 2>&1
+	else
+		local_up
+	fi
+}
+
+# Wi-Fi stays off while the PC shares its internet over the cable. The
+# marker only means "held": the user's choice stays in wifi.enabled, which
+# decides what comes back, so leaving the mode never strands the user.
+hold_wifi() {
+	[ -e "${WIFI_HOLD}" ] && return
+	mkdir -p "${NETRUN}"
+	: > "${WIFI_HOLD}"
+	"${ROOT}/usr/bin/wifictl" disable >/dev/null 2>&1
+}
+
+release_wifi() {
+	[ -e "${WIFI_KEEP}" ] && return 0
+	# mv claims the marker: concurrent callers restore Wi-Fi only once.
+	mv "${WIFI_HOLD}" "${WIFI_HOLD}.$$" 2>/dev/null || return 0
+	rm -f "${WIFI_HOLD}.$$"
+	# shellcheck disable=SC1091
+	if ( . "${ROOT}/etc/profile.d/001-functions" && [ "$(get_setting wifi.enabled)" = 1 ] ); then
+		"${ROOT}/usr/bin/wifictl" enable >/dev/null 2>&1
+		# Outside the supervisor's unit, which may be stopping.
+		systemd-run --quiet --collect "${ROOT}/usr/bin/wifictl" connect >/dev/null 2>&1 ||
+			( "${ROOT}/usr/bin/wifictl" connect >/dev/null 2>&1 & )
+	fi
+}
+
+udhcpc_run() {
+	if [ -x "${ROOT}/usr/sbin/udhcpc" ]; then
+		"${ROOT}/usr/sbin/udhcpc" "$@"
+	else
+		busybox udhcpc "$@"
+	fi
+}
+
+set_link() {
+	mkdir -p "${NETRUN}"
+	echo "$1" > "${LINKFILE}"
+}
+
+# Back to a bare interface. Idempotent.
+net_down() {
+	[ -f "${UDHCPC_PID}" ] && xargs -r kill < "${UDHCPC_PID}" 2>/dev/null
+	[ -f "${UDHCPPIDFILE}" ] && xargs -r kill < "${UDHCPPIDFILE}" 2>/dev/null
+	rm -f "${UDHCPC_PID}"
+	if [ -n "${IFACE_NAME}" ]; then
+		ip -4 address flush dev "${IFACE_NAME}" 2>/dev/null
+		resolvectl revert "${IFACE_NAME}" 2>/dev/null
+	fi
+}
+
+# Leaving the mode: a bare interface, and Wi-Fi as the user had it.
+internet_down() {
+	net_down
+	release_wifi
+}
+
+# "Internet pelo PC": with the cable in, Wi-Fi off and a lease from the
+# PC's sharing (Windows ICS 192.168.137.x, NetworkManager 10.42.0.x, macOS).
+# No lease in time, or a lease lost: the fixed address of the "network"
+# mode; Wi-Fi stays off until the PC is gone or the mode is left.
+# Unplugged: everything undone, and tried again on the next plug.
+# Still bound as the network gadget in "internet" mode: anything else
+# (another mode, the UDC released, the interface gone) ends the supervisor.
+internet_active() {
+	[ "$(cat "${ROOT}/sys/class/udc/${UDC_NAME}/function" 2>/dev/null)" = cdc ] &&
+		grep -qx 'USB_NET=internet' "${GADGETCONF}" 2>/dev/null &&
+		[ -n "${IFACE_NAME}" ] && [ -d "${ROOT}/sys/class/net/${IFACE_NAME}" ]
+}
+
+internet_supervise() {
+	mkdir -p "${NETRUN}"
+	IFACE_NAME=$(gadget_iface)
+	trap 'internet_down; exit 0' TERM INT HUP
+	link=waiting
+	set_link waiting
+	absent=0
+	while internet_active; do
+		if ! has_carrier; then
+			if [ "${link}" != waiting ]; then
+				net_down
+				link=waiting
+				set_link waiting
+			fi
+			absent=$((absent + 1))
+			if [ "${absent}" -ge "${UNPLUG_GRACE}" ] && [ -e "${WIFI_HOLD}" ]; then
+				rm -f "${WIFI_KEEP}"
+				release_wifi
+			fi
+		elif [ "${link}" = waiting ]; then
+			absent=0
+			hold_wifi
+			link=dhcp
+			set_link dhcp
+			udhcpc_run -f -n -t 8 -T 3 -i "${IFACE_NAME}" -s "${SELF}" -p "${UDHCPC_PID}" \
+				>/dev/null 2>&1 &
+			dhcpc=$!
+		elif [ "${link}" = dhcp ] && ! kill -0 "${dhcpc}" 2>/dev/null; then
+			# udhcpc (-n) ends without a lease, at first or once one is lost:
+			# either way the PC does not share now. Wi-Fi stays off while
+			# the PC is on the cable: on clones whose OTG lines go through
+			# the usb_switch_gpio mux, "wifictl enable" turns the mux back to
+			# the internal Wi-Fi and would cut the PC off.
+			local_up
+			link=fallback
+			set_link fallback
+		fi
+		sleep 1
+	done
+	internet_down
+}
+
+stop_internet() {
+	# Waits for the supervisor's own cleanup; the one below covers a
+	# supervisor that already died.
+	systemctl stop "${SUPERVISOR_UNIT}" >/dev/null 2>&1
+	rm -f "${LINKFILE}"
+	IFACE_NAME=${IFACE_NAME:-$(gadget_iface)}
+	internet_down
 }
 
 
 cleanup_usb_network() {
-    if [ ! -d ${g_cdc} ]; then
+    if [ ! -d "${g_cdc}" ]; then
         if [ "$verbose" -gt "0" ];then echo "Gadget is already down."; fi
         exit 1
     fi
@@ -255,24 +498,73 @@ cleanup_usb_network() {
     # Have to unlink and remove directories in reverse order.
     # Checks allow to finish takedown after error.
 
-    if [ "$(cat ${g_cdc}/UDC)" != "" ]; then
-        echo "" > ${g_cdc}/UDC
+    if [ "$(cat "${g_cdc}/UDC")" != "" ]; then
+        echo "" > "${g_cdc}/UDC"
     fi
-    rm -f ${g_cdc}/configs/c.1/ncm.usb0
-    [ -d ${g_cdc}/functions/ncm.usb0 ] && rmdir ${g_cdc}/functions/ncm.usb0
-    [ -d ${g_cdc}/configs/c.1/strings/0x409 ] && rmdir ${g_cdc}/configs/c.1/strings/0x409
-    [ -d ${g_cdc}/configs/c.1 ] && rmdir ${g_cdc}/configs/c.1
-    [ -d ${g_cdc}/strings/0x409 ] && rmdir ${g_cdc}/strings/0x409
-    rmdir ${g_cdc}
+    rm -f "${g_cdc}/os_desc/c.1"
+    # Not "func": prepare_usb_network calls this and still needs its own.
+    for old_func in ncm.usb0 rndis.usb0; do
+        rm -f "${g_cdc}/configs/c.1/${old_func}"
+        [ -d "${g_cdc}/functions/${old_func}" ] && rmdir "${g_cdc}/functions/${old_func}"
+    done
+    [ -d "${g_cdc}/configs/c.1/strings/0x409" ] && rmdir "${g_cdc}/configs/c.1/strings/0x409"
+    [ -d "${g_cdc}/configs/c.1" ] && rmdir "${g_cdc}/configs/c.1"
+    [ -d "${g_cdc}/strings/0x409" ] && rmdir "${g_cdc}/strings/0x409"
+    rmdir "${g_cdc}"
 
     rm -f ${UDHCPCONF}
 
     if [ -n "$verbose" ]; then echo "Done."; fi
 }
 
+# Rebuilds the network gadget for the current USB_RNDIS; on failure leaves
+# none, so the caller can rebuild the previous one.
+# A process of its own: called from a condition, a subshell would ignore
+# prepare_usb_network's set -e and report any failure as success.
+rebuild_cdc() {
+	"${SELF}" rebuild-network "${USB_RNDIS}" >/dev/null 2>&1 && return 0
+	( cleanup_usb_network ) >/dev/null 2>&1
+	return 1
+}
+
+# Saves the RNDIS switch and rebuilds the gadget at once, restarting the
+# network modes. A failed rebuild keeps the previous function and mode.
+# Exit 1 when the new gadget failed and the previous one runs again; exit 4
+# when neither could be built and the USB function is left off.
+set_compat() {
+	case "$1" in 0|1) ;; *) echo "Usage: $0 compat [0|1]" >&2; exit 2 ;; esac
+	[ "$1" = "${USB_RNDIS}" ] && return 0
+	was=${CURRENT_MODE}
+	if [ "${was}" = cdc ]; then
+		# The internet mode comes straight back: keep Wi-Fi off meanwhile.
+		# Whatever happens, the keep ends with this command, and Wi-Fi is
+		# held only if a supervisor runs again.
+		mkdir -p "${NETRUN}"
+		: > "${WIFI_KEEP}"
+		trap 'rm -f "${WIFI_KEEP}"; systemctl is-active --quiet "${SUPERVISOR_UNIT}" || release_wifi' EXIT
+		usb_stop
+	fi
+	old=${USB_RNDIS}
+	USB_RNDIS=$1
+	status=0
+	if ! rebuild_cdc; then
+		USB_RNDIS=${old}
+		if ! rebuild_cdc; then
+			echo "The network gadget could not be rebuilt; USB function off" >&2
+			write_conf disabled
+			exit 4
+		fi
+		echo "Could not build the network gadget; the previous one is back" >&2
+		status=1
+	fi
+	write_conf "${was}"
+	[ "${was}" = cdc ] && usb_start cdc
+	return ${status}
+}
 
 
-g_mtp="/sys/kernel/config/usb_gadget/mtp"
+
+g_mtp="${ROOT}/sys/kernel/config/usb_gadget/mtp"
 
 prepare_usb_mtp() {
     usb_ver="0x0200" # USB 2.0
@@ -280,44 +572,45 @@ prepare_usb_mtp() {
     attr="0xC0" # Self powered
     pwr="0xfe" #
 
-    mkdir ${g_mtp}
-    echo "${usb_ver}" > ${g_mtp}/bcdUSB
-    echo "${dev_class}" > ${g_mtp}/bDeviceClass
-    echo "0x1d6b" > ${g_mtp}/idVendor
-    echo "0x0104" > ${g_mtp}/idProduct
-    echo "${devversion}" > ${g_mtp}/bcdDevice
-    mkdir ${g_mtp}/strings/0x409
-    echo "${OS_NAME}" > ${g_mtp}/strings/0x409/manufacturer
-    echo "${QUIRK_DEVICE}" > ${g_mtp}/strings/0x409/product
-    echo "${SERIAL}" > ${g_mtp}/strings/0x409/serialnumber
+    mkdir "${g_mtp}"
+    echo "${usb_ver}" > "${g_mtp}/bcdUSB"
+    echo "${dev_class}" > "${g_mtp}/bDeviceClass"
+    echo "0x1d6b" > "${g_mtp}/idVendor"
+    echo "0x0104" > "${g_mtp}/idProduct"
+    echo "${devversion}" > "${g_mtp}/bcdDevice"
+    mkdir "${g_mtp}/strings/0x409"
+    echo "${OS_NAME}" > "${g_mtp}/strings/0x409/manufacturer"
+    echo "${QUIRK_DEVICE}" > "${g_mtp}/strings/0x409/product"
+    echo "${SERIAL}" > "${g_mtp}/strings/0x409/serialnumber"
 
     # config 1 for MTP
-    mkdir ${g_mtp}/configs/c.1
-    echo "${attr}" > ${g_mtp}/configs/c.1/bmAttributes
-    echo "${pwr}" > ${g_mtp}/configs/c.1/MaxPower
-    mkdir ${g_mtp}/configs/c.1/strings/0x409
-    echo mtp > ${g_mtp}/configs/c.1/strings/0x409/configuration
+    mkdir "${g_mtp}/configs/c.1"
+    echo "${attr}" > "${g_mtp}/configs/c.1/bmAttributes"
+    echo "${pwr}" > "${g_mtp}/configs/c.1/MaxPower"
+    mkdir "${g_mtp}/configs/c.1/strings/0x409"
+    echo mtp > "${g_mtp}/configs/c.1/strings/0x409/configuration"
 
-    mkdir ${g_mtp}/functions/ffs.mtp
-    ln -s ${g_mtp}/functions/ffs.mtp ${g_mtp}/configs/c.1
+    mkdir "${g_mtp}/functions/ffs.mtp"
+    ln -s "${g_mtp}/functions/ffs.mtp" "${g_mtp}/configs/c.1"
 }
 
 cleanup_usb_mtp() {
     rm -f \
-        ${g_mtp}/configs/c.1/ffs.mtp
+        "${g_mtp}/configs/c.1/ffs.mtp"
 
     rmdir \
-        ${g_mtp}/configs/c.1/strings/0x409 \
-        ${g_mtp}/configs/c.1 \
-        ${g_mtp}/functions/ffs.mtp \
-        ${g_mtp}/strings/0x409 \
-        ${g_mtp}
+        "${g_mtp}/configs/c.1/strings/0x409" \
+        "${g_mtp}/configs/c.1" \
+        "${g_mtp}/functions/ffs.mtp" \
+        "${g_mtp}/strings/0x409" \
+        "${g_mtp}"
 }
 
 set_role() {
-	for sw in $(ls -1 /sys/class/udc/${UDC_NAME}/device/usb_role/*/role 2>/dev/null); do
+	for sw in "${ROOT}/sys/class/udc/${UDC_NAME}"/device/usb_role/*/role; do
+		[ -e "${sw}" ] || continue
 		if [ "$verbose" -gt "0" ]; then echo "swithing usb role to $1: $sw"; fi
-		echo $1 > $sw
+		echo "$1" > "${sw}"
 	done
 }
 
@@ -329,13 +622,21 @@ usb_start() {
 
 	# Exit with error if this UDC has a downstream device. Applies to RK3326 where we use a single port
 	# Switching to device mode in this case would break USB Wifi and USB gamepad
-	grep -q configured /sys/class/udc/${UDC_NAME}/device/usb1/1-0\:1.0/usb1-port1/state 2>/dev/null && exit 3
+	grep -q configured "${ROOT}/sys/class/udc/${UDC_NAME}/device/usb1/1-0:1.0/usb1-port1/state" 2>/dev/null && exit 3
 
 	# with no argument setup previous mode
 	[[ -n "$1" ]] && USB_MODE=$1
 
+	# "network" and "internet" share the gadget: switching between them
+	# restarts it with the other addressing.
+	NET_CHANGED=0
+	if [ -n "${NET_WANT}" ] && [ "${NET_WANT}" != "${USB_NET}" ]; then
+		NET_CHANGED=1
+		USB_NET=${NET_WANT}
+	fi
+
 	# Avoid double start
-	if [ "${CURRENT_MODE}" == "${USB_MODE}" ]; then
+	if [ "${CURRENT_MODE}" == "${USB_MODE}" ] && [ "${NET_CHANGED}" = 0 ]; then
 		if [ "$verbose" -gt "0" ]; then echo "Already in target mode: ${CURRENT_MODE}; skip"; fi
 		return
 	fi
@@ -375,8 +676,8 @@ usb_start() {
 	fi
 
 	# Enable selected mode
-	echo "${UDC_NAME}" > /sys/kernel/config/usb_gadget/${USB_MODE}/UDC
-	echo "USB_MODE=${USB_MODE}" > ${GADGETCONF}
+	echo "${UDC_NAME}" > "${ROOT}/sys/kernel/config/usb_gadget/${USB_MODE}/UDC"
+	write_conf "${USB_MODE}"
 
 	[[ "${USB_MODE}" == "cdc" ]] && configure_iface
 
@@ -386,6 +687,8 @@ usb_start() {
 }
 
 usb_stop() {
+	stop_internet >/dev/null 2>&1
+
 	# If there is a role switch, switch to host mode
 	set_role host
 
@@ -403,6 +706,42 @@ usb_stop() {
 			killall umtprd
 		fi
 	) >/dev/null 2>&1
+	# usb_disable ran in the subshell above.
+	CURRENT_MODE=disabled
+}
+
+current_ipv4() {
+	ip -4 -o address show dev "${IFACE_NAME}" 2>/dev/null |
+		awk '{ sub("/.*", "", $4); print $4; exit }'
+}
+
+# For the launcher, one key=value per line. link: off (no network mode),
+# waiting (no PC on the cable), dhcp (asking the PC), online (lease with a
+# gateway), local (connected, no gateway) or fallback (no lease in time).
+usb_status() {
+	link=off
+	IFACE_NAME=$(gadget_iface)
+	if [ "${CURRENT_MODE}" = cdc ]; then
+		mode=network
+		[ "${USB_NET}" = internet ] && mode=internet
+		if ! has_carrier; then
+			link=waiting
+		elif [ "${mode}" = network ]; then
+			link=local
+		else
+			# The supervisor may not have seen the cable yet.
+			link=$(cat "${LINKFILE}" 2>/dev/null)
+			case "${link}" in online|local|fallback) ;; *) link=dhcp ;; esac
+		fi
+	elif [ "${CURRENT_MODE}" = mtp ]; then
+		mode=file_transfer
+	else
+		mode=disabled
+	fi
+	wifi=free
+	[ -e "${WIFI_HOLD}" ] && wifi=held
+	printf 'mode=%s\ncompat=%s\nlink=%s\naddress=%s\nwifi=%s\n' \
+		"${mode}" "${USB_RNDIS}" "${link}" "$(current_ipv4)" "${wifi}"
 }
 
 set_usb_mode() {
@@ -446,7 +785,7 @@ case "$1" in
 	# API inspired by gpudriver
 	#
 	"--options")
-		echo "disabled network file_transfer"
+		echo "disabled network internet file_transfer"
 		;;
 	"--start")
 		prepare_usb_network
@@ -455,7 +794,7 @@ case "$1" in
 		;;
 	"")
 		case ${CURRENT_MODE} in
-			"cdc")  echo "network"; ;;
+			"cdc")  if [ "${USB_NET}" = internet ]; then echo "internet"; else echo "network"; fi ;;
 			"mtp")  echo "file_transfer"; ;;
 			*)      echo "disabled"; ;;
 		esac
@@ -464,13 +803,36 @@ case "$1" in
 		usb_stop
 		;;
 	"network")
+		NET_WANT=local
 		usb_start cdc
+		;;
+	"internet")
+		NET_WANT=internet
+		usb_start cdc
+		;;
+	"compat")
+		if [ -z "$2" ]; then echo "${USB_RNDIS}"; else set_compat "$2"; fi
+		;;
+	"status")
+		usb_status
+		;;
+	"supervise")
+		internet_supervise
+		;;
+	"rebuild-network")
+		# Internal, for compat: the gadget again with the function in $2.
+		USB_RNDIS=$2
+		[ -d "${g_cdc}" ] && cleanup_usb_network
+		prepare_usb_network
 		;;
 	"file_transfer")
 		usb_start mtp
 		;;
 	"address")
-		. ${GADGETNETCONF}
+		IFACE_NAME=$(gadget_iface)
+		IP=$(current_ipv4)
+		# shellcheck disable=SC1090
+		[ -n "${IP}" ] || . "${GADGETNETCONF}"
 		echo ${IP}
 		;;
 	*)
@@ -479,8 +841,10 @@ case "$1" in
 		echo "$0 --start                    Restore previously chosen mode"
 		echo "$0                            Show current mode"
 		echo "$0 disabled                   Disable USB gadget"
-		echo "$0 <network|file_transfer>    Activate specified mode"
+		echo "$0 <network|internet|file_transfer>  Activate specified mode"
+		echo "$0 compat [0|1]               Show or set RNDIS instead of NCM"
 		echo "$0 address                    Show network gadget IP address"
+		echo "$0 status                     Show mode, link, address and Wi-Fi hold"
 
 		echo "Deprecated usage: usbgadget [prepare|start|trigger|stop|restart|cleanup|address]"
 		;;
