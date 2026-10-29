@@ -9,6 +9,8 @@ PKG_DEPENDS_TARGET="toolchain zlib bzip2 openssl speex"
 PKG_LONGDESC="FFmpeg is a complete, cross-platform solution to record, convert and stream audio and video."
 
 PKG_VERSION="6.0.1"
+# 2: rawvideo encoder and muxer, for the launcher's preview video.
+PKG_REV="2"
 PKG_URL="http://ffmpeg.org/releases/ffmpeg-${PKG_VERSION}.tar.xz"
 PKG_PATCH_DIRS="archr"
 
@@ -199,6 +201,7 @@ configure_target() {
               --enable-encoder=wmav2 \
               --enable-encoder=mjpeg \
               --enable-encoder=png \
+              --enable-encoder=rawvideo \
               ${PKG_FFMPEG_HWACCEL} \
               --disable-muxers \
               --enable-muxer=spdif \
@@ -206,6 +209,7 @@ configure_target() {
               --enable-muxer=asf \
               --enable-muxer=ipod \
               --enable-muxer=mpegts \
+              --enable-muxer=rawvideo \
               --enable-demuxers \
               --enable-parsers \
               --enable-bsfs \

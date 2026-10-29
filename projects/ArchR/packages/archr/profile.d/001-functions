@@ -24,56 +24,30 @@ function log() {
   echo "$(date) ${SOURCE}: ${MESSAGE}" >>/var/log/messages
 }
 
+# The value of the first line whose key is exactly $1. A plain prefix
+# comparison, no regex: ROM names hold [ ] ( ) + . * and the like.
+function config_value() {
+  KEY="${1}=" awk 'BEGIN { key = ENVIRON["KEY"] }
+    index($0, key) == 1 { print substr($0, length(key) + 1); exit }' "${J_CONF}"
+}
+
+# get_setting KEY [SYSTEM [ROM]]: the first non-empty of SYSTEM["ROM"].KEY,
+# SYSTEM.KEY, system.KEY, KEY, then global.KEY.
 function get_setting() {
-  if [ -n "${3}" ]
-  then
-    ### Test to see if we have a game setting.
-    VAR="$2\[\"$(echo ${3} | sed -E "s~'~\\\x27~g"';s~[()&]~\\&~g')\"\]\.$1"
-    OUTPUT=$(awk 'BEGIN {FS="="} /^'"${VAR}"'/ {print $NF}' ${J_CONF})
-    if [ ! -z "${OUTPUT}" ]
+  local value key keys=()
+  [ -n "${2:-}" ] && [ -n "${3:-}" ] && keys+=("${2}[\"${3}\"].${1}")
+  [ -n "${2:-}" ] && keys+=("${2}.${1}")
+  keys+=("system.${1}" "${1}")
+  for key in "${keys[@]}"
+  do
+    value=$(config_value "${key}")
+    if [ -n "${value}" ]
     then
-      echo ${OUTPUT}
-      return
-    else
-      ### If not, check to see if we have a system setting.
-      LOCAL=$(awk -F: '/^'"${2}.${1}"'=/ { st = index($0,"=");print substr($0,st+1);exit}' ${J_CONF})
-      if [ ! -z "${LOCAL}" ]
-      then
-        echo ${LOCAL}
-        return
-      fi
-    fi
-  fi
-
-  if [ -z "${3}" ] && [ -n "${2}" ]
-  then
-    ### Check to see if we have a global setting.
-    LOCAL=$(awk -F: '/^'"${2}.${1}"'=/ {  st = index($0,"=");print substr($0,st+1);exit}' ${J_CONF})
-    if [ ! -z "${LOCAL}" ]
-    then
-      echo ${LOCAL}
+      echo "${value}"
       return
     fi
-  fi
-
-  ### Check to see if we have a "system." global setting.
-  SYSTEM=$(awk -F: '/^system.'"${1}"='/ { st = index($0,"=");print substr($0,st+1);exit}' ${J_CONF})
-  if [ -n "${SYSTEM}" ]
-  then
-    echo ${SYSTEM}
-    return
-  fi
-
-  ### Check to see if we have a "global." global setting."
-  LOCAL=$(awk -F: '/^'"${1}"='/ { st = index($0,"=");print substr($0,st+1);exit}' ${J_CONF})
-  if [ -z "${LOCAL}" ]
-  then
-    awk -F: '/^global.'"${1}"='/ { st = index($0,"=");print substr($0,st+1);exit}' ${J_CONF}
-    return
-  else
-    echo ${LOCAL}
-  fi
-  return
+  done
+  config_value "global.${1}"
 }
 
 function wait_lock() {
