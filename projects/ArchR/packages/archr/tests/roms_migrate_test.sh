@@ -129,6 +129,9 @@ check "check: runs on an untouched card" '[ ${RC} = 0 ] && grep -qx RESULT=ok <<
 check "check: STORAGE keeps 8 GiB when it holds less" 'grep -qx STORAGE_AFTER_MIB=8192 <<<"${OUT}"'
 check "check: the ROMs partition gets the rest" 'grep -qx ROMS_PART_MIB=$(( (TOTAL - 9994240 - 8192 * 2048) / 2048 )) <<<"${OUT}"'
 check "check: renames counted (a colon twice, two case clashes)" 'grep -qx RENAMES=4 <<<"${OUT}"'
+check "check: lists each rename with its new name" \
+  'grep -qxF "$(printf "RENAME=snes/Zelda: A Link.sfc\tZelda_ A Link.sfc")" <<<"${OUT}" && grep -qxF "$(printf "RENAME=snes/media/covers/Zelda: A Link.png\tZelda_ A Link.png")" <<<"${OUT}" && grep -qxF "$(printf "RENAME=nes/mario.zip\tmario (2).zip")" <<<"${OUT}" && [ "$(grep -c ^RENAME= <<<"${OUT}")" = 4 ]'
+check "check: a clash in Unicode case (POKÉMON, Pokémon)" 'grep -qxF "$(printf "RENAME=gba/Pokémon.gba\tPokémon (2).gba")" <<<"${OUT}"'
 check "check: symbolic links counted" 'grep -qx SYMLINKS=1 <<<"${OUT}"'
 check "check: changes nothing" '[ ! -e "${TMP}/calls" ] || ! grep -qv "parted -s -m" "${TMP}/calls"'
 
