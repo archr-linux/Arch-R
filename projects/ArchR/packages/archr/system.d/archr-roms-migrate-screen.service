@@ -1,0 +1,20 @@
+[Unit]
+Description=Screen of the ROMs move to the exFAT partition
+# Only shows /run/archr/roms-migrate/progress. Nothing waits for it: when it
+# fails, the migration goes on and the console shows its log.
+DefaultDependencies=no
+
+[Service]
+Type=simple
+# Nothing under /storage: it is unmounted while it shrinks.
+WorkingDirectory=/
+Environment=HOME=/run
+Environment=MESA_SHADER_CACHE_DISABLE=true
+Environment=SDL_VIDEODRIVER=kmsdrm
+# Nothing loads the GPU module in this boot (no udev, no gpudriver), and
+# loading it here could hang the kernel under the migration: Mesa draws in
+# software on the display device. LIBGL_ALWAYS_SOFTWARE crashes on the
+# RK3326; this override does not (tested on an R36S, about half a core).
+Environment=MESA_LOADER_DRIVER_OVERRIDE=kms_swrast
+ExecStart=/usr/bin/archr-launcher --roms-migrate-screen
+Nice=10
