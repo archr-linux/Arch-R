@@ -16,6 +16,9 @@
 #   archr-roms-migrate status   LAYOUT=exfat|ext4|migrating, STATE, progress
 #   archr-roms-migrate run      the maintenance boot (archr-roms-migrate.target)
 #
+# The maintenance boot shows ${WORK}/progress on its screen
+# (archr-roms-migrate-screen.service); without it, the log on the tty.
+#
 # exFAT cannot grow, so ARCHR_ROMS is made at its final size, and STORAGE
 # must first shrink with every ROM still inside it: STORAGE ends at 8 GiB, or
 # at what it holds plus 1 GiB when that is more. Then each top-level entry of
@@ -359,9 +362,14 @@ sanitize() {
 # Shrinks STORAGE and makes ARCHR_ROMS. Redone from the start after a cut:
 # every step is a no-op when already done, and nothing was copied yet.
 make_partition() {
-  local start size bs min rc
+  local start size bs min rc try
   log "Checking STORAGE."
-  umount "${STORAGE}" || { abort "STORAGE is busy."; return 1; }
+  # The screen reads system.cfg once as it starts: a moment, so try again.
+  for try in 1 2 3; do
+    umount "${STORAGE}" && break
+    [ "${try}" = 3 ] && { abort "STORAGE is busy."; return 1; }
+    sleep 1
+  done
   e2fsck -f -p "${DEV}" >>"${TMPLOG}" 2>&1
   rc=$?
   if [ "${rc}" -gt 2 ]; then
@@ -427,9 +435,56 @@ differences() {
   rsync -rtn --no-links --modify-window=2 --checksum --itemize-changes "$1" "$2/" 2>&1 | grep -v '^\.d' | grep -v '^skipping non-regular'
 }
 
+### Progress, for the screen (archr-launcher --roms-migrate-screen):
+### STAGE, PROGRESS=n/total, ENTRY, BYTES=done/total, LEFT (seconds).
+### Replaced whole, so a reader never sees half of it.
+STAGE=preparing N=0 COUNT=0 ENTRY='' DONE_B=0 TOTAL_B=0 BEGAN=0 BEGAN_B=0
+
+progress() {
+  local now left=
+  now=$(date +%s)
+  # Copy and check alike, at this boot's pace, once it is worth trusting.
+  # du counts a file linked from two entries twice: never past the total.
+  [ "${DONE_B}" -le "${TOTAL_B}" ] || DONE_B=${TOTAL_B}
+  if [ "${DONE_B}" -gt "${BEGAN_B}" ] && [ $(( now - BEGAN )) -ge 20 ]; then
+    left=$(( (TOTAL_B - DONE_B) * (now - BEGAN) / (DONE_B - BEGAN_B) ))
+  fi
+  mkdir -p "${WORK}"
+  {
+    echo "STAGE=${STAGE}"
+    if [ "${COUNT}" -gt 0 ]; then
+      echo "PROGRESS=${N}/${COUNT}"
+      echo "ENTRY=${ENTRY}"
+    fi
+    [ "${TOTAL_B}" -gt 0 ] && echo "BYTES=${DONE_B}/${TOTAL_B}"
+    [ -n "${left}" ] && echo "LEFT=${left}"
+  } >"${WORK}/progress.${BASHPID}"
+  mv -f "${WORK}/progress.${BASHPID}" "${WORK}/progress"
+}
+
+bytes_of() {
+  du -sb "$@" 2>/dev/null | awk '{ b += $1 } END { print b + 0 }'
+}
+
+# While rsync copies entry $1 (size $2): what has arrived, every 2 s.
+# Stopped by TERM between writes, never halfway through one: a late write
+# would undo the next stage, or leave its temporary file behind.
+follow_copy() {
+  local base=${DONE_B} before now
+  trap 'exit 0' TERM
+  before=$(bytes_of "${NEW}/$1")
+  while sleep 2 & wait $!; do
+    now=$(( $(bytes_of "${NEW}/$1" "${NEW}/.archr-migrate-tmp") - before ))
+    [ "${now}" -lt "$2" ] || now=$2
+    [ "${now}" -ge 0 ] || now=0
+    DONE_B=$(( base + now ))
+    progress
+  done
+}
+
 # Copies, proves and deletes one top-level entry. Redone after a cut.
 move_entry() {
-  local src=$1 name=${1##*/}
+  local src=$1 name=${1##*/} size follower
   if [ -L "${src}" ]; then
     log "Not copied (symbolic link): ${name} -> $(readlink "${src}")"
     rm -f "${src}"
@@ -438,7 +493,17 @@ move_entry() {
   symlinks "${src}" | while IFS= read -r l; do
     log "Not copied (symbolic link): ${l#"${ROMS}"/} -> $(readlink "${l}")"
   done
+  size=$(bytes_of "${src}")
+  STAGE=copying
+  progress
+  follow_copy "${name}" "${size}" &
+  follower=$!
   rsync -rt --no-links --modify-window=2 --temp-dir="${NEW}/.archr-migrate-tmp" "${src}" "${NEW}/" >>"${TMPLOG}" 2>&1
+  kill "${follower}" 2>/dev/null
+  wait "${follower}" 2>/dev/null
+  DONE_B=$(( DONE_B + size ))
+  STAGE=verifying
+  progress
   drop_caches
   if [ -n "$(differences "${src}" "${NEW}")" ]; then
     differences "${src}" "${NEW}" | head -n 20 >>"${TMPLOG}"
@@ -454,10 +519,13 @@ copy_all() {
   mkdir -p "${NEW}/.archr-migrate-tmp"
   mapfile -t entries < <(find "${ROMS}" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort)
   total=${#entries[@]}
+  # What a cut boot already moved counts as done.
+  DONE_B=$(bytes_of "${NEW}")
+  TOTAL_B=$(( DONE_B + $(bytes_of "${ROMS}") ))
+  BEGAN=$(date +%s) BEGAN_B=${DONE_B} COUNT=${total}
   for e in "${entries[@]}"; do
     n=$(( n + 1 ))
-    echo "PROGRESS=${n}/${total}" >"${WORK}/progress"
-    echo "ENTRY=${e}" >>"${WORK}/progress"
+    N=${n} ENTRY=${e}
     log "[${n}/${total}] ${e}"
     if ! move_entry "${ROMS}/${e}"; then
       log "Copy of ${e} does not match; kept on STORAGE in ${LEFT##*/}."
@@ -481,6 +549,7 @@ cmd_run() {
   DISK=$(roms_disk_of "${DEV}")
   PART4=$(roms_part_of "${DISK}" 4)
   log "Moving the ROMs to ARCHR_ROMS. Do not turn the device off."
+  progress
   if [ "$(mark_get STATE)" = armed ]; then
     # Untouched card: plan again with what it holds now.
     if ! roms_has_part "${DISK}" 4 && [ "$(roms_field "${DISK}" 3 3)" = $(( $(roms_disk_sectors "${DISK}") - 1 )) ]; then
