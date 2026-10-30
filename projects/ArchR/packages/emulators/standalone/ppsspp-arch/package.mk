@@ -102,6 +102,9 @@ makeinstall_target() {
   curl -Lo ${INSTALL}/usr/config/ppsspp/PSP/Cheats/cheat.db https://raw.githubusercontent.com/Saramagrean/CWCheat-Database-Plus-/${CHEAT_DB_VERSION}/cheat.db
 }
 
-post_install() {
+# In the package, not post_install: post_install only edits the image, so a
+# pacman update shipped the @GRENDERER@ placeholder and PPSSPP aborted on
+# the GraphicsBackend it wrote (std::bad_cast).
+post_makeinstall_target() {
   sed -e "s/@GRENDERER@/${GRENDERER}/g" -i ${INSTALL}/usr/bin/start_ppsspp.sh
 }

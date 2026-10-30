@@ -37,7 +37,9 @@ makeinstall_target() {
   cp -f ${PKG_DIR}/sources/microphone.wav ${INSTALL}/usr/config/drastic/microphone/
 }
 
-post_install() {
+# In the package, not post_install: post_install only edits the image, so
+# a pacman update shipped the bare @HOTKEY@ line.
+post_makeinstall_target() {
     case ${DEVICE} in
       RK3588)
         HOTKEY="export HOTKEY="guide""
