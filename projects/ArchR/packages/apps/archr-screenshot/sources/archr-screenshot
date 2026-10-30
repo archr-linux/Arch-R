@@ -30,44 +30,35 @@ screenshot_name() {
   fi
 }
 
-# Enable / Disable archr screenshot
-ArchR_SCREENSHOT=$(get_setting "archr.screenshot.enabled")
-if [ ! -n "${ArchR_SCREENSHOT}" ]; then
-  set_setting "archr.screenshot.enabled" "0"
-fi
+# The shortcut's on/off state (hotkey.screenshot.enabled) belongs to
+# input_sense, which only calls this script when it is on.
 
-if [ "${ArchR_SCREENSHOT}" == "1" ]; then
-  # Disable archr-screenshot while retroarch is running
-  if pgrep -f "retroarch" > /dev/null; then
-      echo "RetroArch is running, skipping screenshot."
-      # 'failure' (screenshot not taken) exit code
-      exit 1
-  fi
-
-  # Folder to save screenshots
-  SAVE_DIR="/storage/roms/screenshots"
-
-  # Create the folder if it doesn't exist
-  mkdir -p "$SAVE_DIR"
-
-  # The game's name and the time
-  FILENAME="$(screenshot_name)"
-  FULL_PATH="${SAVE_DIR}/${FILENAME}"
-
-  # Get focused window geometry
-  GEOMETRY=$(swaymsg -t get_tree | jq -r '
-  ..
-    | select(.type? == "con" and .focused == true)
-    | "\(.rect.x),\(.rect.y) \(.rect.width)x\(.rect.height)"'
-  )
-
-  # Take screenshot of the focused window
-  grim -g "$GEOMETRY" "$FULL_PATH"
-
-  # 'success' (screenshot taken) exit code
-  exit 0
-else
-  echo "archr-screenshot is not enabled, skipping screenshot."
+# Disable archr-screenshot while retroarch is running
+if pgrep -f "retroarch" > /dev/null; then
+  echo "RetroArch is running, skipping screenshot."
   # 'failure' (screenshot not taken) exit code
   exit 1
 fi
+
+# Folder to save screenshots
+SAVE_DIR="/storage/roms/screenshots"
+
+# Create the folder if it doesn't exist
+mkdir -p "$SAVE_DIR"
+
+# The game's name and the time
+FILENAME="$(screenshot_name)"
+FULL_PATH="${SAVE_DIR}/${FILENAME}"
+
+# Get focused window geometry
+GEOMETRY=$(swaymsg -t get_tree | jq -r '
+..
+  | select(.type? == "con" and .focused == true)
+  | "\(.rect.x),\(.rect.y) \(.rect.width)x\(.rect.height)"'
+)
+
+# Take screenshot of the focused window
+grim -g "$GEOMETRY" "$FULL_PATH"
+
+# 'success' (screenshot taken) exit code
+exit 0

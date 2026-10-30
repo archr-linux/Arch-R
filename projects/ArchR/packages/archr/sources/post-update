@@ -123,6 +123,21 @@ fi
 ### Add items below this line that are safe to remove after a period of time.
 ################################################################################
 
+### The screenshot shortcut had two switches; hotkey.screenshot.enabled is the
+### only one now. Whoever had archr.screenshot.enabled=1 keeps it on.
+# screenshot-key-migration
+if [ -f /storage/.config/system/configs/system.cfg ]
+then
+  CFG=/storage/.config/system/configs/system.cfg
+  if grep -qx 'archr\.screenshot\.enabled=1' "${CFG}"
+  then
+    sed -i -e '/^hotkey\.screenshot\.enabled=/d' "${CFG}"
+    echo 'hotkey.screenshot.enabled=1' >>"${CFG}"
+  fi
+  sed -i -e '/^archr\.screenshot\.enabled=/d' "${CFG}"
+fi
+# end screenshot-key-migration
+
 if echo ${HW_DEVICE}  | grep -E 'H700'; then
   rsync -a /usr/config/ppsspp /storage/.config/
   rsync -a /usr/config/flycast /storage/.config/
