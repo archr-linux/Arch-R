@@ -1,0 +1,58 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+Subject: [PATCH] shim: open the overlay without RTLD_DEEPBIND
+
+With the shared libstdc++ (0001-No-static-lib), a deep-bound
+libMangoHud_opengl.so resolves libstdc++ data such as
+std::ctype<char>::id to a copy the program never uses when the program
+is a non-PIE executable with copy relocations. std::use_facet then
+throws std::bad_cast and flycast and ppsspp abort at start.
+
+---
+--- a/src/gl/shim.c
++++ b/src/gl/shim.c
+@@ -9,9 +9,15 @@
+ #include <stdbool.h>
+ #include <stdlib.h>
+ 
+-#ifndef RTLD_DEEPBIND
+-#define RTLD_DEEPBIND 0
+-#endif
++// libMangoHud_opengl.so is opened without RTLD_DEEPBIND. Upstream links it
++// with -static-libstdc++, so a deep-bound copy is self-contained. Built
++// against the shared libstdc++, RTLD_DEEPBIND makes the overlay bind the
++// libstdc++ data symbols (e.g. std::ctype<char>::id) to libstdc++ itself
++// while libstdc++ and the program use the program's copy-relocated ones
++// (non-PIE executables such as flycast and ppsspp). The overlay then looks
++// up facets with ids the locale never registered and std::use_facet throws
++// std::bad_cast. -Wl,-Bsymbolic-functions already binds the overlay's own
++// functions to itself, which is what the deep binding was for.
+ 
+ static void* handle = NULL;
+ static bool mangoHudLoaded = false;
+@@ -67,7 +73,7 @@
+         return false;
+     }
+ 
+-    handle = dlopen(lib, RTLD_NOW | RTLD_LOCAL | RTLD_DEEPBIND);
++    handle = dlopen(lib, RTLD_NOW | RTLD_LOCAL);
+ 
+     if (handle == NULL)
+     {
+@@ -97,7 +103,7 @@
+ 
+         while (lib != NULL)
+         {
+-            handle = dlopen(lib, RTLD_NOW | RTLD_LOCAL | RTLD_DEEPBIND);
++            handle = dlopen(lib, RTLD_NOW | RTLD_LOCAL);
+ 
+             if (handle)
+             {
+@@ -120,7 +126,7 @@
+ 
+     if (!mangoHudLoaded)
+     {
+-        handle = dlopen("${ORIGIN}/libMangoHud_opengl.so", RTLD_NOW | RTLD_LOCAL | RTLD_DEEPBIND);
++        handle = dlopen("${ORIGIN}/libMangoHud_opengl.so", RTLD_NOW | RTLD_LOCAL);
+         if (handle) mangoHudLoaded = true;
+         else
+         {
