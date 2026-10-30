@@ -216,6 +216,8 @@ check "resume: every file intact, no partial file left" '[ "${BEFORE}" = "${AFTE
 ### 6b. The screen's progress file: stage, entry, bytes, time left.
 setup
 head -c 40000000 /dev/zero >"${R}/nes/zz-big.iso"
+# Linked from a second entry: du counts it in each, once in the whole.
+ln "${R}/nes/zz-big.iso" "${R}/snes/zz-big.iso"
 migrate start >/dev/null
 bash "${SCRIPT}" run >/dev/null 2>&1 &
 PID=$!

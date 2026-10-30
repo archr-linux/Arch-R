@@ -415,6 +415,8 @@ progress() {
   local now left=
   now=$(date +%s)
   # Copy and check alike, at this boot's pace, once it is worth trusting.
+  # du counts a file linked from two entries twice: never past the total.
+  [ "${DONE_B}" -le "${TOTAL_B}" ] || DONE_B=${TOTAL_B}
   if [ "${DONE_B}" -gt "${BEGAN_B}" ] && [ $(( now - BEGAN )) -ge 20 ]; then
     left=$(( (TOTAL_B - DONE_B) * (now - BEGAN) / (DONE_B - BEGAN_B) ))
   fi
