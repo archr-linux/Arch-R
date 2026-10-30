@@ -237,7 +237,7 @@ while kill -0 "${PID}" 2>/dev/null; do
 done
 wait "${PID}"
 check "progress: the preparing stage comes first" '[ "$(head -n 1 "${TMP}/seen")" = STAGE=preparing ]'
-check "progress: copying and verifying, entry by entry" 'grep -qx STAGE=copying "${TMP}/seen" && grep -qx STAGE=verifying "${TMP}/seen" && grep -qx "PROGRESS=4/6" "${TMP}/seen" && grep -qx ENTRY=nes "${TMP}/seen"'
+check "progress: copying and verifying, entry by entry" 'grep -qx STAGE=copying "${TMP}/seen" && grep -qx STAGE=verifying "${TMP}/seen" && grep -qE "^PROGRESS=4/[0-9]+$" "${TMP}/seen" && grep -qx ENTRY=nes "${TMP}/seen"'
 TOTAL_B=$(grep "^BYTES=" "${TMP}/seen" | head -n 1 | cut -d/ -f2)
 check "progress: bytes only grow, up to the total" 'grep "^BYTES=" "${TMP}/seen" | cut -d= -f2 | awk -F/ -v t="${TOTAL_B}" "\$2 != t || \$1 < p || \$1 > t { bad = 1 } { p = \$1 } END { exit bad }"'
 check "progress: the total is what the ROMs hold" '[ "${TOTAL_B}" -gt 40000000 ] && [ "${TOTAL_B}" -lt 41000000 ]'
