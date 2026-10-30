@@ -12,6 +12,8 @@
 # The checks are strings run by eval: variables they read look unused.
 # shellcheck disable=SC2034
 set -u
+# As on the device: services run without a locale.
+export LC_ALL=C
 HERE=$(cd "$(dirname "$0")" && pwd)
 PKG=$(dirname "${HERE}")
 SCRIPT="${PKG}/sources/scripts/archr-roms-migrate"
@@ -106,6 +108,10 @@ setup() {
   head -c 5000 /dev/urandom >"${R}/nes/Mario.zip"
   head -c 5001 /dev/urandom >"${R}/nes/mario.zip"
   head -c 7000 /dev/urandom >"${R}/snes/Zelda: A Link.sfc"
+  # exFAT folds case in Unicode too.
+  mkdir -p "${R}/gba"
+  head -c 3000 /dev/urandom >"${R}/gba/POKÉMON.gba"
+  head -c 3001 /dev/urandom >"${R}/gba/Pokémon.gba"
   head -c 900 /dev/urandom >"${R}/snes/media/covers/Zelda: A Link.png"
   head -c 2048 /dev/urandom >"${R}/bios/dc/dc_boot.bin"
   head -c 4096 /dev/urandom >"${R}/savestates/nes/Zelda.state1"
@@ -122,7 +128,7 @@ OUT=$(migrate check); RC=$?
 check "check: runs on an untouched card" '[ ${RC} = 0 ] && grep -qx RESULT=ok <<<"${OUT}"'
 check "check: STORAGE keeps 8 GiB when it holds less" 'grep -qx STORAGE_AFTER_MIB=8192 <<<"${OUT}"'
 check "check: the ROMs partition gets the rest" 'grep -qx ROMS_PART_MIB=$(( (TOTAL - 9994240 - 8192 * 2048) / 2048 )) <<<"${OUT}"'
-check "check: renames counted (a colon twice, a case clash)" 'grep -qx RENAMES=3 <<<"${OUT}"'
+check "check: renames counted (a colon twice, two case clashes)" 'grep -qx RENAMES=4 <<<"${OUT}"'
 check "check: symbolic links counted" 'grep -qx SYMLINKS=1 <<<"${OUT}"'
 check "check: changes nothing" '[ ! -e "${TMP}/calls" ] || ! grep -qv "parted -s -m" "${TMP}/calls"'
 
@@ -169,7 +175,7 @@ check "run: a busy STORAGE gives up untouched" '[ ! -e "${TMP}/storage/.roms-mig
 
 ### 5. The whole migration.
 setup
-BEFORE=$(sums "${R}" | sed -e 's#Zelda: A Link#Zelda_ A Link#' -e 's#\./nes/mario\.zip#./nes/mario (2).zip#' | sort -k2)
+BEFORE=$(sums "${R}" | sed -e 's#Zelda: A Link#Zelda_ A Link#' -e 's#\./nes/mario\.zip#./nes/mario (2).zip#' -e 's#\./gba/Pokémon\.gba#./gba/Pokémon (2).gba#' | sort -k2)
 migrate start >/dev/null
 migrate run >"${TMP}/run.out"; RC=$?
 check "run: succeeds" '[ ${RC} = 0 ]'
@@ -183,14 +189,14 @@ check "run: every file arrives intact (renamed where exFAT needs it)" '[ "${BEFO
 check "run: the ext4 roms folder is empty" '[ -z "$(ls -A "${R}")" ]'
 check "run: no temporary folder left" '[ ! -e "${TMP}/exfat/.archr-migrate-tmp" ]'
 check "run: the symbolic link is not copied" '[ ! -e "${TMP}/exfat/dreamcast/data" ] && [ -d "${TMP}/exfat/dreamcast" ]'
-check "run: renames and the link are logged" 'grep -q "Renamed: snes/Zelda: A Link.sfc -> Zelda_ A Link.sfc" "${TMP}/storage/.cache/roms-migrate.log" && grep -q "Renamed: nes/mario.zip -> mario (2).zip" "${TMP}/storage/.cache/roms-migrate.log" && grep -q "symbolic link): dreamcast/data" "${TMP}/storage/.cache/roms-migrate.log"'
+check "run: renames and the link are logged" 'grep -q "Renamed: snes/Zelda: A Link.sfc -> Zelda_ A Link.sfc" "${TMP}/storage/.cache/roms-migrate.log" && grep -q "Renamed: nes/mario.zip -> mario (2).zip" "${TMP}/storage/.cache/roms-migrate.log" && grep -q "Renamed: gba/Pokémon.gba -> Pokémon (2).gba" "${TMP}/storage/.cache/roms-migrate.log" && grep -q "symbolic link): dreamcast/data" "${TMP}/storage/.cache/roms-migrate.log"'
 check "run: the marker is gone" '[ ! -e "${TMP}/storage/.roms-migrate" ]'
 check "run: the ROMs partition is unmounted at the end" '! grep -q exfat "${TMP}/proc/mounts"'
 
 ### 6. Cut in the middle of the copy, then the next boot.
 setup
 head -c 150000000 /dev/zero >"${R}/nes/zz-big.iso"
-BEFORE=$(sums "${R}" | sed -e 's#Zelda: A Link#Zelda_ A Link#' -e 's#\./nes/mario\.zip#./nes/mario (2).zip#' | sort -k2)
+BEFORE=$(sums "${R}" | sed -e 's#Zelda: A Link#Zelda_ A Link#' -e 's#\./nes/mario\.zip#./nes/mario (2).zip#' -e 's#\./gba/Pokémon\.gba#./gba/Pokémon (2).gba#' | sort -k2)
 migrate start >/dev/null
 setsid bash "${SCRIPT}" run >"${TMP}/cut.out" 2>&1 &
 PID=$!

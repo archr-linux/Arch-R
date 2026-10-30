@@ -140,10 +140,12 @@ bad_names() {
     -o -name '*.' -o -name '* ' \) -print 2>/dev/null
 }
 
-# Paths whose name collides, ignoring case, with an earlier sibling.
+# Paths whose name collides, ignoring case, with an earlier sibling. exFAT
+# folds case in Unicode ("POKÉMON" is "Pokémon"): gawk in a UTF-8 locale
+# (glibc's built-in C.UTF-8) does too.
 case_clashes() {
   find "$1" -mindepth 1 -depth -printf '%h\t%f\n' 2>/dev/null | LC_ALL=C sort |
-    awk -F'\t' '{ k = $1 "\t" tolower($2); if (k in seen) print $1 "/" $2; else seen[k] = 1 }'
+    LC_ALL=C.UTF-8 awk -F'\t' '{ k = $1 "\t" tolower($2); if (k in seen) print $1 "/" $2; else seen[k] = 1 }'
 }
 
 symlinks() {
@@ -272,9 +274,10 @@ mount_storage() {
   mount -t ext4 -o rw,noatime "${DEV}" "${STORAGE}"
 }
 
-# True when folder $1 has an entry other than $3 named $2, ignoring case.
+# True when folder $1 has an entry other than $3 named $2, ignoring case
+# (Unicode case, as exFAT folds it).
 name_taken() {
-  local s b
+  local s b LC_ALL=C.UTF-8
   for s in "$1"/* "$1"/.[!.]* "$1"/..?*; do
     [ -e "${s}" ] || [ -L "${s}" ] || continue
     b=${s##*/}
