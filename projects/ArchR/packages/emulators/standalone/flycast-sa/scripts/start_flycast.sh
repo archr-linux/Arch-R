@@ -21,18 +21,21 @@ if [ ! -d "/storage/.config/flycast" ]; then
   cp -r "${SOURCE_DIR}" "${CONF_DIR}"
 fi
 
-#Move save file storage/roms
-if [ -d "${CONF_DIR}/data" ]; then
-  mv "${CONF_DIR}/data" "/storage/roms/dreamcast/"
-fi
-
-#Make flycast bios folder
-if [ ! -d "/storage/roms/bios/dc" ]; then
-  mkdir -p "/storage/roms/bios/dc"
-fi
-
-#Link  .config/flycast to .local
-ln -sf "/storage/roms/bios/dc" "/storage/roms/dreamcast/data"
+# Flycast keeps its BIOS and data (VMU saves) in /storage/roms/bios/dc (see
+# patches/000-conf-dir.patch). This was dreamcast/data, a symbolic link to
+# bios/dc: exFAT (the ROMs partition) has no links. Older data folders are
+# moved in, never overwriting.
+mkdir -p "/storage/roms/bios/dc"
+for OLD in "${CONF_DIR}/data" "/storage/roms/dreamcast/data"; do
+  if [ -L "${OLD}" ]; then
+    rm -f "${OLD}"
+  elif [ -d "${OLD}" ]; then
+    (cd "${OLD}" && find . -type f -exec sh -c \
+      'for f; do mkdir -p "$0/${f%/*}" && mv -n "$f" "$0/$f"; done' /storage/roms/bios/dc {} +)
+    # What is left had a namesake in bios/dc: it stays where it was.
+    find "${OLD}" -depth -type d -empty -delete
+  fi
+done
 
 
 #Make sure flycast gptk config exists

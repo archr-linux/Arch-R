@@ -25,8 +25,8 @@ index 83a18bc7..1c3ac548 100644
  static std::string find_user_data_dir()
  {
 +#ifdef __unix__
-+	flycast::mkdir("/storage/roms/dreamcast/data", 0755);
-+	return "/storage/roms/dreamcast/data/";
++	flycast::mkdir("/storage/roms/bios/dc", 0755);
++	return "/storage/roms/bios/dc/";
 +#else
  	std::string xdg_home;
  	if (nowide::getenv("XDG_DATA_HOME") != nullptr)
@@ -67,7 +67,7 @@ index 83a18bc7..1c3ac548 100644
  	std::vector<std::string> dirs;
 -
 +#ifdef __unix__
-+	dirs.push_back("/storage/roms/dreamcast/data/");
++	dirs.push_back("/storage/roms/bios/dc/");
 +#else
  	std::string xdg_home;
  	if (nowide::getenv("XDG_DATA_HOME") != nullptr)
