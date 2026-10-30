@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2022-present JELOS (https://github.com/JustEnoughLinuxOS)
 
-PKG_NAME="drastic-sa"
+PKG_NAME="drastic-arch"
+PKG_REPLACES="drastic-sa"
 PKG_VERSION="1.0"
 PKG_LICENSE="Proprietary:DRASTIC.pdf"
 PKG_ARCH="aarch64"
@@ -36,7 +37,9 @@ makeinstall_target() {
   cp -f ${PKG_DIR}/sources/microphone.wav ${INSTALL}/usr/config/drastic/microphone/
 }
 
-post_install() {
+# In the package, not post_install: post_install only edits the image, so
+# a pacman update shipped the bare @HOTKEY@ line.
+post_makeinstall_target() {
     case ${DEVICE} in
       RK3588)
         HOTKEY="export HOTKEY="guide""

@@ -3,14 +3,14 @@
 
 PKG_NAME="emulators"
 # The version is constant, so PKG_REV is what publishes a catalog change.
-PKG_REV="3"
+PKG_REV="4"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://arch-r.io"
 PKG_SECTION="emulation" # Do not change to virtual or makeinstall_target will not execute.
 PKG_LONGDESC="Emulation metapackage."
 PKG_TOOLCHAIN="manual"
 
-PKG_EMUS="amiberry flycast-sa gzdoom-sa hatarisa hypseus-singe moonlight mupen64plus-arch openbor pico-8 ppsspp-sa touchhle-sa vice-sa wine"
+PKG_EMUS="amiberry flycast-sa gzdoom-arch hatarisa hypseus-singe moonlight mupen64plus-arch openbor pico-8 ppsspp-arch touchhle-sa vice-sa wine"
 EMUS_32BIT=""
 
 PKG_RETROARCH="core-info libretro-database retroarch retroarch-assets retroarch-joypads retroarch-overlays slang-shaders"
@@ -33,47 +33,47 @@ case "${DEVICE}" in
   H700)
     [ "${ENABLE_32BIT}" == "true" ] && EMUS_32BIT="box86 desmume-lr gpsp-lr pcsx_rearmed-lr"
     PKG_DEPENDS_TARGET+=" common-shaders glsl-shaders"
-    PKG_EMUS+=" box64 drastic-sa mednafen portmaster scummvmsa yabasanshiro-sa duckstation-sa"
+    PKG_EMUS+=" box64 drastic-arch mednafen portmaster scummvmsa yabasanshiro-arch duckstation-sa"
     LIBRETRO_CORES+=" flycast2021-lr geolith-lr uae4arm"
     PKG_RETROARCH+=" retropie-shaders"
     ;;
   RK3326)
     [ "${ENABLE_32BIT}" == "true" ] && EMUS_32BIT="box86 desmume-lr gpsp-lr pcsx_rearmed-lr"
     PKG_DEPENDS_TARGET+=" common-shaders glsl-shaders"
-    PKG_EMUS+=" box64 drastic-sa mednafen melonds-sa portmaster scummvmsa yabasanshiro-sa duckstation-sa"
+    PKG_EMUS+=" box64 drastic-arch mednafen melonds-sa portmaster scummvmsa yabasanshiro-arch duckstation-sa"
     LIBRETRO_CORES+=" flycast2021-lr geolith-lr uae4arm dolphin-lr"
     PKG_RETROARCH+=" retropie-shaders"
     ;;
   RK3399)
     [ "${ENABLE_32BIT}" == "true" ] && EMUS_32BIT="box86 desmume-lr gpsp-lr pcsx_rearmed-lr"
-    PKG_EMUS+=" aethersx2-sa box64 dolphin-sa drastic-sa mednafen melonds-sa nanoboyadvance-sa portmaster scummvmsa \
-                yabasanshiro-sa duckstation-sa"
+    PKG_EMUS+=" aethersx2-sa box64 dolphin-sa drastic-arch mednafen melonds-sa nanoboyadvance-sa portmaster scummvmsa \
+                yabasanshiro-arch duckstation-sa"
     LIBRETRO_CORES+=" beetle-psx-lr bsnes-lr bsnes-hd-lr dolphin-lr geolith-lr flycast2021-lr pcsx_rearmed-lr uae4arm"
     PKG_RETROARCH+=" retropie-shaders"
     ;;
   RK3566)
     [ "${ENABLE_32BIT}" == "true" ] && EMUS_32BIT="box86 desmume-lr gpsp-lr pcsx_rearmed-lr"
     PKG_DEPENDS_TARGET+=" common-shaders glsl-shaders"
-    PKG_EMUS+=" box64 dolphin-sa drastic-sa mednafen melonds-sa portmaster scummvmsa yabasanshiro-sa duckstation-sa"
+    PKG_EMUS+=" box64 dolphin-sa drastic-arch mednafen melonds-sa portmaster scummvmsa yabasanshiro-arch duckstation-sa"
     LIBRETRO_CORES+=" dolphin-lr flycast2021-lr geolith-lr uae4arm"
     PKG_RETROARCH+=" retropie-shaders"
     ;;
   RK3588)
     [ "${ENABLE_32BIT}" == "true" ] && EMUS_32BIT="box86 desmume-lr gpsp-lr pcsx_rearmed-lr"
-    PKG_EMUS+=" aethersx2-sa azahar-sa box64 dolphin-sa drastic-sa mednafen melonds-sa portmaster scummvmsa supermodel-sa yabasanshiro-sa duckstation-sa"
+    PKG_EMUS+=" aethersx2-sa azahar-sa box64 dolphin-sa drastic-arch mednafen melonds-sa portmaster scummvmsa supermodel-sa yabasanshiro-arch duckstation-sa"
     LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr dolphin-lr flycast2021-lr geolith-lr pcsx_rearmed-lr uae4arm"
     PKG_RETROARCH+=" retropie-shaders"
     ;;
   SDM845|SM8250|SM8550|SM8650)
     [ "${ENABLE_32BIT}" == "true" ] && EMUS_32BIT="box86 daedalusx64-sa desmume-lr gpsp-lr pcsx_rearmed-lr"
     PKG_EMUS+=" aethersx2-sa azahar-sa box64 bigpemu-sa cemu-sa dolphin-sa mednafen melonds-sa nanoboyadvance-sa portmaster rpcs3-sa scummvmsa supermodel-sa \
-                yabasanshiro-sa xemu-sa duckstation-sa skyemu-sa"
+                yabasanshiro-arch xemu-sa duckstation-sa skyemu-sa"
     LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr dolphin-lr flycast2021-lr geolith-lr pcsx_rearmed-lr uae4arm kronos-lr"
     PKG_RETROARCH+=" retropie-shaders"
     ;;
   S922X)
     [ "${ENABLE_32BIT}" == "true" ] && EMUS_32BIT="box86 pcsx_rearmed-lr"
-    PKG_EMUS+=" aethersx2-sa azahar-sa box64 dolphin-sa drastic-sa duckstation-sa melonds-sa portmaster scummvmsa yabasanshiro-sa"
+    PKG_EMUS+=" aethersx2-sa azahar-sa box64 dolphin-sa drastic-arch duckstation-sa melonds-sa portmaster scummvmsa yabasanshiro-arch"
     LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr dolphin-lr geolith-lr flycast2021-lr uae4arm"
     PKG_RETROARCH+=" retropie-shaders"
     ;;
@@ -867,7 +867,7 @@ EOF
   ### Nintendo DS
   case ${DEVICE} in
     H700|RK3326)
-      add_emu_core nds drastic drastic-sa true
+      add_emu_core nds drastic drastic-arch true
       add_emu_core nds melonds melonds-sa false
       add_emu_core nds retroarch melonds false
       add_emu_core nds retroarch melondsds false
@@ -876,7 +876,7 @@ EOF
       install_script "Start MelonDS.sh"
       ;;
     RK3399|RK3566|RK3588)
-      add_emu_core nds drastic drastic-sa true
+      add_emu_core nds drastic drastic-arch true
       add_emu_core nds retroarch melonds false
       add_emu_core nds retroarch melondsds false
       add_emu_core nds melonds melonds-sa false
@@ -902,7 +902,7 @@ EOF
       install_script "Start MelonDS.sh"
       ;;
     S922X)
-      add_emu_core nds drastic drastic-sa true
+      add_emu_core nds drastic drastic-arch true
       add_emu_core nds retroarch melonds false
       add_emu_core nds retroarch melondsds false
       add_emu_core nds melonds melonds-sa false
@@ -910,7 +910,7 @@ EOF
       install_script "Start MelonDS.sh"
       ;;
     *)
-      add_emu_core nds drastic drastic-sa true
+      add_emu_core nds drastic drastic-arch true
       add_emu_core nds retroarch melonds false
       add_emu_core nds retroarch melondsds false
       add_emu_core nds retroarch skyemu false
@@ -1064,13 +1064,13 @@ EOF
   esac
 
   ### Sony Playstation Portable
-  add_emu_core psp ppsspp ppsspp-sa true
+  add_emu_core psp ppsspp ppsspp-arch true
   add_emu_core psp retroarch ppsspp false
   add_es_system psp
   install_script "Start PPSSPP.sh"
 
   ### Sony Playstation Portable Minis
-  add_emu_core pspminis ppsspp ppsspp-sa true
+  add_emu_core pspminis ppsspp ppsspp-arch true
   add_emu_core pspminis retroarch ppsspp false
   add_es_system pspminis
 
@@ -1165,7 +1165,7 @@ EOF
   ### Sega Saturn
   case ${TARGET_ARCH} in
     aarch64)
-      add_emu_core saturn yabasanshiro yabasanshiro-sa true
+      add_emu_core saturn yabasanshiro yabasanshiro-arch true
       add_emu_core saturn retroarch yabasanshiro false
       ;;
     x86_64)
@@ -1427,7 +1427,7 @@ EOF
   add_es_system windows
 
   ### Doom
-  add_emu_core doom gzdoom gzdoom-sa true
+  add_emu_core doom gzdoom gzdoom-arch true
   add_es_system doom
 
   ### Media Player

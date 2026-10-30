@@ -3,7 +3,8 @@
 # Copyright (C) 2022-present 351ELEC
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
-PKG_NAME="yabasanshiro-sa"
+PKG_NAME="yabasanshiro-arch"
+PKG_REPLACES="yabasanshiro-sa"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/sydarn/yabause"
 PKG_URL="${PKG_SITE}.git"
@@ -69,6 +70,7 @@ pre_configure_target() {
   PKG_CMAKE_OPTS_TARGET+=" -DOPENGL_INCLUDE_DIR=${SYSROOT_PREFIX}/usr/include \
                            -DOPENGL_opengl_LIBRARY=${SYSROOT_PREFIX}/usr/lib \
                            -DOPENGL_glx_LIBRARY=${SYSROOT_PREFIX}/usr/lib \
+                           -DBoost_INCLUDE_DIR=${SYSROOT_PREFIX}/usr/include \
                            -DLIBPNG_LIB_DIR=${SYSROOT_PREFIX}/usr/lib \
                            -Dpng_STATIC_LIBRARIES=${SYSROOT_PREFIX}/usr/lib/libpng16.so \
                            -DCMAKE_BUILD_TYPE=Release \
