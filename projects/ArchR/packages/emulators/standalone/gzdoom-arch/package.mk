@@ -3,7 +3,9 @@
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="gzdoom-arch"
-PKG_REPLACES="gzdoom-sa"
+# PKG_VERSION starts with a letter, so the repo names the package after
+# its install_pkg directory: devices carry "gzdoom-sa-g4.14.2".
+PKG_REPLACES="gzdoom-sa gzdoom-sa-g4.14.2"
 PKG_VERSION="g4.14.2"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/ZDoom/gzdoom"
