@@ -3,7 +3,8 @@
 # Copyright (C) 2022-present 351ELEC
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
-PKG_NAME="yabasanshiro-sa"
+PKG_NAME="yabasanshiro-arch"
+PKG_REPLACES="yabasanshiro-sa"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/sydarn/yabause"
 PKG_URL="${PKG_SITE}.git"

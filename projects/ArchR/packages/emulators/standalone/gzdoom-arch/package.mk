@@ -2,13 +2,14 @@
 # Copyright (C) 2021-present 351ELEC (https://github.com/351ELEC)
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
-PKG_NAME="gzdoom-sa"
+PKG_NAME="gzdoom-arch"
+PKG_REPLACES="gzdoom-sa"
 PKG_VERSION="g4.14.2"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/ZDoom/gzdoom"
 PKG_URL="https://github.com/ZDoom/gzdoom/archive/refs/tags/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_HOST="toolchain SDL2:host zmusic:host libvpx:host libwebp:host"
-PKG_DEPENDS_TARGET="toolchain SDL2 gzdoom-sa:host zmusic libvpx libwebp"
+PKG_DEPENDS_TARGET="toolchain SDL2 gzdoom-arch:host zmusic libvpx libwebp"
 PKG_LONGDESC="GZDoom is a modder-friendly OpenGL and Vulkan source port based on the DOOM engine"
 PKG_TOOLCHAIN="cmake-make"
 
