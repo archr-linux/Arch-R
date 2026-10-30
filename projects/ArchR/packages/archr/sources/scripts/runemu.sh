@@ -601,6 +601,12 @@ fi
 ### Switch back to performance mode to clean up
 performance
 
+### Saves, states and screenshots live with the ROMs, on exFAT when the card
+### has the ROMs partition (no journal). The emulators write them on exit but
+### never fsync: write them out now, so a device turned off in the menu
+### keeps them.
+sync
+
 clear_screen
 
 ### Disable touch on the secondary screen for dual screen devices
