@@ -41,7 +41,7 @@
 |EPOCH/YENO|Super Cassette Vision (scv)|1984|`scv`|.cart .bin .rom .0 .zip|**retroarch:** emuscv (default)<br>|
 |Fairchild|Fairchild Channel F (channelf)|1976|`channelf`|.bin .chf .zip .7z|**retroarch:** freechaf (default)<br>|
 |GamePark|GP32 (gp32)|1996|`gp32`|.smc .zip .7z|**retroarch:** mame (default)<br>|
-|id Software|Doom (doom)|1993|`doom`|.doom|**gzdoom:** gzdoom-sa (default)<br>|
+|id Software|Doom (doom)|1993|`doom`|.doom|**gzdoom:** gzdoom-arch (default)<br>|
 |id Software|iDtech (idtech)|1991|`idtech`|.sh|**retroarch:** idtech<br>|
 |Infocom|Z-machine (zmachine)|1979|`zmachine`|.dat .z1 .z2 .z3 .z4 .z5 .z6 .zip|**retroarch:** mojozork (default)<br>|
 |Lexaloffle|PICO-8 (pico-8)|2015|`pico-8`|.p8 .png|**pico-8:** pico8 (default)<br>**retroarch:** fake08<br>|
@@ -72,7 +72,7 @@
 |Nintendo|Game Boy Color (Hacks) (gbch)|1998|`gbch`|.gb .gbc .zip .7z|**retroarch:** gambatte (default)<br>**retroarch:** sameboy<br>**retroarch:** gearboy<br>**retroarch:** tgbdual<br>**retroarch:** mgba<br>**retroarch:** vbam<br>**retroarch:** DoubleCherryGB<br>**retroarch:** skyemu<br>**mednafen:** gb<br>|
 |Nintendo|NES (Hacks) (nesh)|1985|`nesh`|.nes .unif .unf .zip .7z|**retroarch:** nestopia (default)<br>**retroarch:** fceumm<br>**retroarch:** quicknes<br>**retroarch:** mesen<br>**mednafen:** nesh<br>|
 |Nintendo|Nintendo 64 (n64)|1996|`n64`|.z64 .n64 .v64 .zip .7z|**mupen64plus:** mupen64plus-arch (default)<br>**retroarch:** mupen64plus_next<br>**retroarch:** mupen64plus<br>**retroarch:** parallel_n64<br>|
-|Nintendo|Nintendo DS (nds)|2005|`nds`|.nds .zip .7z|**drastic:** drastic-sa (default)<br>**melonds:** melonds-sa<br>**retroarch:** melonds<br>**retroarch:** melondsds<br>**retroarch:** desmume<br>**retroarch:** skyemu<br>|
+|Nintendo|Nintendo DS (nds)|2005|`nds`|.nds .zip .7z|**drastic:** drastic-arch (default)<br>**melonds:** melonds-sa<br>**retroarch:** melonds<br>**retroarch:** melondsds<br>**retroarch:** desmume<br>**retroarch:** skyemu<br>|
 |Nintendo|Nintendo DSiWare (ndsiware)|2008|`ndsiware`|.nds .zip .7z|**retroarch:** melondsds (default)<br>**melonds:** melonds-sa<br>|
 |Nintendo|Nintendo Entertainment System (nes)|1985|`nes`|.nes .unif .unf .zip .7z|**retroarch:** nestopia (default)<br>**retroarch:** fceumm<br>**retroarch:** quicknes<br>**retroarch:** mesen<br>**mednafen:** nes<br>|
 |Nintendo|Pokémon Mini (pokemini)|2001|`pokemini`|.min .zip .7z|**retroarch:** pokemini (default)<br>|
@@ -98,7 +98,7 @@
 |Sega|Mega Drive (megadrive)|1990|`megadrive`|.bin .gen .md .sg .smd .zip .7z|**retroarch:** genesis_plus_gx (default)<br>**retroarch:** genesis_plus_gx_wide<br>**retroarch:** picodrive<br>**mednafen:** md<br>|
 |Sega|Mega Drive (megadrive-japan)|1988|`megadrive-japan`|.bin .gen .md .sg .smd .zip .7z|**retroarch:** genesis_plus_gx (default)<br>**retroarch:** genesis_plus_gx_wide<br>**retroarch:** picodrive<br>**mednafen:** md<br>|
 |Sega|Naomi (naomi)|1998|`naomi`|.lst .bin .dat .zip .7z|**retroarch:** flycast2021 (default)<br>**retroarch:** flycast<br>**flycast:** flycast-sa<br>|
-|Sega|Saturn (saturn)|1994|`saturn`|.cue .chd .iso .zip|**yabasanshiro:** yabasanshiro-sa (default)<br>**retroarch:** yabasanshiro<br>|
+|Sega|Saturn (saturn)|1994|`saturn`|.cue .chd .iso .zip|**yabasanshiro:** yabasanshiro-arch (default)<br>**retroarch:** yabasanshiro<br>|
 |Sega|Sega 32X (sega32x)|1994|`sega32x`|.32x .smd .bin .md .zip .7z|**retroarch:** picodrive (default)<br>|
 |Sega|Sega CD (segacd)|1991|`segacd`|.chd .cue .iso .m3u|**retroarch:** genesis_plus_gx (default)<br>**retroarch:** picodrive<br>|
 |Sega|SG-1000 (sg-1000)|1983|`sg-1000`|.bin .sg .zip .7z|**retroarch:** gearsystem (default)<br>**retroarch:** genesis_plus_gx<br>**retroarch:** picodrive<br>|
@@ -113,8 +113,8 @@
 |SNK|Neo Geo Pocket (ngp)|1998|`ngp`|.ngp .ngc .zip .7z|**retroarch:** beetle_ngp (default)<br>**retroarch:** race<br>**mednafen:** ngp<br>|
 |SNK|Neo Geo Pocket Color (ngpc)|1999|`ngpc`|.ngp .ngc .zip .7z|**retroarch:** beetle_ngp (default)<br>**retroarch:** race<br>**mednafen:** ngp<br>|
 |Sony|PlayStation (psx)|1994|`psx`|.bin .cue .img .mdf .pbp .toc .cbn .m3u .ccd .chd .iso|**retroarch:** pcsx_rearmed32 (default)<br>**retroarch:** pcsx_rearmed<br>**duckstation:** duckstation-sa<br>**retroarch:** swanstation<br>|
-|Sony|PlayStation Portable (psp)|2004|`psp`|.iso .cso .pbp .chd|**ppsspp:** ppsspp-sa (default)<br>**retroarch:** ppsspp<br>|
-|Sony|PSP Minis (pspminis)|2004|`pspminis`|.iso .cso .pbp .chd|**ppsspp:** ppsspp-sa (default)<br>**retroarch:** ppsspp<br>|
+|Sony|PlayStation Portable (psp)|2004|`psp`|.iso .cso .pbp .chd|**ppsspp:** ppsspp-arch (default)<br>**retroarch:** ppsspp<br>|
+|Sony|PSP Minis (pspminis)|2004|`pspminis`|.iso .cso .pbp .chd|**ppsspp:** ppsspp-arch (default)<br>**retroarch:** ppsspp<br>|
 |Sun Microsystems|J2ME (j2me)|2002|`j2me`|.jar|**retroarch:** freej2me (default)<br>|
 |Thomson|MO/TO family (TO7, TO7/70, TO8, TO8D, TO9, TO9+, MO5 and MO6) (moto)|1982|`moto`|.fd .sap .k7 .m7 .m5 .rom|**retroarch:** theodore (default)<br>|
 |Various|CHIP-8 / S-CHIP / XO-CHIP (chip-8)|1978|`chip-8`|.ch8 .sc8 .xo8|**retroarch:** jaxe (default)<br>|
