@@ -3,9 +3,10 @@
 # Copyright (C) 2025-present ArchR (https://github.com/archr-linux/Arch-R)
 #
 # Host test for starting a game from a save state (the launcher's Saves
-# screen):
+# screen) and for the screenshot shortcut's file name:
 #   runemu.sh --entryslot=N|auto  RetroArch -e N, or the automatic state
 #   runemu.sh --entrystate=FILE   exported for the standalone start script
+#   archr-screenshot              <rom>-AAMMDD-HHMMSS.png while a game runs
 #   bash projects/ArchR/packages/archr/tests/saves_entry_test.sh
 
 # Variables set here are read by the code taken from the scripts.
@@ -15,6 +16,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 PKG=$(dirname "${HERE}")
 PACKAGES=$(dirname "${PKG}")
 RUNEMU="${PKG}/sources/scripts/runemu.sh"
+SHOT="${PACKAGES}/apps/archr-screenshot/sources/archr-screenshot"
 MUPEN="${PACKAGES}/emulators/standalone/mupen64plus-arch/mupen64plus-arch-core/scripts/start_mupen64plus.sh"
 FAILED=0
 TMP=$(mktemp -d)
@@ -62,7 +64,28 @@ check "-e sits before the content" \
 check "the state file reaches mupen64plus" \
   'grep -q "ENTRY=(--savestate \"\${ARCHR_ENTRY_STATE}\")" "${MUPEN}" && grep -q "\"\${ENTRY\[@\]}\" \"\${TMP}/\${ROM}\"$" "${MUPEN}"'
 
-for script in "${RUNEMU}" "${MUPEN}"; do
+# The running game is recorded for the screenshot shortcut and forgotten
+# when runemu.sh quits.
+check "the game is recorded" 'grep -q "printf '"'"'%s\\\\n'"'"' \"\${ROMNAME}\" >\"\${CURRENT_GAME}\"" "${RUNEMU}"'
+check "and forgotten on quit" \
+  '[ "$(sed -n "/^function quit() {/,/^}/p" "${RUNEMU}" | grep -c "rm -f \"\${CURRENT_GAME}\"")" = 1 ]'
+
+# archr-screenshot: the file name.
+eval "$(sed -n '/^CURRENT_GAME=/p;/^screenshot_name() {/,/^}/p' "${SHOT}")"
+name() {
+  if [ -n "$1" ]; then printf '%s\n' "$1" >"${TMP}/current"; else rm -f "${TMP}/current"; fi
+  ARCHR_CURRENT_GAME="${TMP}/current"
+  CURRENT_GAME="${ARCHR_CURRENT_GAME}"
+  screenshot_name
+}
+check "the game's name, as RetroArch names it" \
+  '[[ "$(name "/storage/roms/snes/Super Mario World (USA).sfc")" =~ ^Super\ Mario\ World\ \(USA\)-[0-9]{6}-[0-9]{6}\.png$ ]]'
+check "a zipped ROM" '[[ "$(name "/storage/roms/snes/F-Zero.zip")" =~ ^F-Zero-[0-9]{6}-[0-9]{6}\.png$ ]]'
+check "only the last extension goes" '[[ "$(name "/storage/roms/psx/Game v1.1.chd")" =~ ^Game\ v1\.1-[0-9]{6}-[0-9]{6}\.png$ ]]'
+check "characters exFAT refuses" '[[ "$(name "/storage/roms/x/a:b?c*d\"e<f>g|h\\i.bin")" =~ ^a_b_c_d_e_f_g_h_i-[0-9]{6}-[0-9]{6}\.png$ ]]'
+check "no game: the date" '[[ "$(name "")" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]{6}\.png$ ]]'
+
+for script in "${RUNEMU}" "${SHOT}" "${MUPEN}"; do
   bash -n "${script}" && echo "ok   ${script##*/} parses" || { echo "FAIL ${script##*/} syntax"; FAILED=1; }
 done
 exit ${FAILED}

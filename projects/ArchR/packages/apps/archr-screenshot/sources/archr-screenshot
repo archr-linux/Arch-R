@@ -5,6 +5,23 @@
 
 . /etc/profile
 
+# The running game (runemu.sh records its ROM path) names the file as
+# RetroArch names its own captures, <rom>-AAMMDD-HHMMSS.png, so the
+# launcher shows it among that game's screenshots. Without a game: the date.
+# Characters a FAT/exFAT card refuses become "_".
+CURRENT_GAME="${ARCHR_CURRENT_GAME:-/run/archr/current-game}"
+screenshot_name() {
+  local rom stem
+  rom=$(head -n 1 "${CURRENT_GAME}" 2>/dev/null)
+  stem="${rom##*/}"
+  stem="${stem%.*}"
+  if [ -n "${stem}" ]; then
+    printf '%s-%s.png' "${stem//[:?*\"<>|\\]/_}" "$(date +'%y%m%d-%H%M%S')"
+  else
+    printf '%s.png' "$(date +'%Y-%m-%d-%H%M%S')"
+  fi
+}
+
 # Enable / Disable archr screenshot
 ArchR_SCREENSHOT=$(get_setting "archr.screenshot.enabled")
 if [ ! -n "${ArchR_SCREENSHOT}" ]; then
@@ -25,8 +42,8 @@ if [ "${ArchR_SCREENSHOT}" == "1" ]; then
   # Create the folder if it doesn't exist
   mkdir -p "$SAVE_DIR"
 
-  # Generate a timestamped filename
-  FILENAME="$(date +'%Y-%m-%d-%H%M%S').png"
+  # The game's name and the time
+  FILENAME="$(screenshot_name)"
   FULL_PATH="${SAVE_DIR}/${FILENAME}"
 
   # Get focused window geometry
