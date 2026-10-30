@@ -133,6 +133,7 @@ makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/archr/
     cp ${PKG_DIR}/scripts/functions ${INSTALL}/usr/lib/archr/
     cp ${PKG_DIR}/scripts/fs-resize ${INSTALL}/usr/lib/archr/
+    cp ${PKG_DIR}/scripts/roms-partition ${INSTALL}/usr/lib/archr/
     sed -e "s/@DISTRONAME@/${DISTRONAME}/g" \
         -i ${INSTALL}/usr/lib/archr/fs-resize
 

@@ -859,6 +859,54 @@ mount_storage() {
   fi
 }
 
+# ROMs partition: partition 4 of the /storage disk, exFAT, label ARCHR_ROMS
+# (made by fs-resize or archr-roms-migrate), mounted on /storage/roms so a PC
+# reads the games. Cards with the old layout have none: ROMs stay on ext4.
+# exFAT has no journal: the kernel marks the volume dirty while it has
+# unsynced changes, so a card that lost power is checked and repaired
+# (fsck.exfat -p) before it is mounted; a clean card costs nothing. Errors
+# left after the repair mount it read-only, as does a later I/O error
+# (errors=remount-ro). The verdict goes to /run/archr/roms-fs for the UI.
+ROMS_MOUNT_OPTS="uid=0,gid=0,fmask=0022,dmask=0022,iocharset=utf8,noatime,errors=remount-ro"
+mount_roms() {
+  local sdev part flags state opts=${ROMS_MOUNT_OPTS}
+
+  [ "${LIVE}" = "yes" ] && return 0
+  # The migration copies the old ROMs itself; mounting over them hides them.
+  [ -f /storage/.roms-migrate ] && return 0
+  sdev=$(awk '$2 == "/storage" { d = $1 } END { print d }' /proc/mounts)
+  case "${sdev}" in
+    /dev/mmcblk*p3 | /dev/nvme*p3 | /dev/loop*p3) part="${sdev%3}4" ;;
+    /dev/sd[a-z]3) part="${sdev%3}4" ;;
+    *) return 0 ;;
+  esac
+  [ -b "${part}" ] || return 0
+  [ "$(/usr/sbin/blkid -o value -s TYPE "${part}" 2>/dev/null)" = "exfat" ] || return 0
+  [ "$(/usr/sbin/blkid -o value -s LABEL "${part}" 2>/dev/null)" = "ARCHR_ROMS" ] || return 0
+
+  # VolumeFlags, boot sector offset 106: bit 1 is VolumeDirty. Clean values
+  # are 0, 1 (ActiveFat), 4 and 5 (MediaFailure); anything else is checked.
+  flags=$(dd if="${part}" bs=1 skip=106 count=1 2>/dev/null | tr '\000\001\004\005' 'CCCC')
+  state=clean
+  if [ "${flags}" != "C" ]; then
+    progress "Checking ROMs partition ${part}"
+    /usr/sbin/fsck.exfat -p "${part}" >>/dev/fsck.log 2>&1
+    case $? in
+      0) state=checked ;;
+      1 | 2) state=repaired ;;
+      *) state=errors; opts="${opts},ro" ;;
+    esac
+  fi
+  mkdir -p /storage/roms
+  if mount -t exfat -o "${opts}" "${part}" /storage/roms; then
+    progress "ROMs partition ${part} on /storage/roms (${state})"
+  else
+    state=failed
+  fi
+  mkdir -p /run/archr
+  echo "${state}" >/run/archr/roms-fs
+}
+
 # Make last bootloader label (installer, live, run etc.) as the new default
 update_bootmenu() {
   local crnt_default
@@ -1403,6 +1451,7 @@ for BOOT_STEP in \
     mount_storage \
     load_splash \
     check_update \
+    mount_roms \
     prepare_sysroot 
 do
   ${BOOT_STEP}
@@ -1457,6 +1506,11 @@ BACKUP_FILE=$(ls -1 /sysroot/storage/.restore/??????????????.tar 2>/dev/null | h
 
 if [ -f /sysroot/storage/.please_resize_me ]; then
   INIT_UNIT="--unit=fs-resize.target"
+elif [ -f /sysroot/storage/.roms-migrate ] && ! grep -q '^STATE=stalled$' /sysroot/storage/.roms-migrate; then
+  # Moving the ROMs to the exFAT partition (archr-roms-migrate): a
+  # maintenance boot, nothing else touches /storage meanwhile. A stalled
+  # one boots normally (mount_roms still leaves the partition alone).
+  INIT_UNIT="--unit=archr-roms-migrate.target"
 elif [ -f /sysroot/storage/.cache/reset_oe -o -f /sysroot/storage/.cache/reset_xbmc ]; then
   INIT_UNIT="--unit=factory-reset.target"
 elif [ -f "${BACKUP_FILE}" ]; then

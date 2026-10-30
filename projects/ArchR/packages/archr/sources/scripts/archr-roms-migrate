@@ -1,0 +1,513 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026-present ArchR (https://github.com/archr-linux/Arch-R)
+#
+# Moves /storage/roms from STORAGE (ext4) to a new ARCHR_ROMS partition
+# (exFAT), so a PC reads the games straight from the card. For cards made
+# before the ROMs partition existed; new cards get it on the first boot
+# (fs-resize). Optional, asked for by the user, never automatic. Cards that
+# never migrate keep working as they are.
+#
+#   archr-roms-migrate check    preview as KEY=VALUE lines; 0 when it can run
+#   archr-roms-migrate start    check, then arm it for the next boot; 0 armed
+#   archr-roms-migrate cancel   disarm, while it has not started
+#   archr-roms-migrate retry    copy again after a stalled migration
+#   archr-roms-migrate status   LAYOUT=exfat|ext4|migrating, STATE, progress
+#   archr-roms-migrate run      the maintenance boot (archr-roms-migrate.target)
+#
+# exFAT cannot grow, so ARCHR_ROMS is made at its final size, and STORAGE
+# must first shrink with every ROM still inside it: STORAGE ends at 8 GiB, or
+# at what it holds plus 1 GiB when that is more. Then each top-level entry of
+# roms is copied (rsync), synced, compared byte by byte (rsync --checksum
+# after dropping the page cache) and only then deleted from ext4. Every step
+# can be cut and redone: an entry is on ext4 until its copy is proven, the
+# marker (/storage/.roms-migrate, ext4) says how far it got, and the next boot
+# continues. The shrink is the one step that cannot be cut safely, hence the
+# battery or charger rule, checked again right before it.
+#
+# Names exFAT refuses (" * : < > ? \ | control characters, a trailing dot or
+# space, two names that differ only in case) are renamed on ext4 first, and
+# every rename is listed in the log. Symbolic links are not copied (exFAT has
+# none); they are listed too. An entry that still fails its check is kept on
+# ext4 under /storage/roms-not-migrated, never deleted.
+#
+# Paths and tools can be redirected for the host test (tests/).
+
+STORAGE=${ROMS_MIGRATE_STORAGE:-/storage}
+LIB=${ROMS_MIGRATE_LIB:-/usr/lib/archr/roms-partition}
+POWER_SUPPLY=${ROMS_MIGRATE_POWER:-/sys/class/power_supply}
+WORK=${ROMS_MIGRATE_WORK:-/run/archr/roms-migrate}
+PROC=${ROMS_MIGRATE_PROC:-/proc}
+REBOOT=${ROMS_MIGRATE_REBOOT:-reboot -f}
+MARK=${STORAGE}/.roms-migrate
+ROMS=${STORAGE}/roms
+LEFT=${STORAGE}/roms-not-migrated
+LOGFILE=${STORAGE}/.cache/roms-migrate.log
+TMPLOG=${WORK}/log
+NEW=${WORK}/roms
+MIN_BATTERY=50
+MARGIN_MIB=1024
+MOUNT_OPTS="uid=0,gid=0,fmask=0022,dmask=0022,iocharset=utf8,noatime,errors=remount-ro"
+
+# shellcheck source=/dev/null
+. "${LIB}"
+
+log() {
+  mkdir -p "${WORK}"
+  echo "$(date '+%F %T') $*" >>"${TMPLOG}"
+  echo "$*"
+}
+
+# The log lives on ext4; while STORAGE is unmounted it waits in /run.
+flush_log() {
+  [ -s "${TMPLOG}" ] && [ -d "${STORAGE}/.cache" ] || return 0
+  cat "${TMPLOG}" >>"${LOGFILE}" && : >"${TMPLOG}"
+}
+
+mounted_dev() {
+  awk -v p="$1" '$2 == p { d = $1 } END { print d }' "${PROC}/mounts"
+}
+
+fstype_at() {
+  awk -v p="$1" '$2 == p { t = $3 } END { print t }' "${PROC}/mounts"
+}
+
+### Marker: KEY=VALUE, replaced atomically and synced (ext4 journal).
+mark_get() {
+  sed -n "s/^${1}=//p" "${MARK}" 2>/dev/null | tail -n 1
+}
+
+# mark_set KEY VALUE [KEY VALUE ...]: changes those keys, keeps the others.
+mark_set() {
+  local tmp=${MARK}.new args=("$@") i
+  {
+    grep -v -e '^$' "${MARK}" 2>/dev/null | while IFS= read -r line; do
+      for (( i = 0; i < ${#args[@]}; i += 2 )); do
+        [ "${line%%=*}" = "${args[i]}" ] && continue 2
+      done
+      echo "${line}"
+    done
+    for (( i = 0; i < ${#args[@]}; i += 2 )); do
+      echo "${args[i]}=${args[i+1]}"
+    done
+  } >"${tmp}"
+  sync "${tmp}" 2>/dev/null || sync
+  mv -f "${tmp}" "${MARK}" && sync
+}
+
+### Power: a charger, or at least MIN_BATTERY. No battery (a test box) is fine.
+power_ok() {
+  local dir capacity
+  for dir in "${POWER_SUPPLY}"/*; do
+    [ "${dir##*/}" = battery ] || [ "$(cat "${dir}/type" 2>/dev/null)" = Battery ] || continue
+    case "$(cat "${dir}/status" 2>/dev/null)" in
+      Charging | Full) return 0 ;;
+    esac
+    capacity=$(cat "${dir}/capacity" 2>/dev/null)
+    case "${capacity}" in
+      "" | *[!0-9]*) return 0 ;;
+    esac
+    [ "${capacity}" -ge "${MIN_BATTERY}" ]
+    return
+  done
+  return 0
+}
+
+### Sizes. The exFAT footprint: every file rounded up to whole clusters, one
+### cluster per folder, plus 2 %.
+cluster_bytes() {
+  case ${ROMS_CLUSTER} in
+    *K) echo $(( ${ROMS_CLUSTER%K} * 1024 )) ;;
+    *M) echo $(( ${ROMS_CLUSTER%M} * 1048576 )) ;;
+    *) echo "${ROMS_CLUSTER}" ;;
+  esac
+}
+
+# $1: folder. Prints "<exFAT MiB> <files>".
+roms_footprint() {
+  local c
+  c=$(cluster_bytes)
+  find "$1" -mindepth 1 \( -type f -printf 'f %s\n' \) -o \( -type d -printf 'd 0\n' \) 2>/dev/null |
+    awk -v c="${c}" '
+      $1 == "f" { n++; b += int(($2 + c - 1) / c) * c }
+      $1 == "d" { b += c }
+      END { printf "%d %d\n", (b * 1.02) / 1048576 + 1, n }'
+}
+
+# Names exFAT refuses, deepest first.
+bad_names() {
+  find "$1" -mindepth 1 -depth \( -name '*["*:<>?\\|]*' -o -name '*[[:cntrl:]]*' \
+    -o -name '*.' -o -name '* ' \) -print 2>/dev/null
+}
+
+# Paths whose name collides, ignoring case, with an earlier sibling.
+case_clashes() {
+  find "$1" -mindepth 1 -depth -printf '%h\t%f\n' 2>/dev/null | LC_ALL=C sort |
+    awk -F'\t' '{ k = $1 "\t" tolower($2); if (k in seen) print $1 "/" $2; else seen[k] = 1 }'
+}
+
+symlinks() {
+  find "$1" -type l 2>/dev/null
+}
+
+### The ROMs source: SD1's own folder even with a unified SD2 on top.
+roms_source() {
+  local t
+  t=$(fstype_at "${ROMS}")
+  case ${t} in
+    "") echo "${ROMS}" ;;
+    fuse.mergerfs | overlay)
+      [ -n "$(mounted_dev /run/archr/sd1-roms)" ] && echo /run/archr/sd1-roms ;;
+  esac
+}
+
+layout() {
+  local dev
+  [ -f "${MARK}" ] && { echo migrating; return; }
+  dev=$(mounted_dev "${STORAGE}")
+  [ -n "${dev}" ] || { echo unsupported; return; }
+  if roms_is_roms "$(roms_part_of "$(roms_disk_of "${dev}")" 4)"; then
+    echo exfat
+  else
+    echo ext4
+  fi
+}
+
+# Plan for the card as it is now: sets STORAGE_MIB, ROMS_P3_END,
+# ROMS_P4_START, ROMS_P4_MIB, NEED_MIB, FILES, USED_MIB. Fails with REASON.
+plan() {
+  local dev disk src used
+  dev=$(mounted_dev "${STORAGE}")
+  disk=$(roms_disk_of "${dev}")
+  src=$(roms_source)
+  [ -n "${src}" ] || { REASON=busy; return 1; }
+  used=$(df -B1M --output=used "${STORAGE}" 2>/dev/null | tail -n 1 | tr -d ' ')
+  [ -n "${used}" ] || { REASON=unsupported; return 1; }
+  USED_MIB=${used}
+  STORAGE_MIB=$(( used + MARGIN_MIB ))
+  [ "${STORAGE_MIB}" -ge "${ROMS_STORAGE_MIB}" ] || STORAGE_MIB=${ROMS_STORAGE_MIB}
+  read -r NEED_MIB FILES <<<"$(roms_footprint "${src}")"
+  NEED_MIB=$(( NEED_MIB + 256 ))
+  if ! ROMS_MIN_MIB=0 roms_plan "${disk}" "${STORAGE_MIB}"; then
+    REASON=no-space
+    return 1
+  fi
+  [ "${ROMS_P4_MIB}" -ge "${NEED_MIB}" ] || { REASON=no-space; return 1; }
+}
+
+cmd_check() {
+  local l src result=ok bad=0 clash=0 links=0
+  l=$(layout)
+  echo "LAYOUT=${l}"
+  case ${l} in
+    exfat) echo RESULT=already; return 2 ;;
+    migrating) echo "STATE=$(mark_get STATE)"; echo RESULT=armed; return 2 ;;
+    unsupported) echo RESULT=unsupported; return 2 ;;
+  esac
+  if [ "$(roms_disk_of "$(mounted_dev "${STORAGE}")")" = "$(mounted_dev "${STORAGE}")" ] ||
+    roms_has_part "$(roms_disk_of "$(mounted_dev "${STORAGE}")")" 4; then
+    echo RESULT=unsupported
+    return 2
+  fi
+  src=$(roms_source)
+  if plan; then :; else result=${REASON}; fi
+  if [ -n "${src}" ]; then
+    bad=$(bad_names "${src}" | wc -l)
+    clash=$(case_clashes "${src}" | wc -l)
+    links=$(symlinks "${src}" | wc -l)
+  fi
+  echo "ROMS_FILES=${FILES:-0}"
+  echo "ROMS_MIB=${NEED_MIB:-0}"
+  echo "STORAGE_USED_MIB=${USED_MIB:-0}"
+  echo "STORAGE_AFTER_MIB=${STORAGE_MIB:-0}"
+  echo "ROMS_PART_MIB=${ROMS_P4_MIB:-0}"
+  echo "RENAMES=$(( bad + clash ))"
+  echo "SYMLINKS=${links}"
+  if power_ok; then echo POWER=ok; else echo POWER=low; [ "${result}" = ok ] && result=low-power; fi
+  echo "RESULT=${result}"
+  [ "${result}" = ok ]
+}
+
+cmd_start() {
+  cmd_check >/dev/null || { cmd_check; return 1; }
+  mkdir -p "${STORAGE}/.cache"
+  rm -f "${MARK}"
+  mark_set STATE armed P3_END "${ROMS_P3_END}" P4_START "${ROMS_P4_START}" TRIES 0
+  log "Armed: STORAGE ${STORAGE_MIB} MiB, ARCHR_ROMS ${ROMS_P4_MIB} MiB, ROMs ${NEED_MIB} MiB."
+  flush_log
+}
+
+cmd_cancel() {
+  [ "$(mark_get STATE)" = armed ] || return 1
+  rm -f "${MARK}"
+  sync
+}
+
+cmd_retry() {
+  [ "$(mark_get STATE)" = stalled ] || return 1
+  mark_set STATE copying TRIES 0
+}
+
+cmd_status() {
+  echo "LAYOUT=$(layout)"
+  [ -f "${MARK}" ] && echo "STATE=$(mark_get STATE)"
+  [ -f "${WORK}/progress" ] && cat "${WORK}/progress"
+  [ -f /run/archr/roms-fs ] && echo "ROMS_FS=$(cat /run/archr/roms-fs)"
+  [ -d "${LEFT}" ] && echo "NOT_MIGRATED=${LEFT}"
+  return 0
+}
+
+### run: the maintenance boot.
+
+# Gives up before anything changed: the card stays as it was.
+abort() {
+  log "Not migrating: $*"
+  mountpoint -q "${STORAGE}" || mount_storage
+  rm -f "${MARK}"
+  flush_log
+  sync
+}
+
+mount_storage() {
+  mount -t ext4 -o rw,noatime "${DEV}" "${STORAGE}"
+}
+
+# True when folder $1 has an entry other than $3 named $2, ignoring case.
+name_taken() {
+  local s b
+  for s in "$1"/* "$1"/.[!.]* "$1"/..?*; do
+    [ -e "${s}" ] || [ -L "${s}" ] || continue
+    b=${s##*/}
+    [ "${b}" = "$3" ] && continue
+    [ "${b,,}" = "${2,,}" ] && return 0
+  done
+  return 1
+}
+
+# A free name in folder $1 for entry $2 (now named $3): "name (2).ext".
+free_name() {
+  local dir=$1 want=$2 self=$3 base ext try n=2
+  base=${want%.*} ext=.${want##*.}
+  if [ "${base}" = "${want}" ] || [ -z "${base}" ]; then base=${want} ext=; fi
+  try=${want}
+  while name_taken "${dir}" "${try}" "${self}"; do
+    try="${base} (${n})${ext}"
+    n=$(( n + 1 ))
+  done
+  echo "${try}"
+}
+
+rename_to() {
+  local path=$1 new=$2
+  [ "${path##*/}" = "${new}" ] && return 0
+  if mv -n -- "${path}" "${path%/*}/${new}"; then
+    log "Renamed: ${path#"${ROMS}"/} -> ${new}"
+  else
+    log "Cannot rename ${path#"${ROMS}"/}"
+  fi
+}
+
+# Renames what exFAT refuses, on ext4 (atomic, safe to redo).
+sanitize() {
+  local path name new
+  while IFS= read -r path; do
+    name=${path##*/}
+    new=${name//[\"*:<>?\\|]/_}
+    new=$(printf '%s' "${new}" | tr '[:cntrl:]' '_')
+    while [ "${new%.}" != "${new}" ] || [ "${new% }" != "${new}" ]; do
+      new=${new%.}; new=${new% }
+    done
+    [ -n "${new}" ] || new=_
+    [ "${new}" = "${name}" ] && continue
+    rename_to "${path}" "$(free_name "${path%/*}" "${new}" "${name}")"
+  done < <(bad_names "${ROMS}")
+  while IFS= read -r path; do
+    [ -e "${path}" ] || continue
+    rename_to "${path}" "$(free_name "${path%/*}" "${path##*/}" "${path##*/}")"
+  done < <(case_clashes "${ROMS}")
+}
+
+# Shrinks STORAGE and makes ARCHR_ROMS. Redone from the start after a cut:
+# every step is a no-op when already done, and nothing was copied yet.
+make_partition() {
+  local start size bs min rc
+  log "Checking STORAGE."
+  umount "${STORAGE}" || { abort "STORAGE is busy."; return 1; }
+  e2fsck -f -p "${DEV}" >>"${TMPLOG}" 2>&1
+  rc=$?
+  if [ "${rc}" -gt 2 ]; then
+    abort "e2fsck exited ${rc}: repair STORAGE first."
+    return 1
+  fi
+  start=$(roms_field "${DISK}" 3 2)
+  size=$(( P3_END - start + 1 ))
+  bs=$(dumpe2fs -h "${DEV}" 2>/dev/null | awk -F: '/^Block size/ { gsub(/ /, "", $2); print $2 }')
+  min=$(resize2fs -P "${DEV}" 2>/dev/null | awk -F: '/minimum/ { gsub(/ /, "", $2); print $2 }')
+  if [ -z "${bs}" ] || [ -z "${min}" ] || [ $(( min * bs / 512 + 524288 )) -gt "${size}" ]; then
+    abort "STORAGE does not fit in $(( size / 2048 )) MiB."
+    return 1
+  fi
+  if ! power_ok; then
+    abort "Battery under ${MIN_BATTERY}% and no charger."
+    return 1
+  fi
+  log "Shrinking STORAGE to $(( size / 2048 )) MiB. Do not turn the device off."
+  if ! resize2fs -p "${DEV}" "${size}s" >>"${TMPLOG}" 2>&1; then
+    e2fsck -f -p "${DEV}" >>"${TMPLOG}" 2>&1
+    abort "resize2fs failed."
+    return 1
+  fi
+  if [ "$(roms_field "${DISK}" 3 3)" != "${P3_END}" ]; then
+    printf 'Yes\n' | LC_ALL=C parted ---pretend-input-tty "${DISK}" unit s resizepart 3 "${P3_END}s" >>"${TMPLOG}" 2>&1
+    if [ "$(roms_field "${DISK}" 3 3)" != "${P3_END}" ]; then
+      # The file system is smaller than the partition: harmless, grow back.
+      resize2fs "${DEV}" >>"${TMPLOG}" 2>&1
+      abort "Cannot resize partition 3."
+      return 1
+    fi
+  fi
+  roms_has_part "${DISK}" 4 && parted -s "${DISK}" rm 4 >>"${TMPLOG}" 2>&1
+  log "Creating ARCHR_ROMS."
+  if ! roms_create "${DISK}" "${P4_START}" >>"${TMPLOG}" 2>&1; then
+    roms_has_part "${DISK}" 4 && parted -s "${DISK}" rm 4 >>"${TMPLOG}" 2>&1
+    parted -s "${DISK}" resizepart 3 100% >>"${TMPLOG}" 2>&1
+    resize2fs "${DEV}" >>"${TMPLOG}" 2>&1
+    abort "Cannot create ARCHR_ROMS; STORAGE grown back."
+    return 1
+  fi
+  mount_storage || return 1
+  mark_set STATE copying
+  flush_log
+}
+
+mount_new() {
+  mkdir -p "${NEW}"
+  mountpoint -q "${NEW}" && return 0
+  fsck.exfat -p "${PART4}" >>"${TMPLOG}" 2>&1
+  [ $? -le 2 ] || { log "ARCHR_ROMS has errors fsck.exfat cannot fix."; return 1; }
+  mount -t exfat -o "${MOUNT_OPTS}" "${PART4}" "${NEW}"
+}
+
+drop_caches() {
+  sync
+  { echo 3 >"${PROC}/sys/vm/drop_caches"; } 2>/dev/null
+}
+
+# Differences that matter: a file missing or different on the copy.
+differences() {
+  rsync -rtn --no-links --modify-window=2 --checksum --itemize-changes "$1" "$2/" 2>&1 | grep -v '^\.d' | grep -v '^skipping non-regular'
+}
+
+# Copies, proves and deletes one top-level entry. Redone after a cut.
+move_entry() {
+  local src=$1 name=${1##*/}
+  if [ -L "${src}" ]; then
+    log "Not copied (symbolic link): ${name} -> $(readlink "${src}")"
+    rm -f "${src}"
+    return 0
+  fi
+  symlinks "${src}" | while IFS= read -r l; do
+    log "Not copied (symbolic link): ${l#"${ROMS}"/} -> $(readlink "${l}")"
+  done
+  rsync -rt --no-links --modify-window=2 --temp-dir="${NEW}/.archr-migrate-tmp" "${src}" "${NEW}/" >>"${TMPLOG}" 2>&1
+  drop_caches
+  if [ -n "$(differences "${src}" "${NEW}")" ]; then
+    differences "${src}" "${NEW}" | head -n 20 >>"${TMPLOG}"
+    return 1
+  fi
+  rm -rf -- "${src}"
+}
+
+copy_all() {
+  local entries total n=0 e failed=0
+  mount_new || return 1
+  rm -rf "${NEW}/.archr-migrate-tmp"
+  mkdir -p "${NEW}/.archr-migrate-tmp"
+  mapfile -t entries < <(find "${ROMS}" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort)
+  total=${#entries[@]}
+  for e in "${entries[@]}"; do
+    n=$(( n + 1 ))
+    echo "PROGRESS=${n}/${total}" >"${WORK}/progress"
+    echo "ENTRY=${e}" >>"${WORK}/progress"
+    log "[${n}/${total}] ${e}"
+    if ! move_entry "${ROMS}/${e}"; then
+      log "Copy of ${e} does not match; kept on STORAGE in ${LEFT##*/}."
+      mkdir -p "${LEFT}"
+      mv -n -- "${ROMS}/${e}" "${LEFT}/" || log "Cannot move ${e} aside."
+      failed=$(( failed + 1 ))
+    fi
+    flush_log
+  done
+  rm -rf "${NEW}/.archr-migrate-tmp"
+  sync
+  umount "${NEW}"
+  log "Done: ${total} entries, ${failed} kept on STORAGE."
+}
+
+cmd_run() {
+  local tries
+  [ -f "${MARK}" ] || return 0
+  DEV=$(mounted_dev "${STORAGE}")
+  [ -n "${DEV}" ] || { log "STORAGE is not mounted."; return 1; }
+  DISK=$(roms_disk_of "${DEV}")
+  PART4=$(roms_part_of "${DISK}" 4)
+  log "Moving the ROMs to ARCHR_ROMS. Do not turn the device off."
+  if [ "$(mark_get STATE)" = armed ]; then
+    # Untouched card: plan again with what it holds now.
+    if ! roms_has_part "${DISK}" 4 && [ "$(roms_field "${DISK}" 3 3)" = $(( $(roms_disk_sectors "${DISK}") - 1 )) ]; then
+      if ! plan; then
+        abort "${REASON}"
+        return 1
+      fi
+      mark_set STATE armed P3_END "${ROMS_P3_END}" P4_START "${ROMS_P4_START}"
+    fi
+    P3_END=$(mark_get P3_END) P4_START=$(mark_get P4_START)
+    if [ -z "${P3_END}" ] || [ -z "${P4_START}" ]; then
+      abort "the plan is missing."
+      return 1
+    fi
+    sanitize
+    flush_log
+    make_partition || return 1
+  fi
+  if [ "$(mark_get STATE)" = copying ]; then
+    if ! copy_all; then
+      # Never gives the copy up: ROMs are on both partitions now. After
+      # three tries the boots go back to normal (init skips a stalled
+      # migration, ARCHR_ROMS stays unmounted) until "retry".
+      tries=$(( $(mark_get TRIES) + 1 ))
+      if [ "${tries}" -ge 3 ]; then
+        mark_set STATE stalled TRIES "${tries}"
+        log "Stalled after ${tries} tries: archr-roms-migrate retry tries again."
+      else
+        mark_set TRIES "${tries}"
+        log "Will try again on the next boot."
+      fi
+      flush_log
+      return 1
+    fi
+    rm -f "${MARK}"
+    rm -f "${WORK}/progress"
+    flush_log
+    sync
+  fi
+}
+
+case "${1}" in
+  check) cmd_check ;;
+  start) cmd_start ;;
+  cancel) cmd_cancel ;;
+  retry) cmd_retry ;;
+  status) cmd_status ;;
+  run)
+    cmd_run
+    rc=$?
+    sync
+    [ -n "${ROMS_MIGRATE_NOREBOOT}" ] || ${REBOOT}
+    exit ${rc}
+    ;;
+  *)
+    echo "usage: ${0##*/} check|start|cancel|retry|status|run" >&2
+    exit 1
+    ;;
+esac

@@ -37,7 +37,7 @@ if [ -e /storage/.please_resize_me ] ; then
 
   # get disk: /dev/sdx2 -> /dev/sdx, /dev/mmcblkxp2 -> /dev/mmcblkx
   case $PART in
-    "/dev/mmcblk"*|"/dev/nvme"*)
+    "/dev/mmcblk"*|"/dev/nvme"*|"/dev/loop"*)
       DISK=$(echo $PART | sed s/p[0-9]$//g)
       PART1="${DISK}p1"
       ;;
@@ -64,7 +64,18 @@ if [ -e /storage/.please_resize_me ] ; then
     echo "Please do not reboot or turn off your @DISTRONAME@ device!"
     echo ""
 
-    StartProgressLog spinner "Resizing partition...   " "parted -s -f -m $DISK resizepart $PARTNUM 100% >>$LOG 2>&1"
+    # New layout: STORAGE stops at 8 GiB and the rest becomes ARCHR_ROMS
+    # (exFAT, /storage/roms), readable on any computer. Cards too small for
+    # both keep the old layout, STORAGE to the end of the card.
+    . /usr/lib/archr/roms-partition
+    ROMS_PLANNED=
+    if [ "$PARTNUM" = 3 ] && command -v mkfs.exfat >/dev/null && roms_plan "$DISK"; then
+      ROMS_PLANNED=1
+      echo "ROMs partition planned: STORAGE ends at sector $ROMS_P3_END, ARCHR_ROMS ${ROMS_P4_MIB} MiB" >>$LOG
+      StartProgressLog spinner "Resizing partition...   " "parted -s -f -m $DISK unit s resizepart $PARTNUM ${ROMS_P3_END}s >>$LOG 2>&1"
+    else
+      StartProgressLog spinner "Resizing partition...   " "parted -s -f -m $DISK resizepart $PARTNUM 100% >>$LOG 2>&1"
+    fi
     # e2fsck -p exits 0 (clean), 1 (fixed) or 2 (fixed, reboot wanted);
     # anything above means unfixed corruption, and growing a broken
     # filesystem with resize2fs would compound the damage. Leave the
@@ -76,6 +87,16 @@ if [ -e /storage/.please_resize_me ] ; then
       StartProgressLog spinner "Resizing file system... " "resize2fs $PART >>$LOG 2>&1"
     else
       echo "e2fsck exited ${FSCK_STATUS}; skipping resize2fs to avoid growing a corrupted filesystem" | tee -a $LOG
+    fi
+    if [ -n "$ROMS_PLANNED" ]; then
+      if ! StartProgressLog spinner "Creating ROMs partition... " "roms_create \"$DISK\" $ROMS_P4_START >>$LOG 2>&1"; then
+        # Any failure: back to the old layout, STORAGE to the end of the
+        # card. The ROMs then live in /storage/roms on ext4, as before.
+        echo "ROMs partition failed; falling back to the old layout" | tee -a $LOG
+        roms_has_part "$DISK" 4 && parted -s "$DISK" rm 4 >>$LOG 2>&1
+        StartProgressLog spinner "Resizing partition...   " "parted -s -f -m $DISK resizepart $PARTNUM 100% >>$LOG 2>&1"
+        StartProgressLog spinner "Resizing file system... " "resize2fs $PART >>$LOG 2>&1"
+      fi
     fi
     StartProgressLog spinner "Regenerating UUIDs...   " "tune2fs $PART -U random >>$LOG 2>&1; fatlabel -i -r $PART1 >>$LOG 2>&1"
     # The two FAT warnings fatlabel prints here are expected and harmless:

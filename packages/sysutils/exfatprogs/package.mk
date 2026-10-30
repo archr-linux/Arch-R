@@ -8,9 +8,16 @@ PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/exfatprogs/exfatprogs"
 PKG_URL="https://github.com/exfatprogs/exfatprogs/releases/download/${PKG_VERSION}/${PKG_NAME}-${PKG_VERSION}.tar.xz"
 PKG_DEPENDS_TARGET="toolchain"
+PKG_DEPENDS_INIT="toolchain"
 PKG_LONGDESC="userspace utilities that contain all of the standard utilities for creating and fixing and debugging exfat filesystems."
 PKG_TOOLCHAIN="autotools"
 
 post_makeinstall_target() {
   rm -rf ${INSTALL}/usr/share
+}
+
+# The initramfs checks the ROMs partition before mounting it: only fsck.
+makeinstall_init() {
+  mkdir -p ${INSTALL}/usr/sbin
+    cp fsck/fsck.exfat ${INSTALL}/usr/sbin
 }
