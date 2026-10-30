@@ -1,0 +1,105 @@
+# shellcheck shell=bash
+# shellcheck disable=SC2034 # ROMS_* are read by the scripts that source this
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026-present ArchR (https://github.com/archr-linux/Arch-R)
+#
+# ARCHR_ROMS: the exFAT partition mounted on /storage/roms, so any computer
+# (Windows, macOS, Linux) reads the games, saves and screenshots straight
+# from the card. It is partition 4, right after STORAGE (ext4, 8 GiB), and
+# takes the rest of the card:
+#
+#   ARCHR (FAT, boot) | ARCHR_ROOT (ext4) | STORAGE (ext4, 8 GiB) | ARCHR_ROMS
+#
+# Sourced by fs-resize (first boot) and archr-roms-migrate (cards made with
+# the old layout, where STORAGE takes the whole card and holds the ROMs).
+# The initramfs mounts it (scripts/init, mount_roms). exFAT cannot grow, so
+# the partition is always created at its final size.
+
+ROMS_LABEL=ARCHR_ROMS
+# STORAGE keeps configs, the OTA download, shader cache and modules.
+ROMS_STORAGE_MIB=${ROMS_STORAGE_MIB:-8192}
+# Below this there is no point: the card keeps the old layout.
+ROMS_MIN_MIB=${ROMS_MIN_MIB:-2048}
+# 32 KiB clusters: covers and screenshots are small files.
+ROMS_CLUSTER=${ROMS_CLUSTER:-32K}
+# Partitions start on 1 MiB boundaries (512-byte sectors).
+ROMS_ALIGN=2048
+
+# /dev/mmcblk0p3 -> /dev/mmcblk0, /dev/loop0p3 -> /dev/loop0, /dev/sda3 -> /dev/sda
+roms_disk_of() {
+  case ${1} in
+    *mmcblk*p[0-9]* | *nvme*p[0-9]* | *loop*p[0-9]*) echo "${1%p[0-9]*}" ;;
+    *) echo "${1%%[0-9]*}" ;;
+  esac
+}
+
+# Partition N of a disk: /dev/mmcblk0 4 -> /dev/mmcblk0p4, /dev/sda 4 -> /dev/sda4
+roms_part_of() {
+  case ${1} in
+    *[0-9]) echo "${1}p${2}" ;;
+    *) echo "${1}${2}" ;;
+  esac
+}
+
+# Machine-readable partition table, in sectors.
+roms_table() {
+  parted -s -m "${1}" unit s print 2>/dev/null
+}
+
+# Field F (2 start, 3 end) of partition N, without the "s".
+roms_field() {
+  roms_table "${1}" | awk -F: -v n="${2}" -v f="${3}" '$1 == n { sub(/s$/, "", $f); print $f }'
+}
+
+roms_disk_sectors() {
+  roms_table "${1}" | awk -F: 'NR == 2 { sub(/s$/, "", $2); print $2 }'
+}
+
+roms_has_part() {
+  [ -n "$(roms_field "${1}" "${2}" 2)" ]
+}
+
+# Plans the layout for a disk whose STORAGE is partition 3 and that has no
+# partition 4: STORAGE ends after $2 MiB (default ROMS_STORAGE_MIB), the ROMs
+# partition takes the rest. Sets ROMS_P3_END and ROMS_P4_START (sectors) and
+# ROMS_P4_MIB. Fails when partition 4 exists or the rest is under
+# ROMS_MIN_MIB; nothing is changed either way.
+roms_plan() {
+  local disk=${1} mib=${2:-${ROMS_STORAGE_MIB}} start total last
+  roms_has_part "${disk}" 4 && return 1
+  start=$(roms_field "${disk}" 3 2)
+  total=$(roms_disk_sectors "${disk}")
+  [ -n "${start}" ] && [ -n "${total}" ] || return 1
+  ROMS_P4_START=$(( (start + mib * 2048) / ROMS_ALIGN * ROMS_ALIGN ))
+  ROMS_P3_END=$(( ROMS_P4_START - 1 ))
+  last=$(( total - 1 ))
+  ROMS_P4_MIB=$(( (last - ROMS_P4_START + 1) / 2048 ))
+  [ "${ROMS_P4_MIB}" -ge "${ROMS_MIN_MIB}" ]
+}
+
+# Waits up to 5 s for a partition node to appear.
+roms_wait_node() {
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    [ -b "${1}" ] && return 0
+    command -v udevadm >/dev/null && udevadm settle --timeout=1 2>/dev/null
+    sleep 0.5
+  done
+  [ -b "${1}" ]
+}
+
+# Creates partition 4 from sector $2 to the end of the disk and formats it.
+# On msdos "ntfs" sets type 0x07 (exFAT/NTFS), what Windows and macOS expect.
+roms_create() {
+  local disk=${1} start=${2} part
+  part=$(roms_part_of "${disk}" 4)
+  parted -s -a none "${disk}" unit s mkpart primary ntfs "${start}s" 100% || return 1
+  roms_wait_node "${part}" || return 1
+  mkfs.exfat -c "${ROMS_CLUSTER}" -L "${ROMS_LABEL}" "${part}" || return 1
+  fsck.exfat -n "${part}"
+}
+
+# True when $1 is the ROMs partition.
+roms_is_roms() {
+  [ "$(blkid -o value -s TYPE "${1}" 2>/dev/null)" = exfat ] &&
+    [ "$(blkid -o value -s LABEL "${1}" 2>/dev/null)" = "${ROMS_LABEL}" ]
+}
