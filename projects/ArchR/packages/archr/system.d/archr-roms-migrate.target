@@ -1,0 +1,5 @@
+[Unit]
+Description=Move the ROMs to the exFAT partition
+Requires=archr-roms-migrate.service
+After=archr-roms-migrate.service
+AllowIsolate=yes

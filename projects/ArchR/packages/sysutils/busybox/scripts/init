@@ -1506,9 +1506,10 @@ BACKUP_FILE=$(ls -1 /sysroot/storage/.restore/??????????????.tar 2>/dev/null | h
 
 if [ -f /sysroot/storage/.please_resize_me ]; then
   INIT_UNIT="--unit=fs-resize.target"
-elif [ -f /sysroot/storage/.roms-migrate ]; then
+elif [ -f /sysroot/storage/.roms-migrate ] && ! grep -q '^STATE=stalled$' /sysroot/storage/.roms-migrate; then
   # Moving the ROMs to the exFAT partition (archr-roms-migrate): a
-  # maintenance boot, nothing else touches /storage meanwhile.
+  # maintenance boot, nothing else touches /storage meanwhile. A stalled
+  # one boots normally (mount_roms still leaves the partition alone).
   INIT_UNIT="--unit=archr-roms-migrate.target"
 elif [ -f /sysroot/storage/.cache/reset_oe -o -f /sysroot/storage/.cache/reset_xbmc ]; then
   INIT_UNIT="--unit=factory-reset.target"

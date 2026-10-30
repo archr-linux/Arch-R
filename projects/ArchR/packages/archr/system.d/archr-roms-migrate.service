@@ -1,0 +1,10 @@
+[Unit]
+Description=Move the ROMs to the exFAT partition
+DefaultDependencies=no
+
+[Service]
+Type=idle
+ExecStart=/usr/bin/archr-roms-migrate run
+StandardInput=tty-force
+StandardOutput=inherit
+StandardError=inherit
