@@ -9,12 +9,10 @@ Type=simple
 # Nothing under /storage: it is unmounted while it shrinks.
 WorkingDirectory=/
 Environment=HOME=/run
-Environment=MESA_SHADER_CACHE_DISABLE=true
-Environment=SDL_VIDEODRIVER=kmsdrm
-# Nothing loads the GPU module in this boot (no udev, no gpudriver), and
-# loading it here could hang the kernel under the migration: Mesa draws in
-# software on the display device. LIBGL_ALWAYS_SOFTWARE crashes on the
-# RK3326; this override does not (tested on an R36S, about half a core).
-Environment=MESA_LOADER_DRIVER_OVERRIDE=kms_swrast
+# Drawn in software into the console's framebuffer, which it puts in
+# graphics mode; the reset after it exits, even by a crash, gives the
+# console its text back.
+TTYPath=/dev/console
+TTYReset=yes
 ExecStart=/usr/bin/archr-launcher --roms-migrate-screen
 Nice=10
