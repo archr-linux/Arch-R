@@ -3,7 +3,7 @@
 
 PKG_NAME="emulators"
 # The version is constant, so PKG_REV is what publishes a catalog change.
-PKG_REV="3"
+PKG_REV="4"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://arch-r.io"
 PKG_SECTION="emulation" # Do not change to virtual or makeinstall_target will not execute.
