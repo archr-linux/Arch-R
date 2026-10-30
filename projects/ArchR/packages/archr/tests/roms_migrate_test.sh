@@ -213,6 +213,25 @@ check "resume: checks the exFAT partition before mounting it" 'grep -q "fsck.exf
 check "resume: does not shrink or format again" '[ "$(grep -c "^mkfs.exfat" "${TMP}/calls")" = 1 ]'
 check "resume: every file intact, no partial file left" '[ "${BEFORE}" = "${AFTER}" ] && [ ! -e "${TMP}/exfat/.archr-migrate-tmp" ]'
 
+### 6b. The screen's progress file: stage, entry, bytes, time left.
+setup
+head -c 40000000 /dev/zero >"${R}/nes/zz-big.iso"
+migrate start >/dev/null
+bash "${SCRIPT}" run >/dev/null 2>&1 &
+PID=$!
+: >"${TMP}/seen"
+while kill -0 "${PID}" 2>/dev/null; do
+  cat "${TMP}/work/progress" >>"${TMP}/seen" 2>/dev/null
+  sleep 0.02
+done
+wait "${PID}"
+check "progress: the preparing stage comes first" '[ "$(head -n 1 "${TMP}/seen")" = STAGE=preparing ]'
+check "progress: copying and verifying, entry by entry" 'grep -qx STAGE=copying "${TMP}/seen" && grep -qx STAGE=verifying "${TMP}/seen" && grep -qx "PROGRESS=4/6" "${TMP}/seen" && grep -qx ENTRY=nes "${TMP}/seen"'
+TOTAL_B=$(grep "^BYTES=" "${TMP}/seen" | head -n 1 | cut -d/ -f2)
+check "progress: bytes only grow, up to the total" 'grep "^BYTES=" "${TMP}/seen" | cut -d= -f2 | awk -F/ -v t="${TOTAL_B}" "\$2 != t || \$1 < p || \$1 > t { bad = 1 } { p = \$1 } END { exit bad }"'
+check "progress: the total is what the ROMs hold" '[ "${TOTAL_B}" -gt 40000000 ] && [ "${TOTAL_B}" -lt 41000000 ]'
+check "progress: gone when the migration ends" '[ ! -e "${TMP}/work/progress" ] && [ -z "$(ls "${TMP}/work" | grep "^progress")" ]'
+
 ### 7. A copy that does not match stays on ext4, set aside.
 setup
 chmod 000 "${R}/snes/media/covers/Zelda: A Link.png"
