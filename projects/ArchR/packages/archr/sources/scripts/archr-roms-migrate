@@ -8,7 +8,8 @@
 # (fs-resize). Optional, asked for by the user, never automatic. Cards that
 # never migrate keep working as they are.
 #
-#   archr-roms-migrate check    preview as KEY=VALUE lines; 0 when it can run
+#   archr-roms-migrate check    preview as KEY=VALUE lines, and RENAME=<path>\t<new
+#                               name> for each name exFAT refuses; 0 when it can run
 #   archr-roms-migrate start    check, then arm it for the next boot; 0 armed
 #   archr-roms-migrate cancel   disarm, while it has not started
 #   archr-roms-migrate retry    copy again after a stalled migration
@@ -47,6 +48,7 @@ TMPLOG=${WORK}/log
 NEW=${WORK}/roms
 MIN_BATTERY=50
 MARGIN_MIB=1024
+MAX_RENAMES=500
 MOUNT_OPTS="uid=0,gid=0,fmask=0022,dmask=0022,iocharset=utf8,noatime,errors=remount-ro"
 
 # shellcheck source=/dev/null
@@ -140,10 +142,39 @@ bad_names() {
     -o -name '*.' -o -name '* ' \) -print 2>/dev/null
 }
 
-# Paths whose name collides, ignoring case, with an earlier sibling.
+# Paths whose name collides, ignoring case, with an earlier sibling. exFAT
+# folds case in Unicode ("POKÉMON" is "Pokémon"): gawk in a UTF-8 locale
+# (glibc's built-in C.UTF-8) does too.
 case_clashes() {
   find "$1" -mindepth 1 -depth -printf '%h\t%f\n' 2>/dev/null | LC_ALL=C sort |
-    awk -F'\t' '{ k = $1 "\t" tolower($2); if (k in seen) print $1 "/" $2; else seen[k] = 1 }'
+    LC_ALL=C.UTF-8 awk -F'\t' '{ k = $1 "\t" tolower($2); if (k in seen) print $1 "/" $2; else seen[k] = 1 }'
+}
+
+# $1 as exFAT accepts it: " * : < > ? \ | and control characters become _,
+# trailing dots and spaces go.
+exfat_safe() {
+  local new=${1//[\"*:<>?\\|]/_}
+  new=$(printf '%s' "${new}" | tr '[:cntrl:]' '_')
+  while [ "${new%.}" != "${new}" ] || [ "${new% }" != "${new}" ]; do
+    new=${new%.}; new=${new% }
+  done
+  echo "${new:-_}"
+}
+
+# The renames the move will make under $1, "RENAME=<path>\t<new name>",
+# paths relative to $1.
+renames() {
+  local path name new
+  while IFS= read -r path; do
+    name=${path##*/}
+    new=$(exfat_safe "${name}")
+    [ "${new}" = "${name}" ] && continue
+    printf 'RENAME=%s\t%s\n' "${path#"$1"/}" "$(free_name "${path%/*}" "${new}" "${name}")"
+  done < <(bad_names "$1")
+  while IFS= read -r path; do
+    name=${path##*/}
+    printf 'RENAME=%s\t%s\n' "${path#"$1"/}" "$(free_name "${path%/*}" "${name}" "${name}")"
+  done < <(case_clashes "$1")
 }
 
 symlinks() {
@@ -222,6 +253,8 @@ cmd_check() {
   echo "STORAGE_AFTER_MIB=${STORAGE_MIB:-0}"
   echo "ROMS_PART_MIB=${ROMS_P4_MIB:-0}"
   echo "RENAMES=$(( bad + clash ))"
+  # The list, for the launcher's preview (bounded: what a screen can show).
+  [ -n "${src}" ] && renames "${src}" | head -n "${MAX_RENAMES}"
   echo "SYMLINKS=${links}"
   if power_ok; then echo POWER=ok; else echo POWER=low; [ "${result}" = ok ] && result=low-power; fi
   echo "RESULT=${result}"
@@ -272,9 +305,10 @@ mount_storage() {
   mount -t ext4 -o rw,noatime "${DEV}" "${STORAGE}"
 }
 
-# True when folder $1 has an entry other than $3 named $2, ignoring case.
+# True when folder $1 has an entry other than $3 named $2, ignoring case
+# (Unicode case, as exFAT folds it).
 name_taken() {
-  local s b
+  local s b LC_ALL=C.UTF-8
   for s in "$1"/* "$1"/.[!.]* "$1"/..?*; do
     [ -e "${s}" ] || [ -L "${s}" ] || continue
     b=${s##*/}
@@ -312,12 +346,7 @@ sanitize() {
   local path name new
   while IFS= read -r path; do
     name=${path##*/}
-    new=${name//[\"*:<>?\\|]/_}
-    new=$(printf '%s' "${new}" | tr '[:cntrl:]' '_')
-    while [ "${new%.}" != "${new}" ] || [ "${new% }" != "${new}" ]; do
-      new=${new%.}; new=${new% }
-    done
-    [ -n "${new}" ] || new=_
+    new=$(exfat_safe "${name}")
     [ "${new}" = "${name}" ] && continue
     rename_to "${path}" "$(free_name "${path%/*}" "${new}" "${name}")"
   done < <(bad_names "${ROMS}")
