@@ -196,4 +196,10 @@ echo ${SET_PARAMS}
 
 export MESA_NO_ERROR=1
 
-${EMUPERF} /usr/local/bin/mupen64plus${SIMPLESUFFIX} --configdir ${TMP} ${SET_PARAMS} "${TMP}/${ROM}"
+# A state picked on the launcher's Saves screen (runemu.sh --entrystate).
+ENTRY=()
+if [ -f "${ARCHR_ENTRY_STATE}" ]; then
+    ENTRY=(--savestate "${ARCHR_ENTRY_STATE}")
+fi
+
+${EMUPERF} /usr/local/bin/mupen64plus${SIMPLESUFFIX} --configdir ${TMP} ${SET_PARAMS} "${ENTRY[@]}" "${TMP}/${ROM}"
