@@ -8,7 +8,10 @@
 # The running game (runemu.sh records its ROM path) names the file as
 # RetroArch names its own captures, <rom>-AAMMDD-HHMMSS.png, so the
 # launcher shows it among that game's screenshots. Without a game: the date.
-# Characters a FAT/exFAT card refuses become "_".
+# Characters a FAT/exFAT card refuses become "_". Two ROMs whose names
+# differ only in those characters ("A:B" and "A?B") then share captures
+# "A_B-...": the launcher lists them under both games. Rare, and harmless
+# (no file is overwritten: the time is in the name).
 CURRENT_GAME="${ARCHR_CURRENT_GAME:-/run/archr/current-game}"
 # runemu.sh writes the ROM path, then its PID: a record whose runemu.sh is
 # no longer running belongs to no game.
