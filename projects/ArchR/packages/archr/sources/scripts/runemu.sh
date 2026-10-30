@@ -334,8 +334,9 @@ esac
 loginit "$1" "$2" "$3" "$4"
 clear_screen
 bluetooth disable
-# The running game, for the screenshot shortcut's file name.
-mkdir -p "${CURRENT_GAME%/*}" && printf '%s\n' "${ROMNAME}" >"${CURRENT_GAME}"
+# The running game and this script's PID, for the screenshot shortcut's
+# file name; a record whose PID is gone is stale (a crash, a reboot).
+mkdir -p "${CURRENT_GAME%/*}" && printf '%s\n%s\n' "${ROMNAME}" "$$" >"${CURRENT_GAME}"
 pause_background_services
 pause_ksm
 set_kill stop

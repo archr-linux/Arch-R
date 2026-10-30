@@ -66,14 +66,14 @@ check "the state file reaches mupen64plus" \
 
 # The running game is recorded for the screenshot shortcut and forgotten
 # when runemu.sh quits.
-check "the game is recorded" 'grep -q "printf '"'"'%s\\\\n'"'"' \"\${ROMNAME}\" >\"\${CURRENT_GAME}\"" "${RUNEMU}"'
+check "the game and the PID are recorded" 'grep -q "printf '"'"'%s\\\\n%s\\\\n'"'"' \"\${ROMNAME}\" \"\$\$\" >\"\${CURRENT_GAME}\"" "${RUNEMU}"'
 check "and forgotten on quit" \
   '[ "$(sed -n "/^function quit() {/,/^}/p" "${RUNEMU}" | grep -c "rm -f \"\${CURRENT_GAME}\"")" = 1 ]'
 
 # archr-screenshot: the file name.
 eval "$(sed -n '/^CURRENT_GAME=/p;/^screenshot_name() {/,/^}/p' "${SHOT}")"
 name() {
-  if [ -n "$1" ]; then printf '%s\n' "$1" >"${TMP}/current"; else rm -f "${TMP}/current"; fi
+  if [ -n "$1" ]; then printf '%s\n%s\n' "$1" "${2-$$}" >"${TMP}/current"; else rm -f "${TMP}/current"; fi
   ARCHR_CURRENT_GAME="${TMP}/current"
   CURRENT_GAME="${ARCHR_CURRENT_GAME}"
   screenshot_name
@@ -83,6 +83,8 @@ check "the game's name, as RetroArch names it" \
 check "a zipped ROM" '[[ "$(name "/storage/roms/snes/F-Zero.zip")" =~ ^F-Zero-[0-9]{6}-[0-9]{6}\.png$ ]]'
 check "only the last extension goes" '[[ "$(name "/storage/roms/psx/Game v1.1.chd")" =~ ^Game\ v1\.1-[0-9]{6}-[0-9]{6}\.png$ ]]'
 check "characters exFAT refuses" '[[ "$(name "/storage/roms/x/a:b?c*d\"e<f>g|h\\i.bin")" =~ ^a_b_c_d_e_f_g_h_i-[0-9]{6}-[0-9]{6}\.png$ ]]'
+check "a game whose runemu.sh is gone: the date" '[[ "$(name "/storage/roms/snes/F-Zero.sfc" 999999999)" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]{6}\.png$ ]]'
+check "a record without a PID: the date" '[[ "$(name "/storage/roms/snes/F-Zero.sfc" "")" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]{6}\.png$ ]]'
 check "no game: the date" '[[ "$(name "")" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]{6}\.png$ ]]'
 
 for script in "${RUNEMU}" "${SHOT}" "${MUPEN}"; do

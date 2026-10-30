@@ -10,9 +10,14 @@
 # launcher shows it among that game's screenshots. Without a game: the date.
 # Characters a FAT/exFAT card refuses become "_".
 CURRENT_GAME="${ARCHR_CURRENT_GAME:-/run/archr/current-game}"
+# runemu.sh writes the ROM path, then its PID: a record whose runemu.sh is
+# no longer running belongs to no game.
 screenshot_name() {
-  local rom stem
-  rom=$(head -n 1 "${CURRENT_GAME}" 2>/dev/null)
+  local rom="" pid="" stem
+  if [ -r "${CURRENT_GAME}" ]; then
+    { IFS= read -r rom; IFS= read -r pid; } <"${CURRENT_GAME}"
+  fi
+  [[ "${pid}" =~ ^[0-9]+$ ]] && kill -0 "${pid}" 2>/dev/null || rom=""
   stem="${rom##*/}"
   stem="${stem%.*}"
   if [ -n "${stem}" ]; then
