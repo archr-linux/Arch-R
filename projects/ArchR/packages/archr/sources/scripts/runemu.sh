@@ -26,6 +26,8 @@ performance
 #   $1 = Game/Port, then in any order:
 #   -P<platform> --core=<core> --emulator=<emulator> --controllers=<string>
 #   --governor=<performance|ondemand|schedutil|powersave> (this launch only)
+#   --entryslot=<0..999|auto>  RetroArch: start from this save state slot
+#   --entrystate=<file>        standalone emulators: start from this state
 #   -state_slot N  -autosave N  -state_file FILE (ignored)
 #   netplay: --host | --connect [IP] | --port N | --nick NAME | --spectate
 #            | --netplaymode spectator | --mitm-session ID
@@ -46,6 +48,8 @@ NETPLAY_SESSION_PORT=""
 NETPLAY_SESSION_NICK=""
 NETPLAY_SESSION_SPECTATE=0
 GOVERNOR_OVERRIDE=""
+ENTRYSLOT=""
+ENTRYSTATE=""
 NETPLAY_SESSION_MITM=""
 ARGV=("$@")
 for ((i = 1; i < ${#ARGV[@]}; i++)); do
@@ -56,6 +60,8 @@ for ((i = 1; i < ${#ARGV[@]}; i++)); do
     --emulator=*) EMULATOR="${ARG#*=}" ;;
     --controllers=*) CONTROLLERCONFIG="${ARG#*=}" ;;
     --governor=*) GOVERNOR_OVERRIDE="${ARG#*=}" ;;
+    --entryslot=*) ENTRYSLOT="${ARG#*=}" ;;
+    --entrystate=*) ENTRYSTATE="${ARG#*=}" ;;
     --connect=*) NETPLAY_SESSION_MODE="client"; NETPLAY_SESSION_HOST="${ARG#*=}" ;;
     --port=*) NETPLAY_SESSION_PORT="${ARG#*=}" ;;
     --nick=*) NETPLAY_SESSION_NICK="${ARG#*=}" ;;
@@ -95,6 +101,12 @@ for ((i = 1; i < ${#ARGV[@]}; i++)); do
     -P*) PLATFORM="${ARG#-P}" ;;
   esac
 done
+# The save state to start from (the launcher's Saves screen): a RetroArch
+# slot, "auto" for the automatic state, or an absolute state file for the
+# standalone emulator's start script. Anything else starts the game as usual.
+[[ "${ENTRYSLOT}" =~ ^([0-9]{1,3}|auto)$ ]] || ENTRYSLOT=""
+[[ "${ENTRYSTATE}" == /* && -f "${ENTRYSTATE}" ]] || ENTRYSTATE=""
+export ARCHR_ENTRY_STATE="${ENTRYSTATE}"
 BASEROMNAME=${ROMNAME##*/}
 GAMEFOLDER="${ROMNAME//${BASEROMNAME}}"
 
@@ -106,6 +118,7 @@ LOG_FILE="exec.log"
 RUN_SHELL="/usr/bin/bash"
 RETROARCH_TEMP_CONFIG="/storage/.config/retroarch/retroarch.cfg"
 RETROARCH_APPEND_CONFIG="/tmp/.retroarch.cfg"
+CURRENT_GAME="/run/archr/current-game"
 NETWORK_PLAY="No"
 SET_SETTINGS_TMP="/tmp/shader"
 OUTPUT_LOG="${LOG_DIRECTORY}/${LOG_FILE}"
@@ -214,6 +227,7 @@ function quit() {
         resume_background_services
         restore_ksm
         set_kill set "archr-launcher"
+        rm -f "${CURRENT_GAME}"
         clear_screen
         # Restore CPU governor to user pref (or ondemand fallback). Gameplay
         # switches to the performance governor, so without the fallback the
@@ -320,6 +334,9 @@ esac
 loginit "$1" "$2" "$3" "$4"
 clear_screen
 bluetooth disable
+# The running game and this script's PID, for the screenshot shortcut's
+# file name; a record whose PID is gone is stale (a crash, a reboot).
+mkdir -p "${CURRENT_GAME%/*}" && printf '%s\n%s\n' "${ROMNAME}" "$$" >"${CURRENT_GAME}"
 pause_background_services
 pause_ksm
 set_kill stop
@@ -413,7 +430,19 @@ case ${EMULATOR} in
     esac
 
 
-    RUNTHIS='${EMUPERF} /usr/bin/${RABIN} -L /tmp/cores/${CORE}_libretro.so --config ${RETROARCH_TEMP_CONFIG} --appendconfig ${RETROARCH_APPEND_CONFIG} "${ROMNAME}"'
+    RUNTHIS='${EMUPERF} /usr/bin/${RABIN} -L /tmp/cores/${CORE}_libretro.so --config ${RETROARCH_TEMP_CONFIG} --appendconfig ${RETROARCH_APPEND_CONFIG} ${ENTRYARGS} "${ROMNAME}"'
+
+    # A slot loads with -e (its saves go on in that slot); the automatic
+    # state loads with autosave on for this run.
+    ENTRYARGS=""
+    case "${ENTRYSLOT}" in
+      auto) AUTOSAVE=1 ;;
+      ?*)
+        # shellcheck disable=SC2034 # read by the RUNTHIS template
+        ENTRYARGS="-e ${ENTRYSLOT}"
+        SNAPSHOT="${ENTRYSLOT}"
+      ;;
+    esac
 
     # Configure platform specific requirements
     case ${PLATFORM} in
