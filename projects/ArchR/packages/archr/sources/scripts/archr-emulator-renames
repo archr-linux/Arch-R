@@ -15,6 +15,11 @@ CONF="${ARCHR_SYSTEM_CFG:-/storage/.config/system/configs/system.cfg}"
 # One rename per line: system, old core, new core.
 RENAMES="
 n64 mupen64plus-sa mupen64plus-arch
+nds drastic-sa drastic-arch
+psp ppsspp-sa ppsspp-arch
+pspminis ppsspp-sa ppsspp-arch
+saturn yabasanshiro-sa yabasanshiro-arch
+doom gzdoom-sa gzdoom-arch
 "
 
 script=""

@@ -24,6 +24,12 @@ n64.video_plugin=gliden64
 n64.core_note=mupen64plus-sa
 snes.core=mupen64plus-sa
 n64.core=mupen64plus-sa-old
+nds.core=drastic-sa
+psp.core=ppsspp-sa
+pspminis["Game.cso"].core=ppsspp-sa
+saturn.core=yabasanshiro-sa
+doom["Doom II.wad"].core=gzdoom-sa
+psp.core=yabasanshiro-sa
 EOF
 cat >"${TMP}/want" <<'EOF'
 n64.emulator=mupen64plus
@@ -34,6 +40,12 @@ n64.video_plugin=gliden64
 n64.core_note=mupen64plus-sa
 snes.core=mupen64plus-sa
 n64.core=mupen64plus-sa-old
+nds.core=drastic-arch
+psp.core=ppsspp-arch
+pspminis["Game.cso"].core=ppsspp-arch
+saturn.core=yabasanshiro-arch
+doom["Doom II.wad"].core=gzdoom-arch
+psp.core=yabasanshiro-sa
 EOF
 
 check() {
