@@ -438,10 +438,13 @@ bytes_of() {
 }
 
 # While rsync copies entry $1 (size $2): what has arrived, every 2 s.
+# Stopped by TERM between writes, never halfway through one: a late write
+# would undo the next stage, or leave its temporary file behind.
 follow_copy() {
   local base=${DONE_B} before now
+  trap 'exit 0' TERM
   before=$(bytes_of "${NEW}/$1")
-  while sleep 2; do
+  while sleep 2 & wait $!; do
     now=$(( $(bytes_of "${NEW}/$1" "${NEW}/.archr-migrate-tmp") - before ))
     [ "${now}" -lt "$2" ] || now=$2
     [ "${now}" -ge 0 ] || now=0
