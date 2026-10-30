@@ -132,7 +132,12 @@ boot_mounts() { mount -o rw,noatime "$1p3" "${R}/storage" && mount -o ro "$1p1" 
 boot_umounts() { umount -R "${R}/storage" 2>/dev/null; umount "${R}/flash" 2>/dev/null; }
 
 sectors() { echo $(( $(blockdev --getsz "$1") )); }
-ptype() { sfdisk --part-type "$1" "$2" 2>/dev/null; }
+# sfdisk pads the type with a space (" 7").
+ptype() { sfdisk --part-type "$1" "$2" 2>/dev/null | tr -d ' '; }
+# The ext4 size in sectors (block count x block size: 1 KiB on a small fs).
+fs_sectors() {
+  dumpe2fs -h "$1" 2>/dev/null | awk -F: '/^Block count/ { c = $2 } /^Block size/ { b = $2 } END { print c * b / 512 }'
+}
 
 first_boot() {
   local name=$1 bytes=$2 img="${W}/$1.img" l
@@ -153,7 +158,7 @@ for card in 32:31914983424 64:63864569856; do
   l=${FB_LOOP}
   check "${name}: four partitions" '[ -b "${l}p4" ]'
   check "${name}: STORAGE is 8 GiB" '[ "$(sectors "${l}p3")" = 16777216 ]'
-  check "${name}: ext4 fills STORAGE and is clean" '[ $(( $(dumpe2fs -h "${l}p3" 2>/dev/null | awk -F: "/^Block count/ {print \$2}") * 8 )) = 16777216 ] && e2fsck -f -n "${l}p3" >/dev/null 2>&1'
+  check "${name}: ext4 fills STORAGE and is clean" '[ "$(fs_sectors "${l}p3")" = 16777216 ] && e2fsck -f -n "${l}p3" >/dev/null 2>&1'
   check "${name}: ARCHR_ROMS is exFAT, labelled, type 0x07, clean" '[ "$(blkid -o value -s TYPE "${l}p4")" = exfat ] && [ "$(blkid -o value -s LABEL "${l}p4")" = ARCHR_ROMS ] && [ "$(ptype "${l}" 4)" = 7 ] && fsck.exfat -n "${l}p4" >/dev/null 2>&1'
   check "${name}: ARCHR_ROMS reaches the end of the card" '[ $(( $(cat /sys/class/block/${l##*/}p4/start) + $(sectors "${l}p4") )) -gt $(( $(sectors "${l}") - 2048 )) ]'
   note "${name}: ARCHR_ROMS $(( $(sectors "${l}p4") / 2048 )) MiB"
@@ -170,7 +175,13 @@ for card in 32:31914983424 64:63864569856; do
   mkdir -p "${D}/nes" && echo x >"${D}/nes/a.nes"
   check "${name}: tmpfiles' d 0777 root root works on a folder" 'chmod 0777 "${D}/nes" && chown 0:0 "${D}/nes"'
   check "${name}: files are 0755 root, modules can read them" '[ "$(stat -c %a:%u "${D}/nes/a.nes")" = 755:0 ]'
-  check "${name}: chmod 0644 is refused (why the tmpfiles note has no mode)" '! chmod 0644 "${D}/nes/a.nes" 2>/dev/null'
+  # The device kernel (6.12, fs/exfat/file.c exfat_sanitize_mode) refuses
+  # chmod 0644 on a 0755 file; newer host kernels may accept it. Only noted.
+  if chmod 0644 "${D}/nes/a.nes" 2>/dev/null; then
+    note "${name}: this host kernel ($(uname -r)) accepts chmod 0644 on exFAT; 6.12 refuses it"
+  else
+    note "${name}: chmod 0644 refused, as on the device"
+  fi
   check "${name}: chmod +x is a no-op that works (PortMaster)" 'chmod +x "${D}/nes/a.nes"'
   check "${name}: no symbolic links (why flycast had to change)" '! ln -s a.nes "${D}/nes/link" 2>/dev/null'
   check "${name}: names differ only in case are one file" 'echo y >"${D}/nes/A.NES" && [ "$(cat "${D}/nes/a.nes")" = y ]'
@@ -207,7 +218,7 @@ printf '#!/bin/sh\nexit 1\n' >"${R}/usr/bin/mkfs.exfat"; chmod +x "${R}/usr/bin/
 first_boot cardfail 31914983424
 l=${FB_LOOP}
 check "mkfs fails: partition 4 removed" '[ ! -b "${l}p4" ]'
-check "mkfs fails: STORAGE grown to the end, ext4 too, clean" '[ $(( $(cat /sys/class/block/${l##*/}p3/start) + $(sectors "${l}p3") )) -gt $(( $(sectors "${l}") - 2048 )) ] && [ $(( $(dumpe2fs -h "${l}p3" 2>/dev/null | awk -F: "/^Block count/ {print \$2}") * 8 )) -ge $(( $(sectors "${l}p3") - 8 )) ] && e2fsck -f -n "${l}p3" >/dev/null 2>&1'
+check "mkfs fails: STORAGE grown to the end, ext4 too, clean" '[ $(( $(cat /sys/class/block/${l##*/}p3/start) + $(sectors "${l}p3") )) -gt $(( $(sectors "${l}") - 2048 )) ] && [ "$(fs_sectors "${l}p3")" -ge $(( $(sectors "${l}p3") - 8 )) ] && e2fsck -f -n "${l}p3" >/dev/null 2>&1'
 detach "${l}"
 mv -f "${R}/usr/bin/mkfs.exfat.real" "${R}/usr/bin/mkfs.exfat"
 
