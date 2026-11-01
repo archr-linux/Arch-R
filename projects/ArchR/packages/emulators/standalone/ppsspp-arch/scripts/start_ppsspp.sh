@@ -106,11 +106,12 @@ fi
 		sed -i '/^SkipBufferEffects =/c\SkipBufferEffects = False' ${CONF_DIR}/${PPSSPP_INI}
 	fi
 
-  #VSYNC
+  #VSYNC: PPSSPP's key is VerticalSync (VSyncInterval is not read, the
+  #setting did nothing). Unset leaves the file's value, on by default.
 	if [ "${VSYNC}" = "1" ]; then
-		sed -i '/^VSyncInterval =/c\VSyncInterval = True' ${CONF_DIR}/${PPSSPP_INI}
-	else
-		sed -i '/^VSyncInterval =/c\VSyncInterval = False' ${CONF_DIR}/${PPSSPP_INI}
+		sed -i '/^VerticalSync =/c\VerticalSync = True' ${CONF_DIR}/${PPSSPP_INI}
+	elif [ "${VSYNC}" = "0" ]; then
+		sed -i '/^VerticalSync =/c\VerticalSync = False' ${CONF_DIR}/${PPSSPP_INI}
 	fi
 
   #Clock Speed
