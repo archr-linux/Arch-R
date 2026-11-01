@@ -2,42 +2,14 @@
 
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+# Copyright (C) 2026-present ArchR (https://github.com/archr-linux/Arch-R)
 
-
-# Source minimal predefined functions and variables
-# to ensure as much performance as possible.
-. /etc/profile.d/001-functions
-
-VOLUME=$(get_setting "audio.volume")
-MAX_VOLUME=100
-MIN_VOLUME=0
-STEP=5
+# The volume belongs to archr-levels (decibel curve, saved once it settles).
+#   volume [get] | up | down | <0-100> | restore     prints the level
 
 case ${1} in
-  "+"|"up")
-    VOLUME=$(( ${VOLUME} + ${STEP} ))
-  ;;
-  "-"|"down")
-    VOLUME=$(( ${VOLUME} - ${STEP} ))
-  ;;
-  "restore")
-    true
-  ;;
-  *)
-    VOLUME=${1}
-  ;;
+  ""|get)    exec archr-levels volume ;;
+  "+"|"up")   exec archr-levels volume +2 ;;
+  "-"|"down") exec archr-levels volume -2 ;;
+  *)         exec archr-levels volume "${1}" ;;
 esac
-
-if (( ${VOLUME} < ${MIN_VOLUME} ))
-then
-  VOLUME=${MIN_VOLUME}
-elif (( ${VOLUME} > ${MAX_VOLUME} ))
-then
-  VOLUME=${MAX_VOLUME}
-elif [ -z "${VOLUME}" ]
-then
-  VOLUME=50
-fi
-
-pactl -- set-sink-volume @DEFAULT_SINK@ ${VOLUME}%
-set_setting "audio.volume" ${VOLUME}
