@@ -232,6 +232,10 @@ EOF
   ### Take a backup of the system configuration on shutdown
   enable_service save-sysconfig.service
 
+  ### Low and critical battery: a warning, then save the game and power off
+  ### (Energia; archr-battery-guard, archr-game-save-exit).
+  enable_service archr-battery-guard.service
+
   ### Launcher modules with network never reach this device's own
   ### addresses (archr-launcher docs/modulos.md, iptables from connman).
   enable_service archr-modules-firewall.service
