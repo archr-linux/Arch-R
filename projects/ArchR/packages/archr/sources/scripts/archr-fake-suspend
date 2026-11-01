@@ -258,6 +258,19 @@ do_shutdown() {
     return 0
   fi
 
+  # A game left suspended: save it and close it before the power goes, as
+  # Energia promises (archr-game-save-exit records it; the launcher brings
+  # it back at power on). The output on and full speed first: a hidden
+  # window gets no frames (the emulator would stall in its swap), and the
+  # cores may be parked.
+  if check_running_game; then
+    display_on
+    [[ "${ENABLE_CORE_PARKING}" == "1" ]] && unpark_cores
+    set_cpu_gov performance
+    ${DEBUG} && log $0 "Saving the game before shutting down"
+    "${SAVE_EXIT}" suspend
+  fi
+
   # Unmute audio - otherwise wireplumber will keep it muted on next boot
   unmute_audio
 
@@ -328,9 +341,12 @@ fi
 SHUTDOWN_DELAY="$(get_setting system.shutdown_delay)"
 [[ "${SHUTDOWN_DELAY}" = "" ]] && SHUTDOWN_DELAY=900
 
-# If a game is running, by default delay the shutdown for 15 minutes
+# If a game is running, by default delay the shutdown for 15 minutes (the
+# game is saved before the power off)
 SHUTDOWN_DELAY_RUNNING_GAME="$(get_setting system.shutdown_delay_running_game)"
 [[ "${SHUTDOWN_DELAY_RUNNING_GAME}" = "" ]] && SHUTDOWN_DELAY_RUNNING_GAME=900
+
+: "${SAVE_EXIT:=/usr/bin/archr-game-save-exit}"
 
 # On suspend, should CPU cores be parked
 ENABLE_CORE_PARKING="$(get_setting system.suspend.park_cores)"
