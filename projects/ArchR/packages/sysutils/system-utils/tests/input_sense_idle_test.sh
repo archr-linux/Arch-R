@@ -114,4 +114,12 @@ check "the game limit does not apply in the menu" "$(run 3 "idle.timeout.game=1"
 events "0.5 ${POWER}"
 check "the power button keeps its suspend" "$(run 2)" "power"
 
+# Volume buttons: archr-levels takes the hold and its release, once each;
+# other releases cost nothing.
+printf '#!/bin/sh\necho "$*" >>"%s/calls"\n' "${TMP}" >"${TMP}/bin/archr-levels"
+chmod +x "${TMP}/bin/archr-levels"
+VOLUP="Event: time 1.0, type 1 (EV_KEY), code 115 (KEY_VOLUMEUP), value"
+events "0.5 ${VOLUP} 1" "0.3 ${VOLUP} 0" "0.2 ${PRESS}" "0.1 ${PRESS%1}0"
+check "a held volume button" "$(run 2)" "volume hold up osd release"
+
 exit ${FAILED}

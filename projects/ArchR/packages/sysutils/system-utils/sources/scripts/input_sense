@@ -216,12 +216,8 @@ RELEASE='value 0'
 FN_A_PRESSED=false
 FN_B_PRESSED=false
 
-### Volume repeat variables
-VOLUME_REPEAT_DELAY=0.3  # Initial delay before repeating starts (seconds)
-VOLUME_REPEAT_INTERVAL=0.1  # Interval between repeats (seconds)
 VOLUME_UP_PRESSED=false
 VOLUME_DOWN_PRESSED=false
-VOLUME_REPEAT_PID=""
 
 ### Allow actions to be overridden in system.cfg
 FN_A_ACTION_UP="$(get_setting key.function.a.up)"
@@ -239,55 +235,23 @@ FN_AB_ACTION_DOWN="$(get_setting key.function.ab.down)"
 [ -z "${FN_AB_ACTION_UP}" ]   && FN_AB_ACTION_UP="wifictl enable"
 [ -z "${FN_AB_ACTION_DOWN}" ] && FN_AB_ACTION_DOWN="wifictl disable"
 
-### Level pill (archr-osd), or a mako notification when it is not running.
+### Level pill (archr-osd) showing the current level; archr-levels sends it.
 show_osd() {
-  local key=audio.volume label=Volume level
-  if [ "${1}" = brightness ]; then
-    key=display.brightness
-    label=Brightness
-  fi
-  level=$(get_setting "${key}")
-  archr-osd send "${1}" "${level}" 2>/dev/null || mako-notify "${label}: ${level}%"
+  archr-levels "${1}" osd >/dev/null 2>&1
 }
 
-### Volume repeat function
-start_volume_repeat() {
-    local direction=$1
-
-    # Stop any existing volume repeat
-    stop_volume_repeat
-
-    # Initial volume adjustment
-    volume ${direction}
-    show_osd volume
-
-    # Start background process for repeating volume adjustments
-    (
-        sleep ${VOLUME_REPEAT_DELAY}
-        while true; do
-            # Check if button is still pressed before adjusting
-            if { [ "${direction}" = "up" ] && [ "${VOLUME_UP_PRESSED}" = true ]; } || \
-               { [ "${direction}" = "down" ] && [ "${VOLUME_DOWN_PRESSED}" = true ]; }; then
-                volume ${direction}
-                show_osd volume
-                sleep ${VOLUME_REPEAT_INTERVAL}
-            else
-                break
-            fi
-        done
-    ) &
-
-    VOLUME_REPEAT_PID=$!
-    ${DEBUG} && log $0 "Started volume repeat (${direction}) with PID: ${VOLUME_REPEAT_PID}"
+### Volume and brightness while a button is held: archr-levels steps once
+### now, then keeps going, faster and faster, until the release.
+LEVEL_HOLD=false
+start_level_hold() {
+  archr-levels "${1}" hold "${2}" osd >/dev/null 2>&1
+  LEVEL_HOLD=true
 }
 
-stop_volume_repeat() {
-    if [ -n "${VOLUME_REPEAT_PID}" ]; then
-        kill ${VOLUME_REPEAT_PID} 2>/dev/null
-        wait ${VOLUME_REPEAT_PID} 2>/dev/null
-        ${DEBUG} && log $0 "Stopped volume repeat with PID: ${VOLUME_REPEAT_PID}"
-    fi
-    VOLUME_REPEAT_PID=""
+stop_level_hold() {
+  ${LEVEL_HOLD} || return 0
+  LEVEL_HOLD=false
+  archr-levels release >/dev/null 2>&1
 }
 
 ### Simple functions to execute button actions, including global kill.
@@ -516,7 +480,9 @@ set +e
           VOLUME_UP_PRESSED=true
           # Only start volume repeat if no function keys are pressed
           if [ "${FN_A_PRESSED}" = false ] && [ "${FN_B_PRESSED}" = false ]; then
-            start_volume_repeat up
+            start_level_hold volume up
+          elif [ "${FN_A_PRESSED}" = true ] && [ "${FN_B_PRESSED}" = false ] && [ "${FN_A_ACTION_UP}" = "brightness up" ]; then
+            start_level_hold brightness up
           else
             # If function keys are pressed, use the original behavior
             execute_action up
@@ -524,7 +490,7 @@ set +e
         elif [[ "${line}" =~ ${RELEASE} ]]; then
           ${DEBUG} && log $0 "Volume Up: Released"
           VOLUME_UP_PRESSED=false
-          stop_volume_repeat
+          stop_level_hold
         fi
       ;;
       (${FUNCTION_VOLUME_DOWN_EVENT})
@@ -533,7 +499,9 @@ set +e
           VOLUME_DOWN_PRESSED=true
           # Only start volume repeat if no function keys are pressed
           if [ "${FN_A_PRESSED}" = false ] && [ "${FN_B_PRESSED}" = false ]; then
-            start_volume_repeat down
+            start_level_hold volume down
+          elif [ "${FN_A_PRESSED}" = true ] && [ "${FN_B_PRESSED}" = false ] && [ "${FN_A_ACTION_DOWN}" = "brightness down" ]; then
+            start_level_hold brightness down
           else
             # If function keys are pressed, use the original behavior
             execute_action down
@@ -541,7 +509,7 @@ set +e
         elif [[ "${line}" =~ ${RELEASE} ]]; then
           ${DEBUG} && log $0 "Volume Down: Released"
           VOLUME_DOWN_PRESSED=false
-          stop_volume_repeat
+          stop_level_hold
         fi
       ;;
       (${FUNCTION_POWER_PRESSED_EVENT})
@@ -598,29 +566,25 @@ set +e
       (${FUNCTION_HOTKEY_DPAD_UP_EVENT}|${FUNCTION_HOTKEY_HAT_UP_EVENT})
         if [ "${FN_A_PRESSED}" = true ] && [ "${DPAD_EVENTS}" = true ] && ${HOTKEY_VOLUME_ENABLED}; then
           ${DEBUG} && log $0 "${FUNCTION_HOTKEY_DPAD_UP_EVENT}${FUNCTION_HOTKEY_HAT_UP_EVENT}: Volume Up"
-          volume up
-          show_osd volume
+          start_level_hold volume up
         fi
       ;;
       (${FUNCTION_HOTKEY_DPAD_DOWN_EVENT}|${FUNCTION_HOTKEY_HAT_DOWN_EVENT})
         if [ "${FN_A_PRESSED}" = true ] && [ "${DPAD_EVENTS}" = true ] && ${HOTKEY_VOLUME_ENABLED}; then
           ${DEBUG} && log $0 "${FUNCTION_HOTKEY_DPAD_DOWN_EVENT}${FUNCTION_HOTKEY_HAT_DOWN_EVENT}: Volume Down"
-          volume down
-          show_osd volume
+          start_level_hold volume down
         fi
       ;;
       (${FUNCTION_HOTKEY_DPAD_RIGHT_EVENT}|${FUNCTION_HOTKEY_HAT_RIGHT_EVENT})
         if [ "${FN_A_PRESSED}" = true ] && [ "${DPAD_EVENTS}" = true ] && ${HOTKEY_BRIGHTNESS_ENABLED}; then
           ${DEBUG} && log $0 "${FUNCTION_HOTKEY_DPAD_RIGHT_EVENT}${FUNCTION_HOTKEY_HAT_RIGHT_EVENT}: Brightness Up"
-          brightness up
-          show_osd brightness
+          start_level_hold brightness up
         fi
       ;;
       (${FUNCTION_HOTKEY_DPAD_LEFT_EVENT}|${FUNCTION_HOTKEY_HAT_LEFT_EVENT})
         if [ "${FN_A_PRESSED}" = true ] && [ "${DPAD_EVENTS}" = true ] && ${HOTKEY_BRIGHTNESS_ENABLED}; then
           ${DEBUG} && log $0 "${FUNCTION_HOTKEY_DPAD_LEFT_EVENT}${FUNCTION_HOTKEY_HAT_LEFT_EVENT}: Brightness Down"
-          brightness down
-          show_osd brightness
+          start_level_hold brightness down
         fi
       ;;
       (${FUNCTION_HOTKEY_TOUCH_EVENT})
@@ -655,6 +619,10 @@ set +e
          ${DEBUG} && log $0 "${FUNCTION_HOTKEY_BTN_NORTH_EVENT}: Opening Game Guide"
          /usr/bin/game-guides-tool
        fi
+     ;;
+     (*", value 0")
+       # A level held with the dpad stops when its button is released.
+       stop_level_hold
      ;;
   esac
 done
