@@ -1,0 +1,13 @@
+[Unit]
+Description=Volume and backlight levels
+RequiresMountsFor=/storage
+Before=input.service archr.target
+
+[Service]
+Environment=HOME=/storage XDG_RUNTIME_DIR=/var/run/0-runtime-dir
+ExecStart=/usr/bin/archr-levels
+Restart=always
+RestartSec=1
+
+[Install]
+WantedBy=multi-user.target
