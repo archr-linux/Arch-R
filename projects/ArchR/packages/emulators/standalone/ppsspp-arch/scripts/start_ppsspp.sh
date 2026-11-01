@@ -102,6 +102,24 @@ fi
 		sed -i '/^CPUSpeed =/c\CPUSpeed = 0' ${CONF_DIR}/${PPSSPP_INI}
 	fi
 
+#Select+Start quits, as in RetroArch and mupen64plus. PPSSPP has no such
+#default: without an "Exit App" mapping the pair did nothing. Built from the
+#pad's own Select and Start (first gamepad entry, device 10 or above), so it
+#follows each device's controls.ini; a mapping the user set is kept.
+#Same mapping as dArkOSRE-R36 (southoz/dArkOSRE-R36@a17bddecc6,
+#files/ROOTFS/opt/ppsspp/backupforromsfolder/ppsspp/PSP/SYSTEM/controls.ini).
+CONTROLS_INI="${CONF_DIR}/PSP/SYSTEM/controls.ini"
+pad_key() {
+  sed -n "s/^${1} = //p" "${CONTROLS_INI}" | tr ',' '\n' | grep -m1 -E '^1[0-9]-[0-9]+$'
+}
+if [ -f "${CONTROLS_INI}" ] && ! grep -q '^Exit App = ' "${CONTROLS_INI}"; then
+  EXIT_SELECT=$(pad_key Select)
+  EXIT_START=$(pad_key Start)
+  if [ -n "${EXIT_SELECT}" ] && [ -n "${EXIT_START}" ]; then
+    sed -i "/\[ControlMapping\]/a Exit App = ${EXIT_SELECT}:${EXIT_START}" "${CONTROLS_INI}"
+  fi
+fi
+
 #Retroachievements
 /usr/bin/cheevos_ppsspp.sh
 
