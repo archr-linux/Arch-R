@@ -29,11 +29,11 @@
 #   verdict: works, no_driver, firmware, not_bound
 #
 # ARCHR_USB_ROOT prefixes every runtime path (host tests); ARCHR_USB_DMESG
-# replaces the kernel log command.
+# replaces the kernel log command and ARCHR_USB_TABLE the build table.
 
 set -u
 ROOT="${ARCHR_USB_ROOT:-}"
-TABLE="${ROOT}/usr/share/archr/usb-advisor.tsv"
+TABLE="${ARCHR_USB_TABLE:-${ROOT}/usr/share/archr/usb-advisor.tsv}"
 ADVICE="${ROOT}/run/archr/usb-advice"
 SEEN="${ROOT}/storage/.config/archr/usb-seen"
 TAB=$'\t'
