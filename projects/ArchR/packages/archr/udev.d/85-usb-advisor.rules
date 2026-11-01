@@ -1,0 +1,8 @@
+# USB Wi-Fi/Bluetooth advisor: look again 3 s after a device comes or goes,
+# once usb_modeswitch and the driver probe are done, and tell the launcher
+# (/run/archr/usb-advice). The ID names the device just plugged.
+SUBSYSTEM!="usb", GOTO="usb_advisor_end"
+ENV{DEVTYPE}!="usb_device", GOTO="usb_advisor_end"
+ACTION=="add", RUN+="/usr/bin/systemd-run --no-block --collect --on-active=3 /usr/bin/archr-usb-advisor scan $attr{idVendor}:$attr{idProduct}"
+ACTION=="remove", RUN+="/usr/bin/systemd-run --no-block --collect --on-active=3 /usr/bin/archr-usb-advisor scan"
+LABEL="usb_advisor_end"

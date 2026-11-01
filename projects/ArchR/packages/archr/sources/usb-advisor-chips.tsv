@@ -1,0 +1,64 @@
+# Names of the common USB Wi-Fi and Bluetooth chips, for archr-usb-advisor.
+# Whether a chip works is never written here: the image build checks the
+# drivers and firmware it really ships (archr-usb-advisor gen).
+#
+#   mod  <module>     <name>  <kind>  <bands>  [<firmware folder>]
+#        name of every ID the module claims; a folder stands for the files
+#        a driver declares only as placeholders
+#   id   <vid:pid>    <name>  <kind>  <bands>   a name for one ID (wins over mod)
+#   chip <modules,..> <name>  <kind>  <bands>  [<firmware,..>]
+#        offered as "works in this image" when one of the modules is there
+#        with all the firmware it declares, or with the files listed here
+#        when the module declares many (btrtl covers every Realtek chip)
+# kind: wifi, bt or wifi+bt. bands: 2.4, 2.4+5 or bt. Fields are TAB-separated.
+mod	8188eu	Realtek RTL8188EUS	wifi	2.4
+mod	rtl8xxxu	Realtek RTL8188/8192/8723	wifi	2.4
+mod	rtl8192cu	Realtek RTL8192CU	wifi	2.4
+mod	rtl8192du	Realtek RTL8192DU	wifi	2.4+5
+mod	rtl8187	Realtek RTL8187	wifi	2.4
+mod	8812au	Realtek RTL8812AU	wifi	2.4+5
+mod	8821au	Realtek RTL8821AU	wifi	2.4+5
+mod	8814au	Realtek RTL8814AU	wifi	2.4+5
+mod	8821cu	Realtek RTL8821CU	wifi+bt	2.4+5
+mod	88x2bu	Realtek RTL8812BU / 8822BU	wifi	2.4+5
+mod	8733bu	Realtek RTL8733BU	wifi+bt	2.4+5
+mod	8851bu	Realtek RTL8851BU	wifi	2.4+5
+mod	8852au	Realtek RTL8852AU	wifi	2.4+5
+mod	8852bu	Realtek RTL8852BU	wifi	2.4+5
+mod	8852cu	Realtek RTL8852CU	wifi	2.4+5
+mod	mt7601u	MediaTek MT7601U	wifi	2.4
+mod	mt76x0u	MediaTek MT7610U	wifi	2.4+5
+mod	mt76x2u	MediaTek MT7612U	wifi	2.4+5
+mod	mt7663u	MediaTek MT7663U	wifi	2.4+5
+mod	mt7921u	MediaTek MT7921AU	wifi	2.4+5
+mod	rt2800usb	Ralink RT2870 / RT3070 / RT5370	wifi	2.4
+mod	rt73usb	Ralink RT73	wifi	2.4
+mod	rt2500usb	Ralink RT2500	wifi	2.4
+mod	ath9k_htc	Atheros AR9271	wifi	2.4
+mod	carl9170	Atheros AR9170	wifi	2.4+5
+mod	ar5523	Atheros AR5523	wifi	2.4+5
+mod	ath6kl_usb	Atheros AR6004	wifi	2.4+5
+mod	ath10k_usb	Qualcomm QCA9377	wifi	2.4+5
+mod	p54usb	Intersil Prism54	wifi	2.4
+mod	mwifiex_usb	Marvell 88W8797	wifi	2.4+5
+mod	libertas_tf_usb	Marvell Libertas 8388	wifi	2.4
+mod	usb8xxx	Marvell Libertas 8388	wifi	2.4
+mod	aic_load_fw_usb	AIC8800	wifi	2.4	aic8800DC
+mod	aic8800_fdrv_usb	AIC8800	wifi	2.4	aic8800DC
+mod	btusb	Bluetooth USB	bt	bt
+id	0bda:0179	Realtek RTL8188ETV	wifi	2.4
+id	0bda:f179	Realtek RTL8188FTV	wifi	2.4
+id	0bda:b733	Realtek RTL8733BU	wifi+bt	2.4+5
+id	0bda:8771	Realtek RTL8761B	bt	bt
+id	2550:8761	Realtek RTL8761BU	bt	bt
+id	0a12:0001	CSR8510	bt	bt
+id	1286:2041	Marvell 88W8766	wifi	2.4
+id	1286:2043	Marvell 88W8797	wifi	2.4+5
+id	1286:2049	Marvell 88W8801	wifi	2.4
+id	1286:204e	Marvell 88W8997	wifi	2.4+5
+id	2604:0013	AIC8800DC (Tenda AX300)	wifi	2.4
+chip	8821cu	RTL8821CU	wifi	2.4+5
+chip	88x2bu	RTL8812BU / 8822BU	wifi	2.4+5
+chip	rtl8xxxu,8188eu	RTL8188FTV / 8188EUS	wifi	2.4
+chip	mt7601u	MT7601U	wifi	2.4
+chip	btrtl	RTL8761B	bt	bt	rtl_bt/rtl8761b_fw.bin,rtl_bt/rtl8761b_config.bin

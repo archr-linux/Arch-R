@@ -1,0 +1,286 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2025-present ArchR (https://github.com/archr-linux/Arch-R)
+#
+# USB Wi-Fi and Bluetooth adapter advisor.
+#
+#   archr-usb-advisor gen <lib dir> <chips.tsv> <out.tsv> [date]
+#       Image build: the USB IDs the shipped modules claim (modules.alias
+#       under <lib dir>/modules/<version>), whether every firmware file
+#       they declare is in <lib dir>/firmware, and which chips of
+#       <chips.tsv> really work in this image.
+#   archr-usb-advisor scan [vid:pid]
+#       udev, 3 s after a USB device came or went: what is plugged now,
+#       which driver took it and whether its interface appeared, written
+#       to /run/archr/usb-advice for the launcher. <vid:pid> is the device
+#       that was just plugged; it is announced when this device was never
+#       seen here or now ends differently. Seen adapters are remembered in
+#       /storage/.config/archr/usb-seen (newest first, at most 10).
+#   archr-usb-advisor forget <vid:pid>
+#       Drop an adapter from the remembered list.
+#
+# Line formats (TAB-separated), read by the launcher:
+#   usb-advisor.tsv  date <yyyy-mm-dd>
+#                    dev  <id> <modules|-> <ok|missing files,..> <name> <kind> <bands>
+#                    chip <name> <kind> <bands>
+#   usb-advice       seq <n>, added <id>, then one dev line per adapter:
+#                    dev <id> <name> <kind> <bands> <modules|-> <bound|-> <iface|->
+#                        <missing firmware|-> <verdict>
+#   verdict: works, no_driver, firmware, not_bound
+#
+# ARCHR_USB_ROOT prefixes every runtime path (host tests); ARCHR_USB_DMESG
+# replaces the kernel log command.
+
+set -u
+ROOT="${ARCHR_USB_ROOT:-}"
+TABLE="${ROOT}/usr/share/archr/usb-advisor.tsv"
+ADVICE="${ROOT}/run/archr/usb-advice"
+SEEN="${ROOT}/storage/.config/archr/usb-seen"
+TAB=$'\t'
+
+die() { echo "archr-usb-advisor: $*" >&2; exit 1; }
+
+# Atomic replace: the launcher never reads a half-written file.
+publish() {
+  local target="$1" tmp
+  mkdir -p "${target%/*}" || return 1
+  tmp=$(mktemp "${target}.XXXXXX") || return 1
+  cat >"${tmp}" && chmod 644 "${tmp}" && mv -f "${tmp}" "${target}"
+}
+
+gen() {
+  local lib="$1" chips="$2" out="$3" day="${4:-$(date +%F)}"
+  local moddir modinfo
+  moddir=$(find "${lib}/modules" -mindepth 1 -maxdepth 1 -type d | head -n1)
+  [ -f "${moddir}/modules.alias" ] || die "no modules.alias under ${lib}/modules"
+  modinfo=$(command -v modinfo || echo /sbin/modinfo)
+  declare -A mod_name mod_kind mod_bands mod_folder id_name id_kind id_bands fw_state
+  local tag key name kind bands extra
+  while IFS="${TAB}" read -r tag key name kind bands extra; do
+    case "${tag}" in
+      mod)
+        mod_name[${key}]="${name}" mod_kind[${key}]="${kind}" mod_bands[${key}]="${bands}"
+        mod_folder[${key}]="${extra}"
+        ;;
+      id) id_name[${key}]="${name}" id_kind[${key}]="${kind}" id_bands[${key}]="${bands}" ;;
+    esac
+  done <"${chips}"
+
+  # Firmware of every named module that ships: "ok" when it declares none
+  # or at least one of its files is here (drivers declare every variant
+  # they know; one chip needs a few). A bare name may sit in a vendor
+  # folder; a folder named in the chips table stands for the whole list.
+  local ko file missing module found
+  for module in "${!mod_name[@]}"; do
+    ko=$(find "${moddir}" -name "${module}.ko*" | head -n1)
+    [ -n "${ko}" ] || continue
+    # Drivers that name placeholders and load from their own folder.
+    if [ -n "${mod_folder[${module}]}" ]; then
+      [ -n "$(ls -A "${lib}/firmware/${mod_folder[${module}]}" 2>/dev/null)" ] &&
+        fw_state[${module}]=ok || fw_state[${module}]="${mod_folder[${module}]}/"
+      continue
+    fi
+    missing="" found=0
+    for file in $("${modinfo}" -F firmware "${ko}" 2>/dev/null); do
+      if [ -e "${lib}/firmware/${file}" ] || [ -e "${lib}/firmware/${file}.xz" ] ||
+        [ -e "${lib}/firmware/${file}.zst" ] ||
+        { [ "${file}" = "${file##*/}" ] && [ -n "$(find "${lib}/firmware" -name "${file}" | head -n1)" ]; }; then
+        found=1
+      else
+        missing="${missing:+${missing},}${file}"
+      fi
+    done
+    [ "${found}" = 1 ] && missing=""
+    fw_state[${module}]="${missing:-ok}"
+  done
+  # btrtl and btintel declare firmware without claiming IDs (btusb does).
+  for module in btrtl btintel btbcm btmtk; do
+    ko=$(find "${moddir}" -name "${module}.ko*" | head -n1)
+    [ -n "${ko}" ] && [ -z "${fw_state[${module}]+x}" ] && fw_state[${module}]=declared
+  done
+
+  {
+    printf 'date\t%s\n' "${day}"
+    # usb:v0BDAp0179d*... <module>: specific IDs only; btusb's class match
+    # is judged at run time by the interface it creates.
+    declare -A modules_of
+    local alias id module
+    while read -r _ alias module; do
+      [[ ${alias} =~ ^usb:v([0-9A-F]{4})p([0-9A-F]{4}) ]] || continue
+      [ -n "${mod_name[${module}]+x}" ] || continue
+      id="${BASH_REMATCH[1],,}:${BASH_REMATCH[2],,}"
+      case ",${modules_of[${id}]:-}," in *",${module},"*) continue ;; esac
+      modules_of[${id}]="${modules_of[${id}]:+${modules_of[${id}]},}${module}"
+    done < <(grep '^alias usb:v[0-9A-F]' "${moddir}/modules.alias")
+    for id in "${!id_name[@]}"; do
+      [ -n "${modules_of[${id}]+x}" ] || modules_of[${id}]="-"
+    done
+    local modules missing first
+    for id in $(printf '%s\n' "${!modules_of[@]}" | sort); do
+      modules="${modules_of[${id}]}"
+      missing=""
+      first="${modules%%,*}"
+      if [ "${modules}" != "-" ]; then
+        # One module with its firmware is enough.
+        for module in ${modules//,/ }; do
+          if [ "${fw_state[${module}]:-ok}" = ok ]; then
+            missing=""
+            break
+          fi
+          missing="${missing:+${missing},}${fw_state[${module}]}"
+        done
+      fi
+      if [ -n "${id_name[${id}]+x}" ]; then
+        name="${id_name[${id}]}" kind="${id_kind[${id}]}" bands="${id_bands[${id}]}"
+      else
+        name="${mod_name[${first}]}" kind="${mod_kind[${first}]}" bands="${mod_bands[${first}]}"
+      fi
+      [ "${modules}" = "-" ] && missing="-"
+      printf 'dev\t%s\t%s\t%s\t%s\t%s\t%s\n' "${id}" "${modules}" "${missing:-ok}" \
+        "${name}" "${kind}" "${bands}"
+    done
+    # Chips that work: a module that is there, with its firmware.
+    local files ok
+    while IFS="${TAB}" read -r tag key name kind bands files; do
+      [ "${tag}" = chip ] || continue
+      ok=0
+      for module in ${key//,/ }; do
+        [ -n "${fw_state[${module}]+x}" ] || continue
+        if [ -n "${files}" ]; then
+          ok=1
+          for file in ${files//,/ }; do [ -e "${lib}/firmware/${file}" ] || ok=0; done
+        elif [ "${fw_state[${module}]}" = ok ]; then
+          ok=1
+        fi
+        [ "${ok}" = 1 ] && break
+      done
+      [ "${ok}" = 1 ] && printf 'chip\t%s\t%s\t%s\n' "${name}" "${kind}" "${bands}"
+    done <"${chips}"
+  } | publish "${out}"
+}
+
+# The table line of an ID: modules, firmware, name, kind, bands.
+table_line() {
+  [ -f "${TABLE}" ] || return 1
+  awk -F'\t' -v id="$1" '$1 == "dev" && $2 == id { print; exit }' "${TABLE}"
+}
+
+# One line per adapter plugged now.
+adapters() {
+  local dev id vendor product classes iface bound line modules fw name kind bands
+  local missing verdict sys path
+  for dev in "${ROOT}"/sys/bus/usb/devices/*; do
+    [ -f "${dev}/idVendor" ] || continue
+    case "${dev##*/}" in usb*) continue ;; esac
+    vendor=$(cat "${dev}/idVendor") product=$(cat "${dev}/idProduct")
+    id="${vendor,,}:${product,,}"
+    classes="" bound=""
+    for iface in "${dev}"/"${dev##*/}":*; do
+      [ -f "${iface}/bInterfaceClass" ] || continue
+      classes="${classes} $(cat "${iface}/bInterfaceClass")"
+      if [ -L "${iface}/driver" ]; then
+        local driver
+        driver=$(basename "$(readlink "${iface}/driver")")
+        case ",${bound}," in *",${driver},"*) ;; *) bound="${bound:+${bound},}${driver}" ;; esac
+      fi
+    done
+    line=$(table_line "${id}")
+    name=$(cat "${dev}/product" 2>/dev/null)
+    if [ -n "${line}" ]; then
+      IFS="${TAB}" read -r _ _ modules fw name kind bands <<<"${line}"
+    else
+      # Not in the table: an adapter only by its class (E0 wireless
+      # controller), or by an unclaimed vendor interface whose product
+      # name says so. Pads, storage and sound never get here.
+      modules="-" fw="-"
+      case " ${classes} " in
+        *" e0 "*) kind=bt bands=bt ;;
+        *" ff "*)
+          [ -z "${bound}" ] || continue
+          shopt -s nocasematch
+          [[ ${name} =~ (wlan|wireless|802\.11|wi-?fi|bluetooth) ]] || { shopt -u nocasematch; continue; }
+          [[ ${name} =~ bluetooth ]] && kind=bt bands=bt || kind=wifi bands=-
+          shopt -u nocasematch
+          ;;
+        *) continue ;;
+      esac
+      name="${name:-${id}}"
+    fi
+    # The interface the driver created, net or Bluetooth.
+    iface=""
+    path=$(readlink -f "${dev}")
+    for sys in "${ROOT}"/sys/class/net/* "${ROOT}"/sys/class/bluetooth/hci*; do
+      [ -e "${sys}/device" ] || continue
+      case "$(readlink -f "${sys}/device")/" in
+        "${path}"/*) iface="${iface:+${iface},}${sys##*/}" ;;
+      esac
+    done
+    # Firmware the table knows is missing, and what the kernel failed to load
+    # for this device's interfaces.
+    missing=""
+    [ "${fw}" != ok ] && [ "${fw}" != "-" ] && missing="${fw}"
+    if [ -z "${iface}" ]; then
+      local failed
+      failed=$(${ARCHR_USB_DMESG:-dmesg} 2>/dev/null |
+        sed -nE "s/.* ${dev##*/}(:[^ ]*)?: Direct firmware load for ([^ ]*) failed.*/\2/p" |
+        sort -u | paste -sd, -)
+      [ -n "${failed}" ] && missing="${failed}"
+    fi
+    if [ -n "${iface}" ]; then
+      verdict=works missing=""
+    elif [ "${modules}" = "-" ] && [ -z "${bound}" ]; then
+      verdict=no_driver
+    elif [ -n "${missing}" ]; then
+      verdict=firmware
+    else
+      verdict=not_bound
+    fi
+    printf 'dev\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "${id}" "${name}" "${kind}" \
+      "${bands}" "${modules}" "${bound:--}" "${iface:--}" "${missing:--}" "${verdict}"
+  done
+}
+
+scan() {
+  local plugged="${1:-}" now previous seq added=""
+  now=$(adapters)
+  seq=$(awk -F'\t' '$1 == "seq" { print $2 + 1; exit }' "${ADVICE}" 2>/dev/null)
+  # Announce the device just plugged when it was never seen or its verdict
+  # changed: a known dongle at every boot stays quiet.
+  if [ -n "${plugged}" ]; then
+    local line verdict
+    line=$(awk -F'\t' -v id="${plugged}" '$1 == "dev" && $2 == id' <<<"${now}" | head -n1)
+    if [ -n "${line}" ]; then
+      verdict=${line##*"${TAB}"}
+      previous=$(awk -F'\t' -v id="${plugged}" '$1 == "dev" && $2 == id { print $NF; exit }' \
+        "${SEEN}" 2>/dev/null)
+      [ "${previous}" != "${verdict}" ] && added="${plugged}"
+    fi
+  fi
+  {
+    printf 'seq\t%s\n' "${seq:-1}"
+    [ -n "${added}" ] && printf 'added\t%s\n' "${added}"
+    [ -n "${now}" ] && printf '%s\n' "${now}"
+  } | publish "${ADVICE}"
+  # Remember what is plugged, newest first, without repeats.
+  if [ -n "${now}" ]; then
+    {
+      printf '%s\n' "${now}"
+      [ -f "${SEEN}" ] && awk -F'\t' 'NR == FNR { here[$2] = 1; next } !($2 in here)' \
+        <(printf '%s\n' "${now}") "${SEEN}"
+    } | head -n 10 | publish "${SEEN}"
+  fi
+}
+
+forget() {
+  local id="$1"
+  [[ ${id} =~ ^[0-9a-f]{4}:[0-9a-f]{4}$ ]] || die "bad id: ${id}"
+  [ -f "${SEEN}" ] || return 0
+  awk -F'\t' -v id="${id}" '$2 != id' "${SEEN}" | publish "${SEEN}"
+}
+
+case "${1:-}" in
+  gen) [ $# -ge 4 ] || die "gen <lib dir> <chips.tsv> <out.tsv> [date]"; gen "$2" "$3" "$4" "${5:-}" ;;
+  scan) scan "${2:-}" ;;
+  forget) [ $# -eq 2 ] || die "forget <vid:pid>"; forget "$2" ;;
+  *) die "usage: gen | scan [vid:pid] | forget <vid:pid>" ;;
+esac

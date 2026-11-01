@@ -44,6 +44,8 @@ makeinstall_target() {
   fi
   ### Vertical arcade games, for vertical-check.
   install -Dm644 ${PKG_DIR}/sources/arcaderoms.xml ${INSTALL}/usr/share/archr/arcaderoms.xml
+  ### Chip names for archr-usb-advisor; the image build adds usb-advisor.tsv.
+  install -Dm644 ${PKG_DIR}/sources/usb-advisor-chips.tsv ${INSTALL}/usr/share/archr/usb-advisor-chips.tsv
   ln -sf /storage/.config/system ${INSTALL}/system
   find ${INSTALL}/usr/config/system/ -type f -exec chmod o+x {} \;
 
