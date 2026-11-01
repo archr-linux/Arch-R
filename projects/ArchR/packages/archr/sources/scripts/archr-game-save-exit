@@ -42,7 +42,7 @@
 : "${SAVING:=/run/archr/saving}"
 : "${STATES_DIR:=/storage/roms/savestates}"
 : "${MUPEN_STATES:=/storage/roms/n64}"
-: "${PPSSPP_STATES:=/storage/.config/ppsspp/PSP/PPSSPP_STATE}"
+: "${PPSSPP_STATES:=/storage/roms/savestates/psp/ppsspp-sa}"
 : "${FLYCAST_STATES:=/storage/.local/share/flycast /storage/.config/flycast}"
 : "${KEYPRESS:=/usr/bin/archr-keypress}"
 : "${GRIM:=grim}"
