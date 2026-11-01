@@ -243,9 +243,21 @@ show_osd() {
 ### Volume and brightness while a button is held: archr-levels steps once
 ### now, then keeps going, faster and faster, until the release.
 LEVEL_HOLD=false
+LEVEL_RENEWED=0
 start_level_hold() {
   archr-levels "${1}" hold "${2}" osd >/dev/null 2>&1
   LEVEL_HOLD=true
+}
+
+# A hold that hears nothing stops by itself (a lost release cannot run the
+# level to the end); key repeats say the button is still down, at most
+# every 200 ms.
+renew_level_hold() {
+  ${LEVEL_HOLD} || return 0
+  local NOW=${EPOCHREALTIME/[.,]/}
+  (( NOW - LEVEL_RENEWED < 200000 )) && return 0
+  LEVEL_RENEWED=${NOW}
+  archr-levels renew >/dev/null 2>&1
 }
 
 stop_level_hold() {
@@ -253,6 +265,9 @@ stop_level_hold() {
   LEVEL_HOLD=false
   archr-levels release >/dev/null 2>&1
 }
+
+# A hold left by a previous run, whose release never came, ends now.
+archr-levels release >/dev/null 2>&1
 
 ### Simple functions to execute button actions, including global kill.
 execute_kill() {
@@ -491,6 +506,8 @@ set +e
           ${DEBUG} && log $0 "Volume Up: Released"
           VOLUME_UP_PRESSED=false
           stop_level_hold
+        elif [[ "${line}" =~ ${REPEAT} ]]; then
+          renew_level_hold
         fi
       ;;
       (${FUNCTION_VOLUME_DOWN_EVENT})
@@ -510,6 +527,8 @@ set +e
           ${DEBUG} && log $0 "Volume Down: Released"
           VOLUME_DOWN_PRESSED=false
           stop_level_hold
+        elif [[ "${line}" =~ ${REPEAT} ]]; then
+          renew_level_hold
         fi
       ;;
       (${FUNCTION_POWER_PRESSED_EVENT})

@@ -120,6 +120,11 @@ printf '#!/bin/sh\necho "$*" >>"%s/calls"\n' "${TMP}" >"${TMP}/bin/archr-levels"
 chmod +x "${TMP}/bin/archr-levels"
 VOLUP="Event: time 1.0, type 1 (EV_KEY), code 115 (KEY_VOLUMEUP), value"
 events "0.5 ${VOLUP} 1" "0.3 ${VOLUP} 0" "0.2 ${PRESS}" "0.1 ${PRESS%1}0"
-check "a held volume button" "$(run 2)" "volume hold up osd release"
+check "a held volume button" "$(run 2)" "release volume hold up osd release"
+# Key repeats renew the hold, at most every 200 ms (a lost release then
+# stops it in the daemon).
+events "0.5 ${VOLUP} 1" "0.05 ${VOLUP} 2" "0.05 ${VOLUP} 2" "0.05 ${VOLUP} 2" \
+  "0.15 ${VOLUP} 2" "0.05 ${VOLUP} 2" "0.15 ${VOLUP} 2" "0.1 ${VOLUP} 0"
+check "repeats renew the hold" "$(run 2.5)" "release volume hold up osd renew renew renew release"
 
 exit ${FAILED}

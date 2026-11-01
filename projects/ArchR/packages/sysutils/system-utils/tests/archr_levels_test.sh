@@ -143,6 +143,31 @@ check "pill shows the last level" "$(tail -n1 "${TMP}/osd")" "volume ${HELD}"
 sleep 2
 check "hold saved once" "$(saves)" "audio.volume=${HELD}"
 
+# A release can be lost (input_sense restarting): a hold that hears
+# nothing stops after 2 s, short of the top; renewals (key repeats) keep it
+# going and it stops 400 ms after the last one.
+${L} volume 0 >/dev/null
+${L} volume hold up >/dev/null
+sleep 2.3
+LOST=$(${L} volume)
+sleep 0.6
+check "lost release: stopped" "$(${L} volume)" "${LOST}"
+if [ "${LOST}" -ge 95 ]; then
+  echo "FAIL: a hold without release reached ${LOST}"
+  FAILED=1
+fi
+${L} volume 0 >/dev/null
+${L} volume hold up >/dev/null
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do sleep 0.2; ${L} renew; done
+check "renewed past the cap" "$(${L} volume)" 100
+${L} volume 0 >/dev/null
+${L} volume hold up >/dev/null
+for _ in 1 2 3 4; do sleep 0.2; ${L} renew; done
+sleep 0.5
+STOPPED=$(${L} volume)
+sleep 0.5
+check "stops 400 ms after the last renewal" "$(${L} volume)" "${STOPPED}"
+
 # A hold stops at the end of the range by itself.
 ${L} brightness 96 >/dev/null
 ${L} brightness hold up >/dev/null

@@ -9,7 +9,12 @@
 //   archr-levels KIND restore             apply the level again
 //   archr-levels KIND hold up|down [osd]  a tap step now, then faster and
 //                                         faster until "release"
+//   archr-levels renew                    the button is still down
 //   archr-levels release
+//
+// A hold that hears nothing stops by itself (a release can be lost when
+// input_sense restarts): after HOLD_CAP_MS, or RENEW_MS after the last
+// "renew" (key repeats renew it, so a held key can go on).
 //
 // KIND is volume, brightness (first backlight) or brightnessN (the Nth).
 // A level is what the user sees: volume follows a decibel scale and the
@@ -46,7 +51,8 @@ enum {
 	TAP = 2,
 	HOLD_DELAY_MS = 350,
 	TICK_MS = 40,
-	HOLD_MAX_MS = 8000,
+	HOLD_CAP_MS = 2000,
+	RENEW_MS = 400,
 	SETTLE_MS = 1500,
 	SCREENS = 9,
 	BRIGHTNESS_MIN = 5,
@@ -66,7 +72,7 @@ static int savers; /* writes to system.cfg still running */
 static struct {
 	struct level *level;
 	int dir, show;
-	long start, next;
+	long start, next, deadline;
 } hold;
 
 static const char *env_or(const char *name, const char *fallback)
@@ -378,6 +384,10 @@ static int command(char *text)
 		hold.level = NULL;
 		return 0;
 	}
+	if (n == 1 && !strcmp(word[0], "renew")) {
+		hold.deadline = now_ms() + RENEW_MS;
+		return 0;
+	}
 	struct level *l = n ? find(word[0]) : NULL;
 	if (!l)
 		return -1;
@@ -399,7 +409,7 @@ static int command(char *text)
 		apply(l, l->value + dir * TAP, show);
 		long now = now_ms();
 		hold.level = l, hold.dir = dir, hold.show = show;
-		hold.start = now, hold.next = now + HOLD_DELAY_MS;
+		hold.start = now, hold.next = now + HOLD_DELAY_MS, hold.deadline = now + HOLD_CAP_MS;
 		return l->value;
 	}
 	if (n != 2)
@@ -422,8 +432,12 @@ static void hold_tick(long now)
 	struct level *l = hold.level;
 	long held = now - hold.start;
 	int before = l->value;
+	if (now >= hold.deadline) {
+		hold.level = NULL;
+		return;
+	}
 	apply(l, before + hold.dir * (held < 950 ? 1 : held < 1550 ? 2 : 3), hold.show);
-	if (l->value == before || held > HOLD_MAX_MS)
+	if (l->value == before)
 		hold.level = NULL;
 	else
 		hold.next += TICK_MS;
@@ -566,10 +580,10 @@ int main(int argc, char **argv)
 		return 1;
 	}
 	if (!strcmp(reply, "error")) {
-		fprintf(stderr, "usage: archr-levels [volume|brightness[N] [N|+N|-N|restore|hold up|down] [osd] | release]\n");
+		fprintf(stderr, "usage: archr-levels [volume|brightness[N] [N|+N|-N|restore|hold up|down] [osd] | renew | release]\n");
 		return 1;
 	}
-	if (strcmp(argv[1], "release"))
+	if (strcmp(argv[1], "release") && strcmp(argv[1], "renew"))
 		puts(reply);
 	return 0;
 }
