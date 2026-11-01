@@ -1077,6 +1077,22 @@ EOF
             sed -i '/melonds_show_cursor = /c\melonds_show_cursor = "disabled"' "${MELONDSDSDIR}/melonDS DS.opt"
             sed -i '/melonds_touch_mode = /c\melonds_touch_mode = "touch"' "${MELONDSDSDIR}/melonDS DS.opt"
         fi
+
+        # The layouts R2 ("Next Layout", also the ArchR DS layout hotkey)
+        # steps through, the same cycle as DraStic: side by side, one large
+        # and one small, top only, bottom only, side by side swapped. Only
+        # when unset, so a cycle chosen in RetroArch's menu stays.
+        if ! grep -q '^melonds_number_of_screen_layouts = ' "${MELONDSDSDIR}/melonDS DS.opt"
+        then
+            cat <<EOF >>"${MELONDSDSDIR}/melonDS DS.opt"
+melonds_number_of_screen_layouts = "5"
+melonds_screen_layout1 = "left-right"
+melonds_screen_layout2 = "hybrid-top"
+melonds_screen_layout3 = "top"
+melonds_screen_layout4 = "bottom"
+melonds_screen_layout5 = "right-left"
+EOF
+        fi
     fi
 }
 
