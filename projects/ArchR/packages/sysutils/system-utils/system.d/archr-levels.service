@@ -1,9 +1,12 @@
 [Unit]
 Description=Volume and backlight levels
 RequiresMountsFor=/storage
+# system.cfg exists (and is converted once) before any level is read.
+After=userconfig.service
 Before=input.service archr.target
 
 [Service]
+Type=notify
 Environment=HOME=/storage XDG_RUNTIME_DIR=/var/run/0-runtime-dir
 ExecStart=/usr/bin/archr-levels
 Restart=always

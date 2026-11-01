@@ -16,7 +16,8 @@
 // backlight a 2.2 gamma above a legible minimum, so every step feels the
 // same size. The daemon keeps one PulseAudio connection (a step costs one
 // round trip, not a process) and writes system.cfg once a level settles.
-// Without the daemon a command applies and saves on its own.
+// Commands only talk to the daemon (systemd restarts it): without it they
+// fail with a clear message instead of racing it for system.cfg.
 //
 // Hold speed, shared with the launcher's sliders: TAP on the press, then
 // after HOLD_DELAY_MS 25 %/s, 50 %/s past 950 ms and 75 %/s past 1550 ms.
@@ -24,8 +25,8 @@
 #include <dirent.h>
 #include <dlfcn.h>
 #include <errno.h>
-#include <fcntl.h>
 #include <limits.h>
+#include <stddef.h>
 #include <math.h>
 #include <poll.h>
 #include <pulse/pulseaudio.h>
@@ -34,7 +35,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/file.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
@@ -242,18 +242,6 @@ static void set_volume(int level)
 	dl_pa_threaded_mainloop_unlock(ml);
 }
 
-/* One-shot mode: wait (at most 3 s) for the level to reach the server. */
-static void flush_volume(void)
-{
-	for (long end = now_ms() + 3000; ml && now_ms() < end; usleep(2000)) {
-		dl_pa_threaded_mainloop_lock(ml);
-		int pending = ctx && PA_CONTEXT_IS_GOOD(dl_pa_context_get_state(ctx)) && (queued || busy);
-		dl_pa_threaded_mainloop_unlock(ml);
-		if (!pending)
-			break;
-	}
-}
-
 /* ---- backlight ---- */
 
 static int visible(const struct dirent *e)
@@ -340,16 +328,10 @@ static void save(struct level *l, int wait)
 }
 
 /* Levels saved before these curves (a linear backlight, PulseAudio's cubic
- * volume percent) are converted once, so screen and sound stay as they were.
- * Daemon and one-shot commands may start together at boot: one converts. */
+ * volume percent) are converted once, so screen and sound stay as they were. */
 static void migrate(void)
 {
-	char path[PATH_MAX];
-	snprintf(path, sizeof path, "%s.lock", socket_path());
-	int fd = open(path, O_RDWR | O_CREAT | O_CLOEXEC, 0600);
 	long old;
-	if (fd >= 0)
-		flock(fd, LOCK_EX);
 	if (!cfg_get("levels.perceptual", &old)) {
 		static const char *kinds[] = { "volume", "brightness", "brightness2", "brightness3", "brightness4",
 					       "brightness5", "brightness6", "brightness7", "brightness8", "brightness9" };
@@ -367,8 +349,6 @@ static void migrate(void)
 		}
 		store("levels.perceptual", 1, 1);
 	}
-	if (fd >= 0)
-		close(fd);
 }
 
 /* ---- commands ---- */
@@ -385,7 +365,7 @@ static void apply(struct level *l, long value, int show)
 }
 
 /* Returns the level after the command, or -1 when it is malformed. */
-static int command(char *text, int serving)
+static int command(char *text)
 {
 	char *word[5], *save_ptr;
 	int n = 0;
@@ -417,11 +397,9 @@ static int command(char *text, int serving)
 		if (!dir)
 			return -1;
 		apply(l, l->value + dir * TAP, show);
-		if (serving) {
-			long now = now_ms();
-			hold.level = l, hold.dir = dir, hold.show = show;
-			hold.start = now, hold.next = now + HOLD_DELAY_MS;
-		}
+		long now = now_ms();
+		hold.level = l, hold.dir = dir, hold.show = show;
+		hold.start = now, hold.next = now + HOLD_DELAY_MS;
 		return l->value;
 	}
 	if (n != 2)
@@ -465,6 +443,24 @@ static void stop(int sig)
 	stopping = 1;
 }
 
+/* Type=notify: units ordered after this one find the socket answering. */
+static void ready_for_systemd(void)
+{
+	const char *path = getenv("NOTIFY_SOCKET");
+	struct sockaddr_un to = { .sun_family = AF_UNIX };
+	if (!path || !*path || strlen(path) >= sizeof to.sun_path)
+		return;
+	memcpy(to.sun_path, path, strlen(path));
+	if (to.sun_path[0] == '@')
+		to.sun_path[0] = 0;
+	int fd = socket(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+	if (fd >= 0) {
+		sendto(fd, "READY=1", 7, 0, (struct sockaddr *)&to,
+		       offsetof(struct sockaddr_un, sun_path) + strlen(path));
+		close(fd);
+	}
+}
+
 static int serve(void)
 {
 	struct sockaddr_un a;
@@ -482,6 +478,7 @@ static int serve(void)
 		return 1;
 	}
 	migrate();
+	ready_for_systemd();
 	struct sigaction sa = { .sa_handler = stop };
 	sigaction(SIGTERM, &sa, NULL);
 	sigaction(SIGINT, &sa, NULL);
@@ -504,7 +501,7 @@ static int serve(void)
 			ssize_t n = recvfrom(fd, text, sizeof text - 1, 0, (struct sockaddr *)&from, &from_len);
 			if (n >= 0) {
 				text[n] = 0;
-				int level = command(text, 1);
+				int level = command(text);
 				char reply[16];
 				int r = level < 0 ? snprintf(reply, sizeof reply, "error") : snprintf(reply, sizeof reply, "%d", level);
 				if (from_len > sizeof(sa_family_t))
@@ -529,7 +526,7 @@ static int serve(void)
 	return 0;
 }
 
-/* Asks the daemon: 0 answered, -1 no daemon, -2 no answer. */
+/* Asks the daemon: 0 answered, -1 not running, -2 no answer. */
 static int ask(const char *text, char *reply, size_t size)
 {
 	struct sockaddr_un a, self = { .sun_family = AF_UNIX };
@@ -563,21 +560,10 @@ int main(int argc, char **argv)
 		if (snprintf(text + strlen(text), sizeof text - strlen(text), "%s%s", i > 1 ? " " : "", argv[i]) < 0)
 			return 1;
 	int asked = ask(text, reply, sizeof reply);
-	if (asked == -2) {
-		fprintf(stderr, "archr-levels: no answer from %s\n", socket_path());
+	if (asked < 0) {
+		fprintf(stderr, "archr-levels: %s %s (archr-levels.service)\n",
+			asked == -1 ? "the daemon is not running on" : "no answer from", socket_path());
 		return 1;
-	}
-	if (asked == -1) {
-		migrate();
-		int level = command(text, 0);
-		if (level < 0) {
-			snprintf(reply, sizeof reply, "error");
-		} else {
-			flush_volume();
-			for (int i = 0; i <= SCREENS; i++)
-				save(&levels[i], 1);
-			snprintf(reply, sizeof reply, "%d", level);
-		}
 	}
 	if (!strcmp(reply, "error")) {
 		fprintf(stderr, "usage: archr-levels [volume|brightness[N] [N|+N|-N|restore|hold up|down] [osd] | release]\n");
