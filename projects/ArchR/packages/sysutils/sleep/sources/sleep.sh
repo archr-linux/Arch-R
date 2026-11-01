@@ -163,18 +163,14 @@ case $1 in
       [ -e /run/usbgadget/wifi-held ] && nohup wifictl disable >${EVENTLOG} 2>&1
     fi
 
-    DEVICE_VOLUME=$(get_setting "audio.volume" 2>/dev/null)
-    log $0 "Restoring volume to ${DEVICE_VOLUME}%."
-    amixer -c 0 -M set "${DEVICE_AUDIO_MIXER}" ${DEVICE_VOLUME}% >${EVENTLOG} 2>&1
-
-    BRIGHTNESS=$(get_setting display.brightness)
-    log $0 "Restoring brightness}."
-    brightness set ${BRIGHTNESS} >${EVENTLOG} 2>&1
-
-    BRIGHTNESS_2=$(get_setting display.brightness2)
-    if [ -n "${BRIGHTNESS_2}" ]; then
-        log $0 "Restoring brightness for display 2 to ${BRIGHTNESS_2}."
-        brightness set 2 ${BRIGHTNESS_2} >${EVENTLOG} 2>&1
+    # archr-levels holds the levels (a step may not be saved yet): re-apply
+    # them. The PipeWire sink carries the volume; the codec stays as stored.
+    log $0 "Restoring volume and brightness."
+    archr-levels volume restore >${EVENTLOG} 2>&1
+    archr-levels brightness restore >${EVENTLOG} 2>&1
+    BACKLIGHTS=(/sys/class/backlight/*)
+    if [ "${#BACKLIGHTS[@]}" -gt 1 ]; then
+        archr-levels brightness2 restore >${EVENTLOG} 2>&1
     fi
 
     quirks post

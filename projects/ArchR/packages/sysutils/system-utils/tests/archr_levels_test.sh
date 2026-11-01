@@ -58,7 +58,7 @@ check() {
   fi
 }
 raw() { cat "${TMP}/backlight/panel/brightness"; }
-saves() { cat "${TMP}/saves" 2>/dev/null; }
+saves() { sort "${TMP}/saves" 2>/dev/null; }
 
 start() {
   "${L}" &
@@ -94,6 +94,8 @@ start
 check "migrated brightness" "$(${L} brightness)" 73
 check "migrated volume" "$(${L} volume)" 52
 check "migration saves" "$(saves)" "$(printf 'audio.volume=52\ndisplay.brightness=73\nlevels.perceptual=1')"
+# The boot scripts only ask for a restore: the screen stays where 50 % was.
+check "restore keeps the converted level" "$(${L} brightness restore; raw)" "$(printf '73\n129')"
 stop
 start
 check "converted once" "$(${L} brightness)" 73

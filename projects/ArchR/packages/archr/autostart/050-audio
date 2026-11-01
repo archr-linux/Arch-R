@@ -29,15 +29,6 @@ then
   amixer -c ${ALSA_PRIMARY_CARD:-0} cset name="${DEVICE_PLAYBACK_PATH}" ${DEVICE_PLAYBACK_PATH_SPK} 2>/dev/null
 fi
 
-VOLUME=$(get_setting audio.volume)
-if [ -z "${VOLUME}" ]
-then
-  # Device default only when the user has no saved volume yet. This used to
-  # be an elif that overrode the saved value on every boot for any device
-  # defining DEVICE_VOLUME (RG351M/CHI/OGA always came up at 100%).
-  VOLUME="${DEVICE_VOLUME:-60}"
-fi
-
 ### Set the primary card volume to 100%
 ### to eliminate low audio on some devices.
  amixer -c ${ALSA_PRIMARY_CARD:-0} -q sset "Master" 100%
@@ -53,7 +44,9 @@ do
   [ -n "${SINK}" ] && [ "${SINK}" != "auto_null" ] && break
   sleep 0.5
 done
-/usr/bin/volume ${VOLUME}
+# archr-levels holds the saved level (converted once from the old scale):
+# re-apply it, never a value read from system.cfg here.
+archr-levels volume restore >/dev/null
 
 ### Run quantum audio hack if exists
 # Original used [ -n "/usr/sbin/quantum" ] which tests if a non-empty
