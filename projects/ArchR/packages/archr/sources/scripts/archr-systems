@@ -3,6 +3,8 @@
 from __future__ import print_function
 
 from hashlib import md5
+import json
+import os
 from os.path import isfile
 from collections import OrderedDict
 import sys
@@ -949,6 +951,130 @@ def createReadme(systems):
             print("{} {}".format(bios["md5"], bios["file"]))
         print("")
 
+# ---------- Settings > Games > BIOS (archr-launcher) ---------- #
+# One entry per catalog system the page can show: the archr-systems key
+# whose files it lists (all of them, or the named ones), the emulators to
+# name, whether a core already carries a free BIOS ("builtin"), whether
+# the system boots without any file, and the free BIOS archr-bios-livres
+# can install. Only free BIOS are ever installed; the rest is a check.
+FREE_MD5 = {
+    "f382ae14c65fa54960f0a73be313abaf": "openbios",   # OpenBIOS, PCSX-Redux
+    "8514a6af538e0fadbe660a206dcb5652": "cbios",      # C-BIOS MSX1
+    "2c3bdfc858829122787d5293b08bce80": "cbios",      # C-BIOS MSX2
+    "52a7ed8a2772fdb72990e6ccec47998b": "cbios",      # C-BIOS MSX2+
+    "5068de583729bb85ec49d6ef65a0f384": "cbios",      # C-BIOS sub ROM
+}
+PAGE = [
+    # catalog name, archr-systems key, files (None: all), cores, builtin, required, free
+    ("psx", "psx", ["scph5501.bin", "scph1001.bin", "scph5502.bin", "scph5500.bin", "scph7001.bin", "scph101.bin"],
+     "pcsx_rearmed · DuckStation", True, False, "psx"),
+    ("gba", "gba", ["gba_bios.bin"], "gpSP · mGBA", True, False, None),
+    ("nds", "nds", ["bios7.bin", "bios9.bin", "firmware.bin"], "DraStic · melonDS", True, False, None),
+    ("dreamcast", "dreamcast", None, "Flycast", True, False, None),
+    ("saturn", "saturn", ["saturn_bios.bin", "sega_101.bin", "mpr-17933.bin"], "Yaba Sanshiro", True, False, None),
+    ("atari800", "atari800", ["ATARIXL.ROM", "ATARIBAS.ROM", "ATARIOSB.ROM"], "atari800", True, False, None),
+    ("atari5200", "atari5200", None, "a5200 · atari800", True, False, None),
+    ("pokemini", None, None, "PokeMini", True, False, None),
+    ("msx", "msx", None, "blueMSX · fMSX", False, True, "msx"),
+    ("msx2", "msx2", None, "blueMSX · fMSX", False, True, "msx"),
+    ("segacd", "segacd", None, "Genesis Plus GX · PicoDrive", False, True, None),
+    ("megacd", "segacd", None, "Genesis Plus GX · PicoDrive", False, True, None),
+    ("pcenginecd", "pcengine", None, "Beetle PCE Fast", False, True, None),
+    ("tg16cd", "pcengine", None, "Beetle PCE Fast", False, True, None),
+    ("neogeo", "neogeo", None, "FBNeo", False, True, None),
+    ("neocd", "neogeocd", ["neocd_z.rom", "neocd_f.rom", "neocd_sz.rom", "neocd_sf.rom"], "NeoCD · FBNeo", False, True, None),
+    ("fds", "fds", None, "FCEUmm · Nestopia", False, True, None),
+    ("3do", "3do", None, "Opera", False, True, None),
+    ("atarilynx", "lynx", None, "Handy · Beetle Lynx", False, True, None),
+    ("intellivision", "intellivision", None, "FreeIntv", False, True, None),
+    ("odyssey2", "o2em", None, "O2EM", False, True, None),
+    ("videopac", "o2em", None, "O2EM", False, True, None),
+    ("naomi", "naomi", None, "Flycast", False, True, None),
+    ("atomiswave", "atomiswave", None, "Flycast", False, True, None),
+    ("satellaview", "satellaview", None, "Snes9x", False, True, None),
+    ("sufami", "sufami", None, "Snes9x", False, True, None),
+    ("x68000", "x68000", None, "PX68k", False, True, None),
+    ("pc-8800", "pc88", ["N88.ROM", "N88SUB.ROM", "N88N.ROM"], "QUASI88", False, True, None),
+    ("pc-9800", "pc98", None, "Neko Project II Kai", False, True, None),
+    ("channelf", "channelf", None, "FreeChaF", False, True, None),
+    ("scv", "scv", None, "EmuSCV", False, True, None),
+    ("x1", "x1", None, "X Millennium", False, True, None),
+    ("gp32", "gp32", ["gp32.zip"], "MAME", False, True, None),
+]
+# Free files each installable free BIOS puts in roms/bios.
+FREE_FILES = {"psx": ["openbios.bin"], "msx": ["MSX.ROM", "MSX2.ROM", "MSX2EXT.ROM"]}
+MEDIA_DIRS = {"gamelist.xml", "images", "videos", "manuals", "media", "downloaded_images"}
+
+def hasGames(path):
+    try:
+        names = os.listdir(path)
+    except OSError:
+        return False
+    return any(not n.startswith(".") and n not in MEDIA_DIRS for n in names)
+
+def fileState(path, md5):
+    if not isfile(path):
+        return "missing", None
+    found = md5sum(path)
+    if FREE_MD5.get(found):
+        return "free", found
+    if md5 == "" or found == md5:
+        return "ok", found
+    return "bad", found
+
+def pageJson(showAll):
+    root = os.environ.get("ARCHR_SYSTEMS_ROOT", "")
+    configFile = root + "/usr/share/archr/systems.cfg"
+    if isfile(root + "/storage/.config/archr/systems.cfg"):
+        configFile = root + "/storage/.config/archr/systems.cfg"
+    catalog = {}
+    for system in elementTree.parse(configFile).getroot():
+        name = system.findtext("name")
+        if name:
+            catalog[name] = (system.findtext("fullname") or name, system.findtext("path") or "")
+    bios = root + "/storage/roms/bios"
+    result = []
+    for name, key, only, cores, builtin, required, free in PAGE:
+        if name not in catalog:
+            continue
+        fullname, path = catalog[name]
+        if not showAll and not hasGames(root + path):
+            continue
+        files = []
+        for entry in (systems[key]["biosFiles"] if key else []):
+            if "zippedFile" in entry:
+                continue
+            file = entry["file"][len("bios/"):]
+            if only is not None and file not in only:
+                continue
+            if any(f["file"] == file for f in files):
+                continue
+            state, _ = fileState(bios + "/" + file, entry["md5"])
+            files.append({"file": file, "md5": entry["md5"], "state": state})
+        if only is not None:
+            files.sort(key=lambda f: only.index(f["file"]) if f["file"] in only else len(only))
+        installed = free is not None and all(isfile(bios + "/" + f) for f in FREE_FILES[free])
+        states = [f["state"] for f in files]
+        if "ok" in states:
+            verdict = "ok"
+        elif "bad" in states:
+            verdict = "bad"
+        elif builtin:
+            verdict = "builtin"
+        elif installed or "free" in states:
+            verdict = "free"
+        elif not required:
+            verdict = "optional"
+        else:
+            verdict = "missing"
+        result.append({"id": name, "name": fullname, "cores": cores, "verdict": verdict,
+                       "builtin": builtin, "free": free, "free_installed": installed,
+                       "files": files})
+    # Present files first: the page lists what it has room for.
+    for system in result:
+        system["files"].sort(key=lambda f: f["state"] == "missing")
+    print(json.dumps({"bios_dir": "/storage/roms/bios", "systems": result}, ensure_ascii=False))
+
 if __name__ == '__main__':
     if len(sys.argv) == 1:
         prefix = "/storage/roms"
@@ -956,6 +1082,8 @@ if __name__ == '__main__':
     elif sys.argv[1] == "--noFilter":
         prefix = "/storage/roms"
         displayMissingBios(systems, checkBios(systems, prefix, False))
+    elif sys.argv[1] == "--json":
+        pageJson(len(sys.argv) > 2 and sys.argv[2] == "--all")
     elif sys.argv[1] == "--createReadme":
         createReadme(systems)
     elif len(sys.argv) == 3 and sys.argv[1] == "--filter":

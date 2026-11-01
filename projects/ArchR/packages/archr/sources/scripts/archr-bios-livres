@@ -1,0 +1,67 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026 ArchR (https://github.com/archr-linux/Arch-R)
+#
+# archr-bios-livres: puts a free BIOS where its emulator looks for it.
+# Settings > Games > BIOS runs it; only free BIOS exist here, from the
+# archr-bios-livres package of the ArchR repository (pacman, signed repo).
+#
+#   archr-bios-livres install psx   OpenBIOS for DuckStation: openbios.bin
+#   archr-bios-livres install msx   C-BIOS for fMSX: MSX.ROM, MSX2.ROM,
+#                                   MSX2EXT.ROM, MSX2P.ROM, MSX2PEXT.ROM
+#
+# Installs the package first when it is missing. A file already in
+# roms/bios is never replaced: the console's own BIOS wins. Prints
+# COPIED=<n> and KEPT=<n>; exit 1 when the package cannot be installed or
+# a file cannot be written.
+#
+# ARCHR_BIOS_ROOT prefixes every path (tests).
+
+ROOT="${ARCHR_BIOS_ROOT:-}"
+PACKAGE=archr-bios-livres
+SRC="${ROOT}/usr/share/archr/bios-livres"
+BIOS="${ROOT}/storage/roms/bios"
+
+case "${1:-}:${2:-}" in
+  install:psx) FILES=("openbios.bin openbios.bin") ;;
+  install:msx)
+    FILES=("cbios/cbios_main_msx1.rom MSX.ROM"
+      "cbios/cbios_main_msx2.rom MSX2.ROM" "cbios/cbios_sub.rom MSX2EXT.ROM"
+      "cbios/cbios_main_msx2+.rom MSX2P.ROM" "cbios/cbios_sub.rom MSX2PEXT.ROM")
+    ;;
+  *)
+    echo "usage: archr-bios-livres install psx|msx" >&2
+    exit 2
+    ;;
+esac
+
+if [ ! -d "${SRC}" ]; then
+  # A data package without dependencies: refreshing the database for it
+  # cannot leave a partial upgrade behind.
+  if ! pacman -Sy --needed --noconfirm "${PACKAGE}" >&2 || [ ! -d "${SRC}" ]; then
+    echo "archr-bios-livres: could not install ${PACKAGE}" >&2
+    exit 1
+  fi
+fi
+
+mkdir -p "${BIOS}" || exit 1
+COPIED=0
+KEPT=0
+for pair in "${FILES[@]}"; do
+  from="${SRC}/${pair% *}"
+  to="${BIOS}/${pair#* }"
+  if [ -e "${to}" ]; then
+    KEPT=$((KEPT + 1))
+    continue
+  fi
+  if ! cp -f "${from}" "${to}.part" || ! mv -n "${to}.part" "${to}"; then
+    rm -f "${to}.part"
+    echo "archr-bios-livres: could not write ${to}" >&2
+    exit 1
+  fi
+  rm -f "${to}.part"
+  COPIED=$((COPIED + 1))
+done
+sync -f "${BIOS}" 2>/dev/null || :
+echo "COPIED=${COPIED}"
+echo "KEPT=${KEPT}"
