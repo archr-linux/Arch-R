@@ -1,0 +1,31 @@
+// SPDX-License-Identifier: GPL-2.0
+// Copyright (C) 2026 ArchR (https://github.com/archr-linux/Arch-R)
+//
+// pstore/ramoops for RK3326 boards: 1 MiB of RAM at 0x30000000 that the
+// kernel keeps across a warm reset. After a crash, /sys/fs/pstore holds
+// the console of the boot that fell (console-ramoops-0) and, when it ended
+// in a reset, the oops itself (dmesg-ramoops-N). The kernel already has
+// CONFIG_PSTORE_RAM=y. Not applied by default: see docs/pstore-ramoops.md.
+/dts-v1/;
+/plugin/;
+
+/ {
+	fragment@0 {
+		target-path = "/";
+		__overlay__ {
+			reserved-memory {
+				#address-cells = <2>;
+				#size-cells = <2>;
+				ranges;
+
+				ramoops@30000000 {
+					compatible = "ramoops";
+					reg = <0x0 0x30000000 0x0 0x100000>;
+					record-size = <0x20000>;
+					console-size = <0x80000>;
+					pmsg-size = <0x20000>;
+				};
+			};
+		};
+	};
+};
