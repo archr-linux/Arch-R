@@ -130,4 +130,14 @@ export MESA_NO_ERROR=1
 # docs/mesa-glthread-matrix.md.
 export MESA_GLTHREAD=true
 
-${EMUPERF} ppsspp --pause-menu-exit "${ARG}"
+# "Save and exit" (archr-game-save-exit) presses F2 on a virtual keyboard:
+# keep it among the Save State keys. A state picked to resume from
+# (runemu.sh --entrystate) loads at start.
+CONTROLS="${CONF_DIR}/PSP/SYSTEM/controls.ini"
+if [ -f "${CONTROLS}" ] && ! grep -q '^Save State = .*1-132' "${CONTROLS}"; then
+  sed -i -e '/^Save State = ./s/$/,1-132/' -e 's/^Save State = $/Save State = 1-132/' "${CONTROLS}"
+fi
+STATE=""
+[ -f "${ARCHR_ENTRY_STATE}" ] && STATE="--state=${ARCHR_ENTRY_STATE}"
+
+${EMUPERF} ppsspp --pause-menu-exit ${STATE:+"${STATE}"} "${ARG}"

@@ -809,6 +809,14 @@ function set_autosave() {
     fi
 
     add_setting "none" "savestate_auto_load" "${SETAUTOSAVE}"
+    # "Save and exit" (archr-game-save-exit) closes RetroArch with SIGTERM:
+    # with runemu.sh's ARCHR_SAVE_ON_EXIT the automatic state is written on
+    # every exit, and loaded only as the autosave setting says. Netplay
+    # turns states off (set_netplay).
+    if [ "${ARCHR_SAVE_ON_EXIT}" = 1 ] && [ "$(game_setting netplay)" != 1 ] && [ -z "${NETPLAY_SESSION_MODE}" ]
+    then
+        SETAUTOSAVE=true
+    fi
     add_setting "none" "savestate_auto_save" "${SETAUTOSAVE}"
 }
 

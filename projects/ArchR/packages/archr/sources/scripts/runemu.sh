@@ -335,8 +335,22 @@ loginit "$1" "$2" "$3" "$4"
 clear_screen
 bluetooth disable
 # The running game and this script's PID, for the screenshot shortcut's
-# file name; a record whose PID is gone is stale (a crash, a reboot).
-mkdir -p "${CURRENT_GAME%/*}" && printf '%s\n%s\n' "${ROMNAME}" "$$" >"${CURRENT_GAME}"
+# file name; a record whose PID is gone is stale (a crash, a reboot). Then
+# what archr-game-save-exit needs to save it: system, emulator and core.
+mkdir -p "${CURRENT_GAME%/*}" &&
+  printf '%s\n%s\n%s\n%s\n%s\n' "${ROMNAME}" "$$" "${PLATFORM}" "${EMULATOR}" "${CORE}" >"${CURRENT_GAME}"
+# The game's state from an earlier "save and exit" stops being the latest
+# progress now (a launch from it got its path already).
+/usr/bin/archr-game-save-exit --forget "${ROMNAME}" 2>/dev/null
+# Emulators that can save a state when closed from outside do it while the
+# resume, switcher or critical battery features are on (Retomar e alternar,
+# Energia): RetroArch's automatic state, Flycast's AutoSaveState.
+ARCHR_SAVE_ON_EXIT=1
+if [ "$(get_setting launcher.resume)" = off ] && [ "$(get_setting hotkey.switcher.enabled)" = 0 ] &&
+   [ "$(get_setting power.battery.critical)" = 0 ]; then
+  ARCHR_SAVE_ON_EXIT=0
+fi
+export ARCHR_SAVE_ON_EXIT
 pause_background_services
 pause_ksm
 set_kill stop
