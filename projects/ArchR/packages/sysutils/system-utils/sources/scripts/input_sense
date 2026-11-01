@@ -35,6 +35,10 @@ set -o pipefail
 #   hotkey.brightness=BTN_DPAD_RIGHT+BTN_DPAD_LEFT  function modifier + up/down
 #   hotkey.brightness.enabled=1
 #
+#   hotkey.switcher=BTN_TR              function modifier + button: save the
+#   hotkey.switcher.enabled=1           game and open the launcher's switcher
+#                                       (archr-game-save-exit switch)
+#
 #   idle.timeout=0                      minutes without any key event, then
 #   idle.timeout.game=0                 the power button's fake suspend; the
 #                                       second applies while a game runs.
@@ -186,6 +190,10 @@ HOTKEY_BRIGHTNESS=$(hotkey_pair hotkey.brightness)
 [ -z "${HOTKEY_BRIGHTNESS}" ] && HOTKEY_BRIGHTNESS="BTN_DPAD_RIGHT BTN_DPAD_LEFT"
 read -r HOTKEY_BRIGHTNESS_UP HOTKEY_BRIGHTNESS_DOWN <<< "${HOTKEY_BRIGHTNESS}"
 HOTKEY_BRIGHTNESS_ENABLED=$(hotkey_enabled hotkey.brightness)
+
+HOTKEY_SWITCHER=$(hotkey_button hotkey.switcher BTN_TR)
+HOTKEY_SWITCHER_ENABLED=$(hotkey_enabled hotkey.switcher)
+FUNCTION_HOTKEY_SWITCHER_EVENT=$(press_event "${HOTKEY_SWITCHER}")
 
 FUNCTION_HOTKEY_DPAD_UP_EVENT=$(press_event "${HOTKEY_VOLUME_UP}")
 FUNCTION_HOTKEY_DPAD_DOWN_EVENT=$(press_event "${HOTKEY_VOLUME_DOWN}")
@@ -669,6 +677,15 @@ watch_inputs | grep --line-buffered "EV_KEY\|EV_SW\|error reading" | while next_
         if [ "${FN_A_PRESSED}" = true ] && [ "${DPAD_EVENTS}" = true ] && ${HOTKEY_BRIGHTNESS_ENABLED}; then
           ${DEBUG} && log $0 "${FUNCTION_HOTKEY_DPAD_LEFT_EVENT}${FUNCTION_HOTKEY_HAT_LEFT_EVENT}: Brightness Down"
           start_level_hold brightness down
+        fi
+      ;;
+      (${FUNCTION_HOTKEY_SWITCHER_EVENT})
+        # Its own unit: it outlives a restart of this service, and a second
+        # press while it saves finds the unit running.
+        if [ "${FN_A_PRESSED}" = true ] && ${HOTKEY_SWITCHER_ENABLED}; then
+          ${DEBUG} && log $0 "${FUNCTION_HOTKEY_SWITCHER_EVENT}: Save and switch"
+          systemd-run --no-block --collect --quiet --unit=archr-save-exit \
+            /usr/bin/archr-game-save-exit switch >/dev/null 2>&1
         fi
       ;;
       (${FUNCTION_HOTKEY_TOUCH_EVENT})

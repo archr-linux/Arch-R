@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (C) 2025-present ArchR (https://github.com/archr-linux/Arch-R)
 #
-# Host test for the input_sense inactivity suspend: runs the real script with
-# stub udevadm/evtest, a temporary system.cfg and minutes shortened to seconds.
+# Host test for the input_sense inactivity suspend and the switcher shortcut:
+# runs the real script with stub udevadm/evtest/systemd-run, a temporary
+# system.cfg and minutes shortened to seconds.
 #   bash projects/ArchR/packages/sysutils/system-utils/tests/input_sense_idle_test.sh
 
 set -u
@@ -56,6 +57,7 @@ exec sleep 600
 STUB
 printf '#!/bin/sh\necho "$*" >>"%s/calls"\n' "${TMP}" >"${TMP}/bin/suspend"
 printf '#!/bin/sh\nexit 0\n' >"${TMP}/bin/mkcontroller"
+printf '#!/bin/sh\nfor a; do last=$a; done\necho "$last" >>"%s/calls"\n' "${TMP}" >"${TMP}/bin/systemd-run"
 chmod +x "${TMP}/bin/"*
 
 PRESS="Event: time 1.0, type 1 (EV_KEY), code 304 (BTN_SOUTH), value 1"
@@ -130,5 +132,16 @@ CALLS=$(run 2.5)
 check "the hold starts and ends once" "$(echo "${CALLS}" | sed 's/ renew//g')" "release volume hold up osd release"
 RENEWS=$(echo "${CALLS}" | grep -o renew | wc -l)
 check "renewed every 200 ms while held" "$([ "${RENEWS}" -ge 4 ] && [ "${RENEWS}" -le 6 ] && echo yes)" yes
+# Function (BTN_SELECT on the RK3326) + R1: save and open the switcher.
+# Only the switcher's call counts here (archr-levels sees releases too).
+switcher() { run "$@" | tr ' ' '\n' | grep -x switch | tr '\n' ' ' | sed 's/ $//'; }
+key() { echo "Event: time 1.0, type 1 (EV_KEY), code 0 (${1}), value ${2}"; }
+events "0.3 $(key BTN_SELECT 1)" "0.1 $(key BTN_TR 1)" "0.1 $(key BTN_TR 0)" "0.1 $(key BTN_SELECT 0)"
+check "function + R1 saves and switches" "$(switcher 2 "key.function.a=BTN_SELECT")" "switch"
+check "the switcher can be turned off" "$(switcher 2 "key.function.a=BTN_SELECT" "hotkey.switcher.enabled=0")" ""
+events "0.3 $(key BTN_TR 1)"
+check "R1 alone does nothing" "$(switcher 2 "key.function.a=BTN_SELECT")" ""
+events "0.3 $(key BTN_SELECT 1)" "0.1 $(key BTN_TR2 1)"
+check "another button can be the shortcut" "$(switcher 2 "key.function.a=BTN_SELECT" "hotkey.switcher=BTN_TR2")" "switch"
 
 exit ${FAILED}
