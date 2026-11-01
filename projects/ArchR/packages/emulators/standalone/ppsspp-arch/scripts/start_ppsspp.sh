@@ -42,15 +42,35 @@ else
   unset EMUPERF
 fi
 
-  #Auto Frame Skip — default ON when no explicit setting. RK3326 cannot
-  #sustain 60fps in heavier PSP titles; without auto-skip the user sees
-  #15fps stutter instead of a smooth 25-30. Users that prefer no skipping
-  #can flip the per-platform / per-game setting to "0".
+  #Frame skipping. Default: auto frame skip, up to 3 frames in a row.
+  #Auto frame skip only skips while FrameSkip (the most frames skipped in
+  #a row) is above 0, and a FrameSkip = 0 left in the file had silently
+  #turned it off (an --appendconfig run saves its values into the file):
+  #God of War ran at 24% speed, 80% with the cap back. So FrameSkip is
+  #always written. Lighter games (Tekken 6, Burnout Legends, Death Jr.)
+  #keep 100% and every frame either way.
+  #PPSSPP turns buffer effects back on while auto frame skip is on, so
+  #skip_buffer_effects=1 implies a fixed skip of one frame in two, as
+  #dArkOSRE-R36 ships for the R36S (southoz/dArkOSRE-R36@77ef6d941b,
+  #files/ROOTFS/opt/ppsspp/backupforromsfolder/ppsspp/PSP/SYSTEM/ppsspp.ini):
+  #God of War at 100% speed (30 fps shown), losing its glow; light games
+  #drop to half their frames, hence per game only. frame_skip=N sets the
+  #cap (auto) or the fixed skip; auto_frame_skip=0 alone skips nothing.
+	if [ -z "${ASKIP}" ]; then
+		[ "${SKIPB}" = "1" ] && ASKIP=0 || ASKIP=1
+	fi
+	FSKIP=$(get_setting frame_skip "${PLATFORM}" "${GAME}")
+	case "${FSKIP}" in
+		[0-8]) ;;
+		*) if [ "${ASKIP}" = "1" ]; then FSKIP=3; elif [ "${SKIPB}" = "1" ]; then FSKIP=1; else FSKIP=0; fi ;;
+	esac
 	if [ "${ASKIP}" = "0" ]; then
 		sed -i '/^AutoFrameSkip =/c\AutoFrameSkip = False' ${CONF_DIR}/${PPSSPP_INI}
 	else
-		sed -i '/AutoFrameSkip =/c\AutoFrameSkip = True' ${CONF_DIR}/${PPSSPP_INI}
-        fi
+		sed -i '/^AutoFrameSkip =/c\AutoFrameSkip = True' ${CONF_DIR}/${PPSSPP_INI}
+		[ "${FSKIP}" = "0" ] && FSKIP=3
+	fi
+	sed -i "/^FrameSkip =/c\FrameSkip = ${FSKIP}" ${CONF_DIR}/${PPSSPP_INI}
 
   #Graphics Backend
         if [ "${GRENDERER}" = "opengl" ]; then
