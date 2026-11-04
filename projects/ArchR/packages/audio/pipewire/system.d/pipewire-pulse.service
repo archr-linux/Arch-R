@@ -11,9 +11,11 @@ ExecStart=/usr/bin/pipewire-pulse
 Restart=on-failure
 RuntimeDirectory=pipewire
 RuntimeDirectoryPreserve=yes
-ExecStartPre=/bin/mkdir -p /var/run/0-runtime-dir/pulse
+ExecStartPre=/bin/mkdir -p /run/0-runtime-dir/pulse
 Environment=PIPEWIRE_RUNTIME_DIR=%t/pipewire
-Environment=XDG_RUNTIME_DIR=/var/run/0-runtime-dir
+# Same directory as /var/run/0-runtime-dir everywhere else, spelled the way
+# pipewire-pulse.socket listens, so the server adopts that socket.
+Environment=XDG_RUNTIME_DIR=/run/0-runtime-dir
 Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/dbus/system_bus_socket
 Environment=HOME=/storage
 # Environment=PIPEWIRE_DEBUG=4
