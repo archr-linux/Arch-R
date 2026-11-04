@@ -58,10 +58,10 @@
 : "${GRIM:=grim}"
 : "${KILL_DATA:=/tmp/.process-kill-data}"
 # Tenths of a second: for a state file to appear, for the game to close
-# after the signal (RetroArch was seen taking 50 s on the R36S), and for
-# another run holding the lock (battery, suspend).
+# after the signal (RetroArch takes about 1 s with its state on the R36S),
+# and for another run holding the lock (battery, suspend).
 : "${STATE_WAIT:=50}"
-: "${CLOSE_WAIT:=900}"
+: "${CLOSE_WAIT:=200}"
 : "${LOCK_WAIT:=120}"
 : "${TICK:=0.1}"
 KEEP=20
@@ -220,10 +220,12 @@ fi
 TARGETS=""
 [ -r "${KILL_DATA}" ] && TARGETS=$(tr -s ' ' '\n' <"${KILL_DATA}" | grep -v '^-' | tr '\n' ' ')
 [ -n "${TARGETS// /}" ] || TARGETS="${EMULATOR}"
+# killall, as the exit shortcut: BusyBox's pkill -x compares argv[0] as
+# written (/usr/bin/retroarch), so it matched nothing.
 signal() {
   local name
   for name in ${TARGETS}; do
-    pkill "-$1" -x "${name}" 2>/dev/null
+    killall "-$1" "${name}" 2>/dev/null
   done
 }
 
