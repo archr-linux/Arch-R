@@ -333,6 +333,17 @@ check grep -q 'already running' "${TMP}/locked-restore.log"
 flock -u 8
 exec 8>&-
 check cmp "${ZIP}" "${TMP}/previous.zip"
+# A lock that cannot be taken at all is an error, not a running backup.
+cat >"${TMP}/bin/flock" <<'EOF'
+#!/bin/sh
+echo 'flock: 9: Bad file descriptor' >&2
+exit 1
+EOF
+chmod +x "${TMP}/bin/flock"
+EXTRA="${TMP}/bin" fails backup >"${TMP}/lockerr.log" 2>&1
+check grep -q 'cannot take the backup lock: flock: 9: Bad file descriptor' "${TMP}/lockerr.log"
+check test "$(grep -c 'already running' "${TMP}/lockerr.log" || true)" = 0
+rm "${TMP}/bin/flock"
 cat >"${TMP}/bin/df" <<'EOF'
 #!/bin/sh
 printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\nfake 1024 1024 0 100%% /\n'

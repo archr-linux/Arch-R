@@ -149,9 +149,21 @@ STAMP=$(date +%Y-%m-%d_%H-%M-%S) || exit 1
 # One backup or restore at a time. The lock lives on ext4, not the possibly
 # exFAT ROMs card, and is released by the kernel even after a crash.
 take_lock() {
-    mkdir -p /storage/.cache || exit 1
-    exec 9>/storage/.cache/backuptool.lock || exit 1
-    flock -n 9 || { echo 'A backup or restore is already running.' >&2; exit 1; }
+    local error
+    if ! { mkdir -p /storage/.cache && exec 9>/storage/.cache/backuptool.lock; }
+    then
+        echo 'Error: cannot open the backup lock.' >&2
+        exit 1
+    fi
+    # flock -n fails silently when another holder has the lock.
+    if ! error=$(flock -n 9 2>&1); then
+        if [ -z "${error}" ]; then
+            echo 'A backup or restore is already running.' >&2
+        else
+            echo "Error: cannot take the backup lock: ${error}" >&2
+        fi
+        exit 1
+    fi
 }
 
 # Emit regular files only. No traversal through system-managed symlinks and no
