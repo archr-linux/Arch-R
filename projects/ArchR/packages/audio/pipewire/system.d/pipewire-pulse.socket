@@ -4,7 +4,15 @@ Conflicts=pulseaudio.socket
 
 [Socket]
 Priority=6
-ListenStream=%t/pulse/native
+# The very path pipewire-pulse binds: it adopts a passed socket only when
+# the bound path is the same string (sd_is_socket_unix), and it builds
+# that path from XDG_RUNTIME_DIR in pipewire-pulse.service. %t would be
+# /run/pulse/native here, a socket nobody served: clients that fell back
+# to it hung until their 30 s timeout. Spelled /run, as the service's
+# XDG_RUNTIME_DIR: the comparison is on the string, and systemd rewrites
+# a /var/run ListenStream= to /run anyway (patch_var_run).
+ListenStream=/run/0-runtime-dir/pulse/native
+DirectoryMode=0700
 
 [Install]
 WantedBy=sockets.target
