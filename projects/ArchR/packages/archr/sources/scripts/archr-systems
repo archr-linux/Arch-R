@@ -1002,7 +1002,8 @@ PAGE = [
     ("gp32", "gp32", ["gp32.zip"], "MAME", False, True, None),
 ]
 # Free files each installable free BIOS puts in roms/bios.
-FREE_FILES = {"psx": ["openbios.bin"], "msx": ["MSX.ROM", "MSX2.ROM", "MSX2EXT.ROM"]}
+FREE_FILES = {"psx": ["openbios.bin"],
+              "msx": ["MSX.ROM", "MSX2.ROM", "MSX2EXT.ROM", "MSX2P.ROM", "MSX2PEXT.ROM"]}
 MEDIA_DIRS = {"gamelist.xml", "images", "videos", "manuals", "media", "downloaded_images"}
 
 def hasGames(path):
