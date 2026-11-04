@@ -1,0 +1,77 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026 ArchR (https://github.com/archr-linux/Arch-R)
+#
+# archr-bios-livres: puts a free BIOS where its emulator looks for it.
+# Settings > Games > BIOS runs it; only free BIOS exist here, from the
+# archr-bios-livres package of the ArchR repository (pacman, signed repo).
+#
+#   archr-bios-livres install psx   OpenBIOS for DuckStation: openbios.bin
+#   archr-bios-livres install msx   C-BIOS for fMSX: MSX.ROM, MSX2.ROM,
+#                                   MSX2EXT.ROM, MSX2P.ROM, MSX2PEXT.ROM
+#
+# Installs the package first when it is missing. A file already in
+# roms/bios is never replaced, nor its pair: the console's own BIOS wins. Prints
+# COPIED=<n> and KEPT=<n>; exit 1 when the package cannot be installed or
+# a file cannot be written.
+#
+# ARCHR_BIOS_ROOT prefixes every path (tests).
+
+ROOT="${ARCHR_BIOS_ROOT:-}"
+PACKAGE=archr-bios-livres
+SRC="${ROOT}/usr/share/archr/bios-livres"
+BIOS="${ROOT}/storage/roms/bios"
+
+case "${1:-}:${2:-}" in
+  install:psx) FILES=("openbios.bin openbios.bin") ;;
+  # Each entry: source and name, twice for a pair.
+  install:msx)
+    # Main and sub ROM go as a pair: half of a free pair next to half of
+    # the console's would not boot.
+    FILES=("cbios/cbios_main_msx1.rom MSX.ROM"
+      "cbios/cbios_main_msx2.rom MSX2.ROM cbios/cbios_sub.rom MSX2EXT.ROM"
+      "cbios/cbios_main_msx2+.rom MSX2P.ROM cbios/cbios_sub.rom MSX2PEXT.ROM")
+    ;;
+  *)
+    echo "usage: archr-bios-livres install psx|msx" >&2
+    exit 2
+    ;;
+esac
+
+if [ ! -d "${SRC}" ]; then
+  # A data package without dependencies: refreshing the database for it
+  # cannot leave a partial upgrade behind.
+  if ! pacman -Sy --needed --noconfirm "${PACKAGE}" >&2 || [ ! -d "${SRC}" ]; then
+    echo "archr-bios-livres: could not install ${PACKAGE}" >&2
+    exit 1
+  fi
+fi
+
+mkdir -p "${BIOS}" || exit 1
+COPIED=0
+KEPT=0
+for entry in "${FILES[@]}"; do
+  read -r -a parts <<<"${entry}"
+  present=0
+  for ((i = 1; i < ${#parts[@]}; i += 2)); do
+    [ -e "${BIOS}/${parts[i]}" ] && present=1
+  done
+  if [ "${present}" = 1 ]; then
+    KEPT=$((KEPT + ${#parts[@]} / 2))
+    continue
+  fi
+  for ((i = 0; i < ${#parts[@]}; i += 2)); do
+    from="${SRC}/${parts[i]}"
+    to="${BIOS}/${parts[i + 1]}"
+    if ! cp -f "${from}" "${to}.part" || ! mv -n "${to}.part" "${to}"; then
+      rm -f "${to}.part"
+      echo "archr-bios-livres: could not write ${to}" >&2
+      exit 1
+    fi
+    rm -f "${to}.part"
+    COPIED=$((COPIED + 1))
+  done
+done
+sync -f "${BIOS}" 2>/dev/null || :
+echo "COPIED=${COPIED}"
+echo "KEPT=${KEPT}"

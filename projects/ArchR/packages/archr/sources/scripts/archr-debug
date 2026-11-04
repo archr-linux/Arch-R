@@ -1,0 +1,75 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026 ArchR (https://github.com/archr-linux/Arch-R)
+#
+# archr-debug: the debug mode of Settings > System > Diagnostics.
+#
+#   archr-debug on      system.loglevel=verbose and a persistent journal
+#   archr-debug off     system.loglevel=none and the volatile journal back
+#   archr-debug status  KEY=VALUE lines:
+#                         DEBUG=1|0          the mode (system.loglevel)
+#                         JOURNAL=persistent|volatile
+#                         PSTORE=<backend>|none   pstore/ramoops in the kernel
+#                         CRASHES=<n>        records kept in /sys/fs/pstore
+#
+# This script owns system.loglevel. The persistent journal is a drop-in in
+# /storage/.cache/journald.conf.d (linked from /usr/lib/systemd), capped so
+# the card never fills: 16 MB in all, 4 MB per file. The journal written
+# while debugging stays in /var/log/journal after "off", for the report.
+# pstore needs a ramoops node in the device tree; see docs/pstore-ramoops.md.
+
+. "${ARCHR_DEBUG_PROFILE:-/etc/profile}"
+
+ROOT="${ARCHR_DEBUG_ROOT:-}"
+DROPIN="${ROOT}/storage/.cache/journald.conf.d/50-archr-debug.conf"
+JOURNAL_DIR="${ROOT}/var/log/journal"
+PSTORE="${ROOT}/sys/fs/pstore"
+BACKEND="${ROOT}/sys/module/pstore/parameters/backend"
+
+journald_reload() {
+  # A restart rereads the drop-ins; flush moves /run's journal to disk.
+  systemctl restart systemd-journald >/dev/null 2>&1 || return 1
+  journalctl --flush >/dev/null 2>&1 || :
+}
+
+status() {
+  local debug=0 journal=volatile backend crashes=0 f
+  [ "$(get_setting system.loglevel)" = "verbose" ] && debug=1
+  [ -f "${DROPIN}" ] && journal=persistent
+  backend=$(cat "${BACKEND}" 2>/dev/null)
+  case "${backend}" in ""|"(null)") backend=none ;; esac
+  for f in "${PSTORE}"/*; do
+    [ -f "${f}" ] && crashes=$((crashes + 1))
+  done
+  printf 'DEBUG=%s\nJOURNAL=%s\nPSTORE=%s\nCRASHES=%s\n' \
+    "${debug}" "${journal}" "${backend}" "${crashes}"
+}
+
+case "${1:-}" in
+  on)
+    mkdir -p "${DROPIN%/*}" "${JOURNAL_DIR}" || exit 1
+    cat >"${DROPIN}.tmp" <<'EOF' && mv -f "${DROPIN}.tmp" "${DROPIN}" || exit 1
+# Written by archr-debug on; removed by archr-debug off.
+[Journal]
+Storage=persistent
+SystemMaxUse=16M
+SystemMaxFileSize=4M
+SystemKeepFree=256M
+MaxLevelStore=debug
+EOF
+    set_setting system.loglevel verbose || exit 1
+    journald_reload || echo "archr-debug: journald not restarted" >&2
+    ;;
+  off)
+    rm -f "${DROPIN}" || exit 1
+    set_setting system.loglevel none || exit 1
+    journald_reload || echo "archr-debug: journald not restarted" >&2
+    ;;
+  status)
+    status
+    ;;
+  *)
+    echo "usage: archr-debug on|off|status" >&2
+    exit 2
+    ;;
+esac

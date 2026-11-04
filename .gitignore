@@ -176,4 +176,5 @@ docs/*
 !docs/improvements.md
 !docs/release-policy.md
 !docs/fhs-mapping.md
+!docs/pstore-ramoops.md
 bench-results/config/mipi-generator/__pycache__/

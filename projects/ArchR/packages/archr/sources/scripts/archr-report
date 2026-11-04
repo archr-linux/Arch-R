@@ -1,0 +1,251 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026 ArchR (https://github.com/archr-linux/Arch-R)
+#
+# archr-report: one zip with what a bug report needs, in a folder any PC
+# reads (roms/relatorios). Settings > System > Diagnostics runs it; it is
+# also meant to be run by hand (SSH) or by a button combination later.
+#
+#   archr-report        builds the report; prints on stdout
+#                         REPORT=/storage/roms/relatorios/archr-relatorio-<date>.zip
+#                         SIZE=<bytes>
+#                       exit 1 when no report could be written.
+#
+# What goes in: hardware, kernel and dmesg, the journal of this boot and of
+# the previous one (when the journal is persistent), failed services,
+# network (addresses, routes, the SSID; never a password: Wi-Fi keys live in
+# iwd's files, which are not read), storage, temperatures and frequencies,
+# installed packages and libretro cores, system.cfg and the emulator and
+# launcher configs, the last game's exec.log, the launcher's log and pstore.
+#
+# Every file is sanitized before it is zipped (see sanitize below): secret
+# values become <removed>, and a file that cannot be filtered is left out.
+# Files that only hold secrets (iwd, scraper and RetroAchievements
+# credentials) are never copied. Each command runs with a time limit and each log is
+# capped, so the report stays small and the run short.
+#
+# ARCHR_REPORT_ROOT prefixes every file read and written (tests).
+
+ROOT="${ARCHR_REPORT_ROOT:-}"
+OUT_DIR="${ROOT}/storage/roms/relatorios"
+STAMP=$(date +%Y%m%d-%H%M)
+NAME="archr-relatorio-${STAMP}"
+CAP=$((2 * 1024 * 1024))
+LIMIT=15
+
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/archr-report.XXXXXX") || exit 1
+trap 'rm -rf "${WORK}"' EXIT
+DIR="${WORK}/${NAME}"
+mkdir -p "${DIR}"
+
+# run FILE CMD...: CMD's output (stdout and stderr), with a time limit and
+# a size cap, appended under a header. A missing command says so.
+run() {
+  local file="${DIR}/$1"
+  shift
+  {
+    echo "### $*"
+    if command -v "$1" >/dev/null 2>&1; then
+      timeout "${LIMIT}" "$@" 2>&1 | head -c "${CAP}"
+    else
+      echo "(not available)"
+    fi
+    echo
+  } >>"${file}"
+}
+
+# grab FILE SOURCE...: the last CAP bytes of each readable source file.
+grab() {
+  local file="${DIR}/$1" src
+  shift
+  for src in "$@"; do
+    [ -f "${ROOT}${src}" ] && [ -r "${ROOT}${src}" ] || continue
+    {
+      echo "### ${src}"
+      tail -c "${CAP}" "${ROOT}${src}"
+      echo
+    } >>"${file}"
+  done
+}
+
+# Sysfs readings, one "path: value" per line.
+readings() {
+  local f
+  for f in "$@"; do
+    [ -r "${ROOT}${f}" ] && echo "${f#/sys/}: $(head -c 200 "${ROOT}${f}" 2>/dev/null | tr '\n' ' ')"
+  done
+}
+
+# hardware
+grab hardware.txt /proc/device-tree/model /etc/os-release /proc/cpuinfo /proc/meminfo /proc/cmdline
+run hardware.txt uname -a
+run hardware.txt lsusb
+run hardware.txt lsmod
+
+# kernel
+run kernel-dmesg.txt dmesg
+grab kernel-dmesg.txt /var/log/boot.log
+
+# journal: this boot, and the previous one when it was kept
+run journal-boot-atual.txt journalctl -b 0 --no-pager -o short-monotonic
+if command -v journalctl >/dev/null 2>&1 &&
+  timeout "${LIMIT}" journalctl --list-boots --no-pager 2>/dev/null | grep -q '^ *-1 '; then
+  run journal-boot-anterior.txt journalctl -b -1 --no-pager -o short-monotonic
+fi
+
+# services
+run servicos.txt systemctl --failed --no-pager
+run servicos.txt systemctl list-units --type=service --state=running --no-pager
+
+# network: interfaces, routes and the station (SSID and signal)
+run rede.txt ip -brief address
+run rede.txt ip route
+run rede.txt iw dev
+run rede.txt iwctl station wlan0 show
+grab rede.txt /etc/resolv.conf /var/log/wifictl.log
+
+# storage
+run armazenamento.txt lsblk -o NAME,SIZE,FSTYPE,LABEL,MOUNTPOINT
+run armazenamento.txt df -h
+grab armazenamento.txt /proc/mounts
+
+# temperatures, frequencies and battery
+{
+  readings /sys/class/thermal/thermal_zone*/type /sys/class/thermal/thermal_zone*/temp
+  readings /sys/devices/system/cpu/cpufreq/policy*/scaling_governor \
+    /sys/devices/system/cpu/cpufreq/policy*/scaling_cur_freq \
+    /sys/devices/system/cpu/cpufreq/policy*/scaling_max_freq
+  readings /sys/class/devfreq/*/cur_freq /sys/class/devfreq/*/governor
+  readings /sys/class/power_supply/*/status /sys/class/power_supply/*/capacity \
+    /sys/class/power_supply/*/current_now /sys/class/power_supply/*/voltage_now
+} >"${DIR}/temperaturas.txt" 2>/dev/null
+
+# emulators and cores
+run emuladores.txt pacman -Q
+{
+  echo "### ${ROOT}/usr/lib/libretro"
+  for src in "${ROOT}"/usr/lib/libretro/*_libretro.so; do
+    [ -e "${src}" ] && echo "${src##*/}"
+  done
+} >>"${DIR}/emuladores.txt"
+
+# configs (sanitized below)
+mkdir -p "${DIR}/configs"
+for src in /storage/.config/system/configs/system.cfg \
+  /storage/.config/retroarch/retroarch.cfg \
+  /storage/.config/retroarch/retroarch-core-options.cfg \
+  /storage/.config/archr-launcher/launcher.toml \
+  /storage/.config/archr/systems.cfg; do
+  [ -f "${ROOT}${src}" ] && head -c "${CAP}" "${ROOT}${src}" >"${DIR}/configs/${src##*/}"
+done
+
+# logs: the last game, the launcher, pstore
+mkdir -p "${DIR}/logs"
+grab logs/exec.log /var/log/exec.log
+grab logs/launcher.log /var/log/archr-launcher-session.log
+grab logs/runemu-debug.log /var/log/runemu-debug.log
+for src in "${ROOT}"/sys/fs/pstore/*; do
+  [ -f "${src}" ] && mkdir -p "${DIR}/pstore" && head -c "${CAP}" "${src}" >"${DIR}/pstore/${src##*/}"
+done
+
+# Any line with a hint of a secret goes whole: "<prefix up to the secret
+# name>=<removed>", or "<linha removida>" when there is no name. The value
+# is never cut out alone. Hints:
+#   - a secret name as a word or suffix: pass, pw, pwd, token, secret,
+#     key (never hotkey or keyboard), psk, auth, oauth, bearer, credential,
+#     senha, chave,
+#     cookie, session, user, username or login used as a name ("user="),
+#     and the URL fields u, t, p, pw, pwd, user, ssid and devid;
+#   - user:password@ (in a URL or not), or any @ after a URL's //;
+#   - the options -p, -P, -u, -U (with the value apart or attached),
+#     --user, --*-user and --*pass*.
+# The last two kinds, and a URL field, remove the whole line even after a
+# name: what comes before the name may hold the secret.
+# A secret name whose line opens { or [ or leaves a quote open may go on
+# over the next lines: the rest of the file goes, a safe failure; so does
+# a BEGIN ... PRIVATE KEY line. A name with no value after it, or followed
+# by a line starting with = or :, takes the next line too.
+# Every file passes through here, text or not (NUL bytes become blanks,
+# bytes are read as is: LC_ALL=C); one that cannot be filtered is left out.
+sanitize() {
+  tr '\0' ' ' | LC_ALL=C awk '
+    gone { next }
+    # The line after a name that came without a value, or that starts
+    # with = or :, is that value.
+    pending {
+      pending = 0
+      if (empty || $0 ~ /^[[:space:]]*[=:]/) {
+        print "<linha removida>"
+        next
+      }
+    }
+    tolower($0) ~ /-----begin [a-z ]*private key/ {
+      print "<resto do arquivo removido>"
+      gone = 1
+      next
+    }
+    {
+      line = tolower($0)
+      named = 0
+      rest = line
+      # Words of letters and digits: the first secret one, if any.
+      while (match(rest, /[a-z0-9]+/)) {
+        word = substr(rest, RSTART, RLENGTH)
+        at = length(line) - length(rest) + RSTART + RLENGTH - 1
+        rest = substr(rest, RSTART + RLENGTH)
+        if (word ~ /(pass|token|secret|psk|bearer|credential|cookie|session|senha|chave)/ ||
+            word ~ /^(pw|pwd|o?auth[a-z]*)$/ || word ~ /key$/ && word !~ /hotkey$/ ||
+            word ~ /^(user(name)?|login)$/ && rest ~ /^"?[[:space:]]*[=:]/) {
+          named = at
+          break
+        }
+      }
+      # Hints with no name before them: the whole line goes.
+      bare = line ~ /[?&](u|t|p|pw|pwd|user|ssid|devid)=/ ||
+        line ~ /[^[:space:]\/@:]+:[^[:space:]\/@]+@/ || line ~ /:\/\/[^[:space:]]*@/ ||
+        $0 ~ /(^|[[:space:]])-[pPuU]/ ||
+        line ~ /(^|[[:space:]])--([a-z0-9-]*-)?user([^a-z0-9-]|$)|(^|[[:space:]])--[a-z0-9-]*pass/
+      if (!named && !bare) {
+        print
+        next
+      }
+      if (bare) {
+        print "<linha removida>"
+        next
+      }
+      print substr($0, 1, named) "=<removed>"
+      tail = substr($0, named + 1)
+      pending = 1
+      empty = tail ~ /^[^[:alnum:]]*$/
+      opened = gsub(/[{[]/, "", tail) > 0
+      if (opened || gsub(/"/, "\"", tail) % 2 || gsub(/\047/, "\047", tail) % 2) {
+        print "<resto do arquivo removido>"
+        gone = 1
+      }
+    }'
+}
+# Compressed pstore records cannot be read through the filter: left out.
+find "${DIR}/pstore" -type f -name '*.z' -delete 2>/dev/null
+while IFS= read -r -d '' f; do
+  if ! sanitize <"${f}" >"${f}.clean" || ! mv -f "${f}.clean" "${f}"; then
+    rm -f "${f}" "${f}.clean"
+    echo "archr-report: ${f#"${DIR}/"} left out, could not be filtered" >&2
+  fi
+done < <(find "${DIR}" -type f -print0)
+if [ -z "$(find "${DIR}" -type f -print -quit)" ]; then
+  echo "archr-report: nothing could be collected and filtered, no report written" >&2
+  exit 1
+fi
+
+mkdir -p "${OUT_DIR}" || exit 1
+ZIP="${OUT_DIR}/${NAME}.zip"
+rm -f "${ZIP}.part"
+if ! (cd "${WORK}" && zip -q -r -9 "${ZIP}.part" "${NAME}" >&2) ||
+  ! mv -f "${ZIP}.part" "${ZIP}"; then
+  rm -f "${ZIP}.part"
+  echo "archr-report: could not write ${ZIP}" >&2
+  exit 1
+fi
+sync -f "${ZIP}" 2>/dev/null || :
+echo "REPORT=${ZIP#"${ROOT}"}"
+echo "SIZE=$(stat -c %s "${ZIP}")"
