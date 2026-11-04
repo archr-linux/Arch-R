@@ -158,8 +158,7 @@ done
 #     and the URL fields u, t, p, pw, pwd, user, ssid and devid;
 #   - user:password@ (in a URL or not), or any @ after a URL's //;
 #   - the options -p, -P, -u, -U (with the value apart or attached),
-#     --user, --*-user and --*pass*;
-#   - a word mixing ASCII letters with other bytes (a look-alike name).
+#     --user, --*-user and --*pass*.
 # The last two kinds, and a URL field, remove the whole line even after a
 # name: what comes before the name may hold the secret.
 # A secret name whose line opens { or [ or leaves a quote open may go on
@@ -205,8 +204,7 @@ sanitize() {
       bare = line ~ /[?&](u|t|p|pw|pwd|user|ssid|devid)=/ ||
         line ~ /[^[:space:]\/@:]+:[^[:space:]\/@]+@/ || line ~ /:\/\/[^[:space:]]*@/ ||
         $0 ~ /(^|[[:space:]])-[pPuU]/ ||
-        line ~ /(^|[[:space:]])--([a-z0-9-]*-)?user([^a-z0-9-]|$)|(^|[[:space:]])--[a-z0-9-]*pass/ ||
-        line ~ /[a-z][\200-\377]|[\200-\377][a-z]/
+        line ~ /(^|[[:space:]])--([a-z0-9-]*-)?user([^a-z0-9-]|$)|(^|[[:space:]])--[a-z0-9-]*pass/
       if (!named && !bare) {
         print
         next
