@@ -30,6 +30,10 @@ export CURRENT_GAME="${TMP}/run/current-game" RESUME_DIR="${TMP}/config"
 export SWITCHER="${TMP}/run/switcher" SAVING="${TMP}/run/saving"
 export STATES_DIR="${TMP}/states" MUPEN_STATES="${TMP}/n64" KILL_DATA="${TMP}/kill"
 export RETROARCH_RUN_CFG="${TMP}/retroarch.cfg" MUPEN_CFG="${TMP}/mupen64plus.cfg"
+export CORES_DIR="${TMP}/cores"
+mkdir -p "${CORES_DIR}"
+echo 'savestate = "true"' >"${CORES_DIR}/snes9x_libretro.info"
+echo 'savestate = "false"' >"${CORES_DIR}/scummvm_libretro.info"
 export KEYPRESS="${TMP}/bin/keypress" GRIM="${TMP}/bin/grim" OSD="${TMP}/bin/osd"
 export TICK=0.05 STATE_WAIT=20 CLOSE_WAIT=40 LOCK_WAIT=20
 mkdir -p "${TMP}/run" "${TMP}/bin" "${STATES_DIR}/snes" "${MUPEN_STATES}"
@@ -40,7 +44,9 @@ printf '#!/bin/sh\necho "$*" >>"%s/osd"\n' "${TMP}" >"${OSD}"
 cat >"${KEYPRESS}" <<STUB
 #!/bin/sh
 echo "\$*" >>"${TMP}/keys"
-[ -e "${TMP}/no-state" ] || echo state >"${MUPEN_STATES}/Mario (U)-635A42C5.st\$1"
+# Each call on its own line; F5 saves to the slot just chosen.
+[ "\$2" = F5 ] && [ ! -e "${TMP}/no-state" ] && echo state >"${MUPEN_STATES}/Mario (U)-635A42C5.st\$1"
+exit 0
 STUB
 echo 'CurrentStateSlot = 2' >"${MUPEN_CFG}"
 autosave() { printf 'savestate_auto_save = "%s"\n' "$1" >"${RETROARCH_RUN_CFG}"; }
@@ -86,6 +92,14 @@ check "the ROM" "$(cut -f8 <<<"${LINE}")" "${ROM}"
 check "the switcher is asked for" "$([ -e "${SWITCHER}" ] && echo yes)" "yes"
 check "the saving mark is gone" "$([ -e "${SAVING}" ] && echo left || echo gone)" "gone"
 
+# A core without states (ScummVM, EasyRPG): the game stays open.
+emulator fakearch ":"
+game "/roms/scummvm/Game.scummvm" scummvm retroarch scummvm
+"${SAVE_EXIT}" switch >/dev/null 2>&1
+check "a core without states: the game stays open" "$?|$(running)" "3|running"
+stop
+rm -f "${SWITCHER}"
+
 # No automatic state for this run (netplay, hardcore): the switcher keeps
 # the game open and says so; the battery closes it anyway.
 rm -f "${SWITCHER}" "${TMP}/osd"
@@ -123,7 +137,7 @@ N64=/roms/n64/Mario.z64
 emulator mupen64plus ":"
 game "${N64}" n64 mupen64plus mupen64plus
 "${SAVE_EXIT}" switch >/dev/null 2>&1
-check "mupen64plus: slot 9, save, slot 2 again" "$(cat "${TMP}/keys")" "9 F5 2"
+check "mupen64plus: slot 9 and save, then slot 2 again, apart" "$(tr '\n' '|' <"${TMP}/keys")" "9 F5|2|"
 check "mupen64plus: closed" "$(running)" "closed"
 stop
 check "mupen64plus: the state in slot 9" "$(cut -f6 "${RESUME_DIR}/resume-last")" "${MUPEN_STATES}/Mario (U)-635A42C5.st9"
