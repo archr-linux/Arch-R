@@ -9,6 +9,8 @@
 
 # shellcheck disable=SC2016 # stubs and their arguments expand when they run
 set -u
+# The card's runtime dir must come from the script, not this shell.
+unset XDG_RUNTIME_DIR
 HERE=$(cd "$(dirname "$0")" && pwd)
 SCRIPTS="$(dirname "${HERE}")/sources/scripts"
 FUNCTIONS="$(dirname "${HERE}")/profile.d/001-functions"
