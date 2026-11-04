@@ -16,8 +16,19 @@ mediatek/mt7662u*.bin
 mediatek/mt7610u.bin
 mediatek/WIFI_MT7961_patch_mcu_1_2_hdr.bin
 mediatek/WIFI_RAM_CODE_MT7961_1.bin
+# mt7663u: the driver ships, the firmware did not
+mediatek/mt7663*.bin
 
 ath6k/AR6004/hw1.?/bdata.bin
+# ath6kl_usb asks for fw-<api>.bin, not the fw.ram.bin it declares
+ath6k/AR6004/hw1.?/fw-?.bin
+
+# mwifiex_usb and libertas_tf_usb (Marvell): redistributable, see WHENCE
+mrvl/usb8766_uapsta.bin
+mrvl/usb8797_uapsta.bin
+mrvl/usb8801_uapsta.bin
+mrvl/usbusb8997_combo_v4.bin
+lbtf_usb.bin
 ath9k_htc/*
 brcm/*
 rt*/*

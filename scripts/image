@@ -250,6 +250,18 @@ for MOD in $(find ${INSTALL}/usr/lib/kernel-overlays/ -type f -name *.ko); do
   ${TARGET_KERNEL_PREFIX}strip --strip-debug ${MOD}
 done
 
+# USB Wi-Fi/Bluetooth advisor: the IDs the shipped drivers claim, whether
+# their firmware is here and which chips work (read by archr-usb-advisor
+# and the launcher). modinfo is kmod under another name.
+if [ -f ${INSTALL}/usr/bin/archr-usb-advisor ] && [ -f ${INSTALL}/usr/share/archr/usb-advisor-chips.tsv ]; then
+  mkdir -p ${BUILD}/.work/usb-advisor
+  [ -x ${TOOLCHAIN}/bin/kmod ] && ln -sf ${TOOLCHAIN}/bin/kmod ${BUILD}/.work/usb-advisor/modinfo
+  PATH="${BUILD}/.work/usb-advisor:${PATH}" bash ${INSTALL}/usr/bin/archr-usb-advisor gen \
+    ${INSTALL}/usr/lib/kernel-overlays/base/lib \
+    ${INSTALL}/usr/share/archr/usb-advisor-chips.tsv \
+    ${INSTALL}/usr/share/archr/usb-advisor.tsv || die "archr-usb-advisor gen failed"
+fi
+
 # Symlink overlayed modules to /usr/lib/modules
 ln -sT /run/kernel-overlays/modules ${INSTALL}/usr/lib/modules
 
