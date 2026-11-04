@@ -32,6 +32,11 @@ static char *descfile = "";
 module_param(descfile,charp,0660);
 MODULE_PARM_DESC(descfile, "Panel description filename in firmware dir");
 
+static bool force_continuous_clock;
+module_param(force_continuous_clock, bool, 0444);
+MODULE_PARM_DESC(force_continuous_clock,
+        "Clear MIPI_DSI_CLOCK_NON_CONTINUOUS (0x400) from the description's flags");
+
 struct generic_panel_delays {
     int prepare;
     int reset;
@@ -69,6 +74,7 @@ struct generic_panel_mode {
  * datasheets ask for 120 ms.
  */
 #define GENERIC_PANEL_SLEEP_OUT_MS 120
+
 struct generic_panel_init_seq {
     int dcs;
     int len;
@@ -137,21 +143,20 @@ int load_globals(char *data, struct mipi_dsi_device *dsi, struct generic_panel *
             } else if (strcmp(val, "rgb565") == 0) {
                 dsi->format = MIPI_DSI_FMT_RGB565;
             } else {
-                dev_err(dev, "bad format %s\n", val);
-                return -EINVAL;
+                dev_warn(dev, "bad format %s, keeping the default\n", val);
             }
         } else if (strcmp(param, "lanes") == 0) {
-            if (get_option(&val, &dsi->lanes) == 0) {
-                dev_err(dev, "bad lanes %s\n", val);
-                return -EINVAL;
-            }
+            int lanes;
+            if (get_option(&val, &lanes) == 0)
+                dev_warn(dev, "bad lanes %s, keeping the default\n", val);
+            else
+                dsi->lanes = lanes;
         } else if (strcmp(param, "flags") == 0) {
             int flags;
-            if (get_option(&val, &flags) == 0) {
-                dev_err(dev, "bad flags %s\n", val);
-                return -EINVAL;
-            }
-            dsi->mode_flags = flags;
+            if (get_option(&val, &flags) == 0)
+                dev_warn(dev, "bad flags %s, keeping the default\n", val);
+            else
+                dsi->mode_flags = flags;
         } else {
             /* Unknown keys are skipped so newer descriptions still load. */
             dev_warn(dev, "unknown G param %s, ignored\n", param);
@@ -230,8 +235,8 @@ static int parse_wait(struct device *dev, const char *val, int *wait)
         return -EINVAL;
     }
     if (ms > GENERIC_PANEL_MAX_WAIT_MS) {
-        dev_err(dev, "wait %s is %u ms, more than %d ms\n", val, ms, GENERIC_PANEL_MAX_WAIT_MS);
-        return -EINVAL;
+        dev_warn(dev, "wait %s is %u ms, cut to %d ms\n", val, ms, GENERIC_PANEL_MAX_WAIT_MS);
+        ms = GENERIC_PANEL_MAX_WAIT_MS;
     }
     *wait = ms;
     return 0;
@@ -373,11 +378,12 @@ int panel_description_foreach(struct mipi_dsi_device *dsi, struct generic_panel 
             data[pos - 1] = 0;
 
             ret = handle_line(data, dsi, ctx);
-            if (ret < 0) {
-                dev_err(dev, "%s: bad line \"%s\": %d\n", descfile, data, ret);
+            if (ret == -ENOMEM) {
                 release_firmware(fw);
                 return ret;
             }
+            if (ret < 0)
+                dev_warn(dev, "%s: line \"%s\" skipped: %d\n", descfile, data, ret);
 
             data = &data[pos];
             size = size - pos;
@@ -412,17 +418,34 @@ int panel_description_foreach(struct mipi_dsi_device *dsi, struct generic_panel 
             dev_dbg(dev, "desc[%ld]: %s", i, line);
             ret = handle_line(buf, dsi, ctx);
             kfree(buf);
-            if (ret < 0) {
-                dev_err(dev, "panel_description[%ld] \"%s\": %d\n", i, line, ret);
+            if (ret == -ENOMEM)
                 return ret;
-            }
+            if (ret < 0)
+                dev_warn(dev, "panel_description[%ld] \"%s\" skipped: %d\n", i, line, ret);
         }
     }
     return 0;
 }
 
+/* DCS command byte of an init step (the first byte of seq=), or -1. */
+static int iseq_cmd(const struct generic_panel_init_seq *it)
+{
+    if (it->dcs == DCS_PSEUDO_CMD_SEQ)
+        return it->len > 0 ? it->data[0] : -1;
+    return it->dcs;
+}
+
+/* True if the step is exactly the parameterless DCS command `cmd`. */
+static bool iseq_is_bare(const struct generic_panel_init_seq *it, int cmd)
+{
+    if (it->read > 0 || iseq_cmd(it) != cmd)
+        return false;
+    return it->dcs == DCS_PSEUDO_CMD_SEQ ? it->len == 1 : it->len == 0;
+}
+
 int load_panel_description(struct mipi_dsi_device *dsi, struct generic_panel *ctx) {
-    int ret;
+    struct generic_panel_mode *mode;
+    int ret, nmodes = 0, nsteps = 0;
 
     ret = panel_description_foreach(dsi, ctx, &load_panel_description_line);
     if (ret < 0) { return ret; }
@@ -437,25 +460,33 @@ int load_panel_description(struct mipi_dsi_device *dsi, struct generic_panel *ct
     }
     ctx->iseq = fwd;
 
+    for (mode = ctx->modes; mode; mode = mode->prev)
+        nmodes++;
+    for (tmp = ctx->iseq; tmp; tmp = tmp->link)
+        nsteps++;
+    if (nmodes == 0 && !ctx->num_timings)
+        dev_err(&dsi->dev, "no valid mode in panel_description\n");
+    if (nmodes == 0 && !ctx->num_timings && nsteps == 0) {
+        dev_err(&dsi->dev, "panel_description has no valid mode and no init step\n");
+        return -EINVAL;
+    }
+
     /*
      * Most vendor sequences already end with exit_sleep_mode (0x11) and
      * set_display_on (0x29). prepare() sends only the ones missing, so
-     * they are neither repeated nor sent in the wrong order.
+     * they are neither repeated nor sent in the wrong order. Only bare
+     * commands count: "seq=2901" is a register write on some
+     * controllers, not display_on. A 0x29 without a 0x11 does not count
+     * either: the driver then sends 0x11, waits and sends 0x29 itself.
      */
     for (tmp = ctx->iseq; tmp; tmp = tmp->link) {
-        int cmd;
-
-        if (tmp->read > 0)
-            continue;
-        if (tmp->dcs == DCS_PSEUDO_CMD_SEQ)
-            cmd = tmp->len > 0 ? tmp->data[0] : -1;
-        else
-            cmd = tmp->dcs;
-        if (cmd == MIPI_DCS_EXIT_SLEEP_MODE)
+        if (iseq_is_bare(tmp, MIPI_DCS_EXIT_SLEEP_MODE))
             ctx->seq_has_exit_sleep = true;
-        else if (cmd == MIPI_DCS_SET_DISPLAY_ON)
+        else if (iseq_is_bare(tmp, MIPI_DCS_SET_DISPLAY_ON))
             ctx->seq_has_display_on = true;
     }
+    if (!ctx->seq_has_exit_sleep)
+        ctx->seq_has_display_on = false;
     dev_info(&dsi->dev, "exit_sleep from %s, display_on from %s\n",
              ctx->seq_has_exit_sleep ? "sequence" : "driver",
              ctx->seq_has_display_on ? "sequence" : "driver");
@@ -469,7 +500,7 @@ static inline struct generic_panel *panel_to_generic_panel(struct drm_panel *pan
     return container_of(panel, struct generic_panel, panel);
 }
 
-static int generic_panel_init_sequence(struct generic_panel *ctx)
+static void generic_panel_init_sequence(struct generic_panel *ctx)
 {
     struct mipi_dsi_device *dsi = to_mipi_dsi_device(ctx->dev);
     struct device *dev = ctx->dev;
@@ -490,21 +521,19 @@ static int generic_panel_init_sequence(struct generic_panel *ctx)
                 }
             }
         } else {
-            int cmd;
-
-            if (iseq->dcs == DCS_PSEUDO_CMD_SEQ) {
-                cmd = iseq->len > 0 ? iseq->data[0] : -1;
+            if (iseq->dcs == DCS_PSEUDO_CMD_SEQ)
                 ret = mipi_dsi_dcs_write_buffer(dsi, iseq->data, iseq->len);
-            } else {
-                cmd = iseq->dcs;
+            else
                 ret = mipi_dsi_dcs_write(dsi, iseq->dcs, iseq->data, iseq->len);
-            }
-            dev_dbg(dev, "iseq %d cmd %02x len=%d -> %d\n", step, cmd, iseq->len, ret);
-            if (ret < 0) {
-                dev_err(dev, "init step %d (cmd 0x%02x, %d bytes) failed: %d\n",
-                        step, cmd, iseq->len, ret);
-                return ret;
-            }
+            dev_dbg(dev, "iseq %d cmd %02x len=%d -> %d\n", step, iseq_cmd(iseq), iseq->len, ret);
+            /*
+             * A panel that missed one vendor register usually still
+             * lights up; stopping here would leave the device without a
+             * screen. Log it and go on.
+             */
+            if (ret < 0)
+                dev_warn(dev, "init step %d (cmd 0x%02x, %d bytes) failed: %d, continuing\n",
+                         step, iseq_cmd(iseq), iseq->len, ret);
         }
         if (iseq->wait) {
             msleep(iseq->wait);
@@ -514,8 +543,15 @@ static int generic_panel_init_sequence(struct generic_panel *ctx)
     }
 
     dev_dbg(dev, "Panel init sequence done\n");
+}
 
-    return 0;
+static void generic_panel_power_off(struct generic_panel *ctx)
+{
+    if (ctx->enable_gpio) { gpiod_set_value_cansleep(ctx->enable_gpio, 0); }
+    gpiod_set_value_cansleep(ctx->reset_gpio, 1);
+
+    regulator_disable(ctx->iovcc);
+    regulator_disable(ctx->vdd);
 }
 
 static int generic_panel_unprepare(struct drm_panel *panel)
@@ -545,11 +581,7 @@ static int generic_panel_unprepare(struct drm_panel *panel)
     if (ret < 0)
         dev_err(ctx->dev, "failed to enter sleep mode: %d\n", ret);
 
-    if (ctx->enable_gpio) { gpiod_set_value_cansleep(ctx->enable_gpio, 0); }
-    gpiod_set_value_cansleep(ctx->reset_gpio, 1);
-
-    regulator_disable(ctx->iovcc);
-    regulator_disable(ctx->vdd);
+    generic_panel_power_off(ctx);
 
     ctx->prepared = false;
 
@@ -587,17 +619,13 @@ static int generic_panel_prepare(struct drm_panel *panel)
 
     msleep(ctx->delays.init);
 
-    ret = generic_panel_init_sequence(ctx);
-    if (ret < 0) {
-        dev_err(ctx->dev, "Panel init sequence failed: %d\n", ret);
-        goto disable_iovcc;
-    }
+    generic_panel_init_sequence(ctx);
 
     if (!ctx->seq_has_exit_sleep) {
         ret = mipi_dsi_dcs_exit_sleep_mode(dsi);
         if (ret < 0) {
             dev_err(ctx->dev, "Failed to exit sleep mode: %d\n", ret);
-            goto disable_iovcc;
+            goto power_off;
         }
         msleep(GENERIC_PANEL_SLEEP_OUT_MS);
     }
@@ -606,7 +634,7 @@ static int generic_panel_prepare(struct drm_panel *panel)
         ret = mipi_dsi_dcs_set_display_on(dsi);
         if (ret < 0) {
             dev_err(ctx->dev, "Failed to set display on: %d\n", ret);
-            goto disable_iovcc;
+            goto power_off;
         }
     }
 
@@ -618,8 +646,10 @@ static int generic_panel_prepare(struct drm_panel *panel)
 
     return 0;
 
-disable_iovcc:
-    regulator_disable(ctx->iovcc);
+power_off:
+    generic_panel_power_off(ctx);
+    return ret;
+
 disable_vdd:
     regulator_disable(ctx->vdd);
     return ret;
@@ -809,6 +839,11 @@ static int generic_panel_probe(struct mipi_dsi_device *dsi)
     if (ret < 0) {
         dev_err(dev, "Failed to load panel description\n");
         return ret;
+    }
+
+    if (force_continuous_clock && (dsi->mode_flags & MIPI_DSI_CLOCK_NON_CONTINUOUS)) {
+        dsi->mode_flags &= ~MIPI_DSI_CLOCK_NON_CONTINUOUS;
+        dev_info(dev, "force_continuous_clock: non-continuous clock flag cleared\n");
     }
 
     mipi_dsi_set_drvdata(dsi, ctx);

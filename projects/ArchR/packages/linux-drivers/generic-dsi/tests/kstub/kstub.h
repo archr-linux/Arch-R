@@ -288,13 +288,17 @@ struct of_device_id { const char *compatible; };
 /* ---- gpio, regulator, firmware, of ---------------------------------- */
 struct gpio_desc { int value; };
 enum gpiod_flags { GPIOD_OUT_LOW };
-static struct gpio_desc stub_reset_gpio;
+static struct gpio_desc stub_reset_gpio, stub_enable_gpio;
 static inline struct gpio_desc *devm_gpiod_get_optional(struct device *dev, const char *id, enum gpiod_flags f)
 {
 	(void)dev; (void)f;
-	return strcmp(id, "reset") == 0 ? &stub_reset_gpio : NULL;
+	return strcmp(id, "reset") == 0 ? &stub_reset_gpio : &stub_enable_gpio;
 }
-static inline void gpiod_set_value_cansleep(struct gpio_desc *d, int v) { d->value = v; rec("gpio %d", v); }
+static inline void gpiod_set_value_cansleep(struct gpio_desc *d, int v)
+{
+	d->value = v;
+	rec("gpio %s %d", d == &stub_reset_gpio ? "reset" : "enable", v);
+}
 
 struct regulator { int count; };
 static struct regulator stub_vdd, stub_iovcc;

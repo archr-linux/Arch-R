@@ -77,6 +77,8 @@ static void reset_state(void)
 	nmodes = 0;
 	stub_vdd.count = 0;
 	stub_iovcc.count = 0;
+	stub_reset_gpio.value = -1;
+	stub_enable_gpio.value = -1;
 }
 
 /* ---- helpers -------------------------------------------------------- */
@@ -222,8 +224,8 @@ static void test_wait_is_decimal_or_0x(void)
 	CHECK(followed_by("W 29", "sleep 592"), "wait=0x250 is not 592 ms: %s", ev);
 }
 
-/* A write that fails stops prepare() and is logged with its step. */
-static void test_write_failure_aborts_prepare(void)
+/* A failed vendor write is logged and the sequence goes on. */
+static void test_write_failure_is_logged_and_skipped(void)
 {
 	const char *lines[] = { G_LINE, M_LINE, "I seq=b9f11283", "I seq=b480",
 		"I seq=cc0b", "I seq=11 wait=0x96", "I seq=29 wait=0x32" };
@@ -239,15 +241,110 @@ static void test_write_failure_aborts_prepare(void)
 	fail_write_at = 2;
 	ret = ctx->panel.funcs->prepare(&ctx->panel);
 	events_string(ev, sizeof(ev));
+	CHECK(ret == 0, "prepare returned %d: %s", ret, ev);
+	CHECK(writes == 5, "%d writes, want all 5: %s", writes, ev);
+	CHECK(strstr(logbuf, "warn: init step 1 (cmd 0xb4, 2 bytes) failed: -5") != NULL,
+	      "failure not logged: %s", logbuf);
+	CHECK(ctx->prepared, "panel not prepared");
+}
+
+/* The driver's own 0x11 failing powers the panel down like unprepare. */
+static void test_driver_exit_sleep_failure_powers_off(void)
+{
+	const char *lines[] = { G_LINE, M_LINE, "I seq=b9f11283" };
+	struct generic_panel *ctx;
+	char ev[2048];
+	int ret;
+
+	CHECK(probe(lines, N(lines), &ctx) == 0, "probe failed: %s", logbuf);
+	if (!ctx)
+		return;
+	nevents = 0;
+	writes = 0;
+	fail_write_at = 2;	/* b9f11283, then the driver's 0x11 */
+	ret = ctx->panel.funcs->prepare(&ctx->panel);
+	events_string(ev, sizeof(ev));
 	CHECK(ret == -EIO, "prepare returned %d, want -EIO: %s", ret, ev);
-	CHECK(writes == 2, "%d writes, want to stop at the failed one: %s", writes, ev);
-	CHECK(strstr(logbuf, "init step 1 (cmd 0xb4") != NULL, "failure not logged: %s", logbuf);
+	CHECK(count_events("W 29") == 0, "0x29 sent after 0x11 failed: %s", ev);
+	CHECK(stub_enable_gpio.value == 0, "enable gpio %d, want 0", stub_enable_gpio.value);
+	CHECK(stub_reset_gpio.value == 1, "reset gpio %d, want 1 (asserted)", stub_reset_gpio.value);
+	{
+		int i, g[2] = { -1, -1 }, ng = 0;
+
+		for (i = index_of("W 11 FAIL"); i >= 0 && i < nevents; i++)
+			if (strncmp(events[i], "gpio", 4) == 0 && ng < 2)
+				g[ng++] = i;
+		CHECK(ng == 2 && strcmp(events[g[0]], "gpio enable 0") == 0 &&
+		      strcmp(events[g[1]], "gpio reset 1") == 0,
+		      "after the failure want enable=0 then reset=1 (%d gpio events)", ng);
+	}
 	CHECK(stub_vdd.count == 0 && stub_iovcc.count == 0, "supplies left on (%d, %d)",
 	      stub_vdd.count, stub_iovcc.count);
 	CHECK(!ctx->prepared, "panel marked prepared after a failure");
 }
 
-static void test_malformed_lines_fail_probe(void)
+/* "seq=2901" is a register write (rgb20s page select), not display_on. */
+static void test_register_write_2901_is_not_display_on(void)
+{
+	const char *lines[] = { G_LINE, M_LINE, "I seq=ff3052", "I seq=2901",
+		"I seq=11 wait=0x96" };
+	struct generic_panel *ctx;
+	char ev[2048];
+
+	CHECK(probe(lines, N(lines), &ctx) == 0, "probe failed: %s", logbuf);
+	if (!ctx)
+		return;
+	nevents = 0;
+	ctx->panel.funcs->prepare(&ctx->panel);
+	events_string(ev, sizeof(ev));
+	CHECK(count_events("W 2901") == 1, "page write missing: %s", ev);
+	CHECK(count_events("W 11") == 1, "0x11 sent %d times: %s", count_events("W 11"), ev);
+	CHECK(count_events("W 29") == 1 && index_of("W 29") > index_of("W 11"),
+	      "driver did not send 0x29 after 0x11: %s", ev);
+}
+
+/* 0x29 without 0x11 in the sequence: the driver sends 11, waits, 29. */
+static void test_29_without_11_gets_11_wait_29(void)
+{
+	const char *lines[] = { G_LINE, M_LINE, "I seq=b9f11283", "I seq=29 wait=0x32" };
+	struct generic_panel *ctx;
+	char ev[2048];
+	int i11, last29 = -1, i;
+
+	CHECK(probe(lines, N(lines), &ctx) == 0, "probe failed: %s", logbuf);
+	if (!ctx)
+		return;
+	nevents = 0;
+	ctx->panel.funcs->prepare(&ctx->panel);
+	events_string(ev, sizeof(ev));
+	i11 = index_of("W 11");
+	for (i = 0; i < nevents; i++)
+		if (strcmp(events[i], "W 29") == 0)
+			last29 = i;
+	CHECK(i11 >= 0 && i11 + 1 < nevents && strcmp(events[i11 + 1], "sleep 120") == 0,
+	      "no 11 + 120 ms: %s", ev);
+	CHECK(last29 > i11, "no 0x29 after the driver's 0x11: %s", ev);
+}
+
+static void test_force_continuous_clock(void)
+{
+	const char *lines[] = { G_LINE, M_LINE, "I seq=11" };
+	struct generic_panel *ctx;
+	struct mipi_dsi_device *dsi;
+
+	force_continuous_clock = true;
+	CHECK(probe(lines, N(lines), &ctx) == 0, "probe failed: %s", logbuf);
+	force_continuous_clock = false;
+	if (!ctx)
+		return;
+	dsi = to_mipi_dsi_device(ctx->dev);
+	CHECK(dsi->mode_flags == 0xa03, "mode_flags %#lx, want 0xa03", dsi->mode_flags);
+	CHECK(probe(lines, N(lines), &ctx) == 0 && to_mipi_dsi_device(ctx->dev)->mode_flags == 0xe03,
+	      "default changed the flags");
+}
+
+/* A bad line is skipped with a warning naming it; the rest still loads. */
+static void test_malformed_lines_are_skipped(void)
 {
 	static const char *bad[] = {
 		"I seq=b9f",			/* odd number of digits */
@@ -255,12 +352,10 @@ static void test_malformed_lines_fail_probe(void)
 		"I seq=",			/* empty */
 		"I wait=10",			/* no command */
 		"I seq=11 wait=15x",		/* not a number */
-		"I seq=11 wait=1001",		/* above the limit */
 		"I dcs=1ff",			/* not a byte */
 		"M clock=40000 horizontal=640,120,120 vertical=480,17,5,13",
 		"M clock=abc horizontal=640,120,120,120 vertical=480,17,5,13",
 		"M horizontal=640,120,120,120 vertical=480,17,5,13",
-		"G format=rgb999",
 		"X what",
 	};
 	int i;
@@ -268,12 +363,60 @@ static void test_malformed_lines_fail_probe(void)
 	for (i = 0; i < N(bad); i++) {
 		const char *lines[] = { G_LINE, M_LINE, "I seq=11 wait=0x96", bad[i] };
 		struct generic_panel *ctx;
-		int ret = probe(lines, N(lines), &ctx);
+		struct generic_panel_mode *m;
+		struct generic_panel_init_seq *it;
+		int ret = probe(lines, N(lines), &ctx), nm = 0, ns = 0;
 
-		CHECK(ret < 0, "\"%s\" loaded (ret %d)", bad[i], ret);
-		CHECK(strstr(logbuf, "panel_description[3]") != NULL,
-		      "\"%s\": error does not name the line: %s", bad[i], logbuf);
+		CHECK(ret == 0, "\"%s\" failed the probe (ret %d): %s", bad[i], ret, logbuf);
+		CHECK(strstr(logbuf, "panel_description[3]") != NULL && strstr(logbuf, "skipped") != NULL,
+		      "\"%s\": warning does not name the line: %s", bad[i], logbuf);
+		if (!ctx)
+			continue;
+		for (m = ctx->modes; m; m = m->prev)
+			nm++;
+		for (it = ctx->iseq; it; it = it->link)
+			ns++;
+		CHECK(nm == 1 && ns == 1, "\"%s\": %d modes, %d steps, want 1 and 1", bad[i], nm, ns);
 	}
+}
+
+static void test_bad_g_value_keeps_default(void)
+{
+	const char *lines[] = { "G format=rgb999 lanes=4 flags=0xe03", M_LINE, "I seq=11" };
+	struct generic_panel *ctx;
+
+	CHECK(probe(lines, N(lines), &ctx) == 0, "probe failed: %s", logbuf);
+	if (ctx)
+		CHECK(to_mipi_dsi_device(ctx->dev)->lanes == 4, "values after the bad one lost");
+	CHECK(strstr(logbuf, "bad format rgb999") != NULL, "no warning: %s", logbuf);
+}
+
+static void test_long_wait_is_cut_to_the_limit(void)
+{
+	const char *lines[] = { G_LINE, M_LINE, "I seq=11 wait=1500", "I seq=29" };
+	struct generic_panel *ctx;
+	char ev[2048];
+
+	CHECK(probe(lines, N(lines), &ctx) == 0, "probe failed: %s", logbuf);
+	CHECK(strstr(logbuf, "cut to 1000 ms") != NULL, "no warning: %s", logbuf);
+	if (!ctx)
+		return;
+	nevents = 0;
+	ctx->panel.funcs->prepare(&ctx->panel);
+	events_string(ev, sizeof(ev));
+	CHECK(followed_by("W 11", "sleep 1000"), "wait not cut to 1000 ms: %s", ev);
+}
+
+static void test_probe_fails_only_with_nothing_usable(void)
+{
+	const char *none[] = { G_LINE, "M clock=abc", "I seq=zz" };
+	const char *only_steps[] = { G_LINE, "M clock=abc", "I seq=11" };
+	const char *only_mode[] = { G_LINE, M_LINE, "I seq=zz" };
+	struct generic_panel *ctx;
+
+	CHECK(probe(none, N(none), &ctx) < 0, "loaded with no mode and no step");
+	CHECK(probe(only_steps, N(only_steps), &ctx) == 0, "failed with init steps left: %s", logbuf);
+	CHECK(probe(only_mode, N(only_mode), &ctx) == 0, "failed with a mode left: %s", logbuf);
 }
 
 static void test_unknown_keys_and_comments_are_tolerated(void)
@@ -353,8 +496,15 @@ int main(int argc, char **argv)
 	RUN(test_sequence_with_11_29_is_not_repeated);
 	RUN(test_driver_sends_11_wait_29_when_missing);
 	RUN(test_wait_is_decimal_or_0x);
-	RUN(test_write_failure_aborts_prepare);
-	RUN(test_malformed_lines_fail_probe);
+	RUN(test_write_failure_is_logged_and_skipped);
+	RUN(test_driver_exit_sleep_failure_powers_off);
+	RUN(test_register_write_2901_is_not_display_on);
+	RUN(test_29_without_11_gets_11_wait_29);
+	RUN(test_force_continuous_clock);
+	RUN(test_malformed_lines_are_skipped);
+	RUN(test_bad_g_value_keeps_default);
+	RUN(test_long_wait_is_cut_to_the_limit);
+	RUN(test_probe_fails_only_with_nothing_usable);
 	RUN(test_unknown_keys_and_comments_are_tolerated);
 	RUN(test_sync_polarity);
 	printf("%d check(s) failed\n", failures);
