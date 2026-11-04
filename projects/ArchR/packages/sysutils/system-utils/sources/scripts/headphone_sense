@@ -4,10 +4,10 @@
 # Copyright (C) 2020-present Shanti Gilbert (https://github.com/shantigilbert)
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
-. /etc/profile
+. "${ARCHR_PROFILE:-/etc/profile}"
 
 if [[ ${AUDIO_MANAGEMENT} == "UCM" ]]; then
-    /usr/bin/volume restore
+    volume restore
     exit 0
 fi
 
@@ -25,7 +25,6 @@ if [ -n "${DEVICE_HEADPHONE_DEV}" ] && [ -e "${DEVICE_HEADPHONE_DEV}" ]; then
 elif [ -n "${DEVICE_JACK}" ] && [ -e "/sys/class/gpio/gpio${DEVICE_JACK}/value" ]; then
   [ "$(cat /sys/class/gpio/gpio${DEVICE_JACK}/value)" = "0" ] && JACK_STATE="headphone"
 fi
-set_setting "audio.device" "${JACK_STATE}"
 
 ### Set the default audio path, needed for some devices
 if [ -z "${DEVICE_PLAYBACK_PATH}" ]
@@ -33,18 +32,29 @@ then
   DEVICE_PLAYBACK_PATH="Playback Path"
 fi
 
+# Moves the mux and records where the sound goes, in that order: when the
+# mixer refuses (no such control, no such item, no card yet) audio.device
+# keeps saying where the sound really is, and the journal says why.
+set_path() {
+  if amixer -c 0 cset "name=${DEVICE_PLAYBACK_PATH}" "${1}" >/dev/null; then
+    set_setting "audio.device" "${2}"
+  else
+    echo "headphone_sense: could not set '${DEVICE_PLAYBACK_PATH}' to '${1}' for ${2}; audio.device left as it was" >&2
+  fi
+}
+
 # An explicit request wins; "auto" (or nothing) follows the jack state
 # detected above, so a reboot with headphones plugged starts on HP.
 case "${2:-${JACK_STATE}}" in
     "headphone")
-        amixer -c 0 -M cset "name=${DEVICE_PLAYBACK_PATH}" "${DEVICE_PLAYBACK_PATH_HP}"
+        set_path "${DEVICE_PLAYBACK_PATH_HP}" headphone
     ;;
     "auto"|"speakers"|*)
-        amixer -c 0 -M cset "name=${DEVICE_PLAYBACK_PATH}" "${DEVICE_PLAYBACK_PATH_SPK}"
+        set_path "${DEVICE_PLAYBACK_PATH_SPK}" speakers
     ;;
 esac
 
-/usr/bin/volume restore
+volume restore
 
 # Headphone sensing
 DEVICE="${DEVICE_HEADPHONE_DEV}"
@@ -62,12 +72,10 @@ HP_OFF='*(SW_HEADPHONE_INSERT), value 1*'
 evtest "${DEVICE}" | while read line; do
     case $line in
 	(${HP_ON})
-	amixer -c 0 cset "name=${DEVICE_PLAYBACK_PATH}" "${DEVICE_PLAYBACK_PATH_HP}"
-	set_setting "audio.device" "headphone"
+	set_path "${DEVICE_PLAYBACK_PATH_HP}" headphone
 	;;
 	(${HP_OFF})
-	amixer -c 0 cset "name=${DEVICE_PLAYBACK_PATH}" "${DEVICE_PLAYBACK_PATH_SPK}"
-	set_setting "audio.device" "speakers"
+	set_path "${DEVICE_PLAYBACK_PATH_SPK}" speakers
 	;;
     esac
 done
