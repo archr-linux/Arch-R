@@ -2,24 +2,29 @@
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (C) 2025-present ArchR (https://github.com/archr-linux/Arch-R)
 #
-# Measures one game for the launcher's modules (archr-launcher
-# docs/modulos.md, API 3), without MangoHud and for every emulator: once a
-# second, how busy the emulator's busiest thread was. An emulator ahead of
-# the game's pace waits for vsync or audio; one that cannot keep up stays
-# busy. runemu.sh --measure starts it with the game and stops it with
+# archr-perf-probe ROOT: measures one game for the launcher's modules
+# (archr-launcher docs/modulos.md, API 3), without MangoHud and for every
+# emulator. A heuristic of CPU occupancy, not a frame count: once a second,
+# how busy the emulator's busiest thread was. An emulator ahead of the
+# game's pace waits for vsync or audio; one that cannot keep up stays busy.
+# runemu.sh --measure starts it with its own PID as ROOT and stops it with
 # SIGTERM; it then publishes a short summary:
 #   {"started": s, "cpu_max_khz": k, "seconds": n, "busy_p95": %,
-#    "limit_seconds": n, "current_ma": mA or null}
-# The first WARMUP seconds (loading, menus) do not count; the emulator is the
-# process that used the most CPU in them.
+#    "limit_seconds": n, "idle_seconds": n, "current_ma": mA or null}
+# The first WARMUP seconds (loading, menus) do not count; the emulator is
+# the process under ROOT that used the most CPU in them, never anything
+# else running on the device.
 
+ROOT=${1:?usage: archr-perf-probe ROOT_PID}
 OUT=${ARCHR_PERF_OUT:-/run/archr/perf-last.json}
 PROC=${ARCHR_PROC:-/proc}
 CPUFREQ=${CPUFREQ:-/sys/devices/system/cpu/cpufreq}
 BATTERY=${ARCHR_BATTERY:-/sys/class/power_supply/battery}
 WARMUP=${ARCHR_PERF_WARMUP:-30}
-# A thread this busy (%) for a second could not keep the pace.
+# A thread this busy (%) for a second could not keep the pace; one below
+# IDLE was waiting (pause, menu): that second says nothing about the pace.
 LIMIT=92
+IDLE=20
 HZ=$(getconf CLK_TCK 2>/dev/null || echo 100)
 
 STARTED=$(date +%s)
@@ -27,50 +32,67 @@ read -r CAP 2>/dev/null <"${CPUFREQ}/policy0/scaling_max_freq"
 SAMPLES=()
 MA_SUM=0
 MA_COUNT=0
+SLEEPER=""
 
-# CPU ticks (user + system) of one /proc stat file; the name may hold spaces
-# and parentheses, the fields after its last ") " never do.
-ticks() {
+# Fields after the name of a /proc stat file; the name may hold spaces and
+# parentheses, the fields after its last ") " never do. $2 is the parent,
+# $12 + $13 the CPU ticks.
+fields() {
   local line
   read -r line 2>/dev/null <"$1" || return 1
-  # shellcheck disable=SC2086
-  set -- ${line##*) }
-  echo $((${12} + ${13}))
+  echo "${line##*) }"
 }
-# Every process's ticks, as "pid ticks" lines.
+# "pid ticks" of every process under ROOT, this probe and its sleep aside.
 processes() {
-  local stat
+  local stat pid parent
+  declare -A parents=()
+  declare -A tick=()
   for stat in "${PROC}"/[0-9]*/stat; do
-    local pid=${stat%/stat}
+    pid=${stat%/stat}
     pid=${pid##*/}
+    # shellcheck disable=SC2046
+    set -- $(fields "${stat}") || continue
+    parents[${pid}]=$2
+    tick[${pid}]=$((${12} + ${13}))
+  done
+  for pid in "${!tick[@]}"; do
     [ "${pid}" = $$ ] && continue
-    echo "${pid} $(ticks "${stat}" || echo 0)"
+    parent=${parents[${pid}]}
+    while [ -n "${parent}" ] && [ "${parent}" != "${ROOT}" ] && [ "${parent}" != $$ ] && [ "${parent}" -gt 1 ]; do
+      parent=${parents[${parent}]}
+    done
+    [ "${parent}" = "${ROOT}" ] && echo "${pid} ${tick[${pid}]}"
   done
 }
 
 publish() {
-  local p95=0 limited=0 seconds=${#SAMPLES[@]} current=null
+  [ -n "${SLEEPER}" ] && kill "${SLEEPER}" 2>/dev/null
+  wait 2>/dev/null
+  local p95=0 limited=0 idle=0 seconds=${#SAMPLES[@]} current=null busy
   if [ "${seconds}" -gt 0 ]; then
     local sorted
     mapfile -t sorted < <(printf '%s\n' "${SAMPLES[@]}" | sort -n)
     p95=${sorted[$(((seconds * 95 + 99) / 100 - 1))]}
     for busy in "${SAMPLES[@]}"; do
       [ "${busy}" -ge "${LIMIT}" ] && limited=$((limited + 1))
+      [ "${busy}" -lt "${IDLE}" ] && idle=$((idle + 1))
     done
   fi
   [ "${MA_COUNT}" -gt 0 ] && current=$((MA_SUM / MA_COUNT))
   mkdir -p "${OUT%/*}"
-  printf '{"started":%s,"cpu_max_khz":%s,"seconds":%s,"busy_p95":%s,"limit_seconds":%s,"current_ma":%s}\n' \
-    "${STARTED}" "${CAP:-0}" "${seconds}" "${p95}" "${limited}" "${current}" >"${OUT}.tmp" &&
+  printf '{"started":%s,"cpu_max_khz":%s,"seconds":%s,"busy_p95":%s,"limit_seconds":%s,"idle_seconds":%s,"current_ma":%s}\n' \
+    "${STARTED}" "${CAP:-0}" "${seconds}" "${p95}" "${limited}" "${idle}" "${current}" >"${OUT}.tmp" &&
     mv -f "${OUT}.tmp" "${OUT}"
   exit 0
 }
 trap publish TERM INT
 
-# A sleep the TERM trap interrupts at once.
+# A sleep the TERM trap interrupts at once, and collects.
 pause() {
   sleep "$1" &
-  wait $!
+  SLEEPER=$!
+  wait "${SLEEPER}"
+  SLEEPER=""
 }
 
 declare -A before
@@ -88,14 +110,16 @@ unset before
 
 declare -A last
 LAST_US=""
-while :; do
+while [ -n "${EMULATOR}" ]; do
   now_us=${EPOCHREALTIME//[.,]/}
   busiest=0
   declare -A seen=()
   for stat in "${PROC}/${EMULATOR}"/task/[0-9]*/stat; do
     tid=${stat%/stat}
     tid=${tid##*/}
-    count=$(ticks "${stat}") || continue
+    # shellcheck disable=SC2046
+    set -- $(fields "${stat}") || continue
+    count=$((${12} + ${13}))
     seen[${tid}]=${count}
     if [ -n "${LAST_US}" ] && [ -n "${last[${tid}]}" ]; then
       busy=$(((count - last[${tid}]) * 100000000 / (HZ * (now_us - LAST_US))))
@@ -120,3 +144,5 @@ while :; do
   LAST_US=${now_us}
   pause 1
 done
+# Nothing under ROOT ran: wait for the TERM.
+while :; do pause 3600; done

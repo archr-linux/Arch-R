@@ -649,7 +649,7 @@ else
         # A launcher module learns from this run: measured under its ceiling.
         PERF_PROBE=""
         if [ "${MEASURE}" = 1 ]; then
-          archr-perf-probe &
+          archr-perf-probe $$ &
           # shellcheck disable=SC2128 # $! is the probe's pid
           PERF_PROBE=$!
         fi
