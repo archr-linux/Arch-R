@@ -3,7 +3,8 @@
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (C) 2025-present ArchR (https://github.com/archr-linux/Arch-R)
 
-. /etc/profile
+# shellcheck source=/dev/null
+. "${ARCHR_SCREENSHOT_PROFILE:-/etc/profile}"
 
 # The running game (runemu.sh records its ROM path) names the file as
 # RetroArch names its own captures, <rom>-AAMMDD-HHMMSS.png, so the
@@ -33,15 +34,13 @@ screenshot_name() {
 # The shortcut's on/off state (hotkey.screenshot.enabled) belongs to
 # input_sense, which only calls this script when it is on.
 
-# Disable archr-screenshot while retroarch is running
-if pgrep -f "retroarch" > /dev/null; then
-  echo "RetroArch is running, skipping screenshot."
-  # 'failure' (screenshot not taken) exit code
-  exit 1
-fi
+# RetroArch is no exception: it runs fullscreen as a client of the sway
+# session, so grim captures what the player sees, the same way it does for
+# the other emulators, and the name above is the one RetroArch gives its
+# own captures (auto_screenshot_filename), so the launcher lists both alike.
 
 # Folder to save screenshots
-SAVE_DIR="/storage/roms/screenshots"
+SAVE_DIR="${ARCHR_SCREENSHOT_DIR:-/storage/roms/screenshots}"
 
 # Create the folder if it doesn't exist
 mkdir -p "$SAVE_DIR"
@@ -54,11 +53,20 @@ FULL_PATH="${SAVE_DIR}/${FILENAME}"
 GEOMETRY=$(swaymsg -t get_tree | jq -r '
 ..
   | select(.type? == "con" and .focused == true)
-  | "\(.rect.x),\(.rect.y) \(.rect.width)x\(.rect.height)"'
+  | "\(.rect.x),\(.rect.y) \(.rect.width)x\(.rect.height)"' | head -n 1
 )
 
-# Take screenshot of the focused window
-grim -g "$GEOMETRY" "$FULL_PATH"
+# Take screenshot of the focused window (the whole output when sway reports
+# none focused). A failed capture leaves no file and exits 1.
+if [ -n "$GEOMETRY" ]; then
+  grim -g "$GEOMETRY" "$FULL_PATH"
+else
+  grim "$FULL_PATH"
+fi
+if [ ! -s "$FULL_PATH" ]; then
+  rm -f "$FULL_PATH"
+  exit 1
+fi
 
 # 'success' (screenshot taken) exit code
 exit 0
