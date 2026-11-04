@@ -18,7 +18,7 @@ trap 'rm -rf "${TMP}"' EXIT
 FAILED=0
 
 export SETSETTINGS_PROFILE="${TMP}/profile" SETSETTINGS_RETROARCH="${TMP}/ra" \
-  SETSETTINGS_ROMS="${TMP}/roms" SETSETTINGS_APPEND="${TMP}/append.cfg" \
+  SETSETTINGS_ROMS="${TMP}/roms" SETSETTINGS_APPEND="${TMP}/append.cfg" SETSETTINGS_REMAPS="${TMP}/remaps" \
   ARCHR_JOYPADS="${TMP}/joypads" ARCHR_INPUT_DEVICES="${TMP}/devices"
 cat >"${SETSETTINGS_PROFILE}" <<PROFILE
 . "${PKG}/profile.d/001-functions"
@@ -102,6 +102,35 @@ check "shader none" "has 'video_shader_enable = \"false\"' '${A}' && ! grep -q -
 check "overlay none blanks it" "has 'input_overlay = \"\"' '${A}' && has 'input_overlay_enable = \"false\"' '${A}'"
 check "only the whole key leaves retroarch.cfg" "has 'input_overlay_opacity = \"0.5\"' '${TMP}/ra/retroarch.cfg'"
 check "no sed scripts left behind" "! ls '${TMP}'/append.cfg.sed* >/dev/null 2>&1"
+
+# PlayStation: the cores start as a digital pad and RetroArch reads the
+# device type only from a remap, so a core remap plugs in a DualShock (the
+# id differs per core), once; the stick stays a stick, not a d-pad.
+RM="${SETSETTINGS_REMAPS}"
+psx() {
+  printf '%s\n' "${USER_RA}" >"${TMP}/ra/retroarch.cfg"
+  : >"${TMP}/system.cfg"
+  bash "${SCRIPTS}/setsettings.sh" psx "/roms/psx/Ape Escape (USA).chd" "$1" \
+    --controllers=" -p1index 0 -p1guid abc " --autosave="" --snapshot="" >"${TMP}/stdout"
+}
+P="${RM}/PCSX-ReARMed/PCSX-ReARMed.rmp"
+for core in pcsx_rearmed32 pcsx_rearmed; do
+  rm -rf "${RM}"
+  psx "${core}"
+  check "${core}: DualShock on port 1 to 5" \
+    "[ \$(grep -c '^input_libretro_device_p[1-5] = \"517\"$' '${P}') = 5 ]"
+  check "${core}: stick is not a d-pad" "has 'input_player1_analog_dpad_mode = \"0\"' '${A}'"
+  check "${core}: nothing dead in the append config" "! grep -q '^input_libretro_device_p' '${A}'"
+done
+printf '%s\n' 'input_libretro_device_p1 = "1"' 'input_player1_btn_b = "8"' >"${P}"
+psx pcsx_rearmed32
+check "a remap the user saved stays" "has 'input_player1_btn_b = \"8\"' '${P}' && has 'input_libretro_device_p1 = \"1\"' '${P}'"
+psx swanstation
+check "swanstation: its own DualShock id" \
+  "[ \$(grep -c '^input_libretro_device_p[1-5] = \"261\"$' '${RM}/SwanStation/SwanStation.rmp') = 5 ]"
+rm -rf "${RM}"
+run
+check "other systems get no remap" "[ ! -e '${RM}' ]"
 
 # Hotkeys: once, then RetroArch's own changes stay; --force rewrites.
 HK="${SCRIPTS}/archr-retroarch-hotkeys"

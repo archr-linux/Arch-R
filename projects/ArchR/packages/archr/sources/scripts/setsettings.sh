@@ -14,6 +14,7 @@ RETROARCH_PATH="${SETSETTINGS_RETROARCH:-/storage/.config/retroarch}"
 RETROARCH_CONFIG="${RETROARCH_PATH}/retroarch.cfg"
 
 ROMS_DIR="${SETSETTINGS_ROMS:-/storage/roms}"
+REMAPS_DIR="${SETSETTINGS_REMAPS:-/storage/remappings}"
 SNAPSHOTS="${ROMS_DIR}/savestates"
 BEZEL_DIR="${ROMS_DIR}/bezels"
 
@@ -859,6 +860,33 @@ function set_analogsupport() {
     esac
 }
 
+# The PlayStation cores start every port as a digital pad, which never
+# reads the sticks: Ape Escape stops at its "DUALSHOCK not plugged" screen
+# and the other games ignore the stick. RetroArch takes the device type
+# (input_libretro_device_pN) only from a remap file, never from
+# retroarch.cfg or the append config, so a core remap with a DualShock on
+# ports 1 to 5 is written once. A remap the user saved (core, folder or
+# game) is never touched. The d-pad works as before; the game turns
+# analog mode on, or L1+R1+Select on PCSX ReARMed.
+function set_psx_pad() {
+    local NAME DEVICE
+    [ "${PLATFORM}" = "psx" ] || return
+    case "${CORE}" in
+        pcsx_rearmed*) NAME="PCSX-ReARMed"; DEVICE=517 ;; # SUBCLASS(ANALOG, 1)
+        swanstation)   NAME="SwanStation";  DEVICE=261 ;; # SUBCLASS(ANALOG, 0)
+        *) return ;;
+    esac
+    local RMP="${REMAPS_DIR}/${NAME}/${NAME}.rmp"
+    [ -e "${RMP}" ] && return
+    mkdir -p "${RMP%/*}"
+    local i
+    for i in 1 2 3 4 5
+    do
+        echo "input_libretro_device_p${i} = \"${DEVICE}\""
+    done >"${RMP}"
+    log "DualShock remap written: ${RMP}"
+}
+
 function set_tatemode() {
     log "Setup tate mode..."
     if [ "${CORE}" = "mame2003_plus" ]
@@ -1286,6 +1314,7 @@ set_runahead &
 set_frame_delay &
 set_audiolatency &
 set_analogsupport &
+set_psx_pad &
 set_tatemode &
 set_n64opts &
 set_saturnopts &
