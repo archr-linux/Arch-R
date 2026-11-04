@@ -16,15 +16,15 @@ if [ ! -e "${DEVS[0]}" ]; then
 fi
 
 screen_ok() {
-  if ! [[ "${1}" =~ ^[1-9][0-9]*$ ]] || [ "${1}" -gt "${#DEVS[@]}" ]; then
-    echo "ERROR: Screen number ${1} is out of range (1-${#DEVS[@]})." >&2
+  if ! [[ "${1}" =~ ^[12]$ ]] || [ "${1}" -gt "${#DEVS[@]}" ]; then
+    echo "ERROR: Screen number ${1} is out of range (1-$(( ${#DEVS[@]} < 2 ? ${#DEVS[@]} : 2 )))." >&2
     return 1
   fi
 }
 
 # level <op> <screen|all>
 level() {
-  local i first=1 last=${#DEVS[@]}
+  local i first=1 last=$(( ${#DEVS[@]} < 2 ? ${#DEVS[@]} : 2 ))
   if [ "${2}" != all ]; then
     screen_ok "${2}" || return 1
     first=${2}
