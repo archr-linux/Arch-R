@@ -106,6 +106,15 @@ passwd:   SECRET-passwd more
 x=1 next passwd=a SECRET-midline words
 ra_user=SECRET-rauser2&ra_token=SECRET-ratoken2
 x=1 password=SECRET-tail secret
+Senha=SECRET-senha
+chave: SECRET-chave
+OAuth SECRET-oauth
+password:
+  SECRET-nextline
+[Security]
+Passphrase
+=SECRET-equalsline
+middle line kept
 curl -H "X-Api-Key: SECRET-apikeyheader" h
 {"password": "a\"SECRET-escaped quote"}
 {"token":"t","pw":"SECRET-pw2","pwd":"SECRET-pwd"}
@@ -121,7 +130,11 @@ multi /var/log/boot.log 'key: [\n  SECRET-n3\n]\n'
 multi /storage/.config/retroarch/retroarch-core-options.cfg 'token = "multi\nSECRET-n4"\n'
 multi /storage/.config/archr-launcher/launcher.toml 'theme = "default"\nsecret: {\n  a: "}"\n  SECRET-n5\n}\n'
 multi /storage/.config/archr/systems.cfg '{"auth": {\n  "user": "SECRET-n6"\n},\n"after": 1}\n'
-multi /etc/resolv.conf "x pass='it\\\\'s SECRET-n7' end\nnameserver 1.1.1.1\n"
+# Look-alike names, a CRLF value line and private keys.
+printf 'p\320\260ssword=SECRET-cyrillic\n\357\274\260assword=SECRET-fullwidth\ntoken\r\nSECRET-crlf\r\nnameserver 9.9.9.9\n' >"${R}/etc/resolv.conf"
+printf 'oops\n-----BEGIN OPENSSH PRIVATE KEY-----\nSECRET-ssh\n-----END OPENSSH PRIVATE KEY-----\n' >"${R}/sys/fs/pstore/console-ramoops-0"
+printf 'k\n-----BEGIN PGP PRIVATE KEY BLOCK-----\nSECRET-pgp\n' >"${R}/etc/os-release"
+multi /storage/.config/retroarch/retroarch.cfg.bak "x pass='it\\\\'s SECRET-n7' end\nnameserver 1.1.1.1\n"
 echo "Kernel panic - not syncing: secret_key=SECRET-pstore" >"${R}/sys/fs/pstore/dmesg-ramoops-0"
 printf 'compressed\000SECRET-compressed' >"${R}/sys/fs/pstore/dmesg-ramoops-1.enc.z"
 touch "${R}/usr/lib/libretro/pcsx_rearmed_libretro.so"
@@ -146,12 +159,12 @@ check "size printed" "$(sed -n 's/^SIZE=//p' <<<"${OUT}")" "$(stat -c %s "${R}${
 mkdir "${TMP}/x" && (cd "${TMP}/x" && unzip -q "${R}${ZIP}")
 X=$(echo "${TMP}"/x/*)
 check "no secret leaks" "$(grep -rao 'SECRET[^ "]*' "${X}" | sed "s#${X}/##")" ""
-check "iwd file never copied" "$(grep -rl Passphrase "${X}")" ""
+check "iwd file never copied" "$(grep -rl 'Passphrase=SECRET' "${X}")" ""
 check "compressed pstore left out" "$(find "${X}" -name '*.enc.z' | wc -l)" "0"
 for want in MinhaCasa pcsx_rearmed_libretro.so archr-broken.service duckstation-sa \
   "R36S" 'video_driver = "gl"' "Kernel panic" "Running: retroarch" "kernel: normal line" \
   'input_enable_hotkey = "nul"' 'input_enable_hotkey_btn = "nul"' 'keyboard_layout = "us"' \
-  "hotkey_enable=1" "Caf" "before=1" 'theme = "default"' "system.loglevel=verbose"; do
+  "hotkey_enable=1" "middle line kept" "nameserver 9.9.9.9" "oops" "before=1" 'theme = "default"' "system.loglevel=verbose"; do
   if grep -raqF -- "${want}" "${X}"; then echo "ok   keeps ${want}"; else echo "FAIL lost ${want}"; FAILED=1; fi
 done
 # Named secrets keep their name; other hints take the whole line.
@@ -165,6 +178,8 @@ check "every line of the log accounted for" "$(grep -c '' "${X}/logs/launcher.lo
 check "a value over lines takes the rest of the file" \
   "$(tr '\n' '|' <"${X}/logs/runemu-debug.log")" \
   '### /var/log/runemu-debug.log|before=1|{"secret=<removed>|<resto do arquivo removido>|'
+check "a look-alike word takes its line" "$(grep -ac 'Caf' "${X}/logs/exec.log")" "0"
+check "private key takes the rest" "$(tail -n 1 "${X}/pstore/console-ramoops-0")" "<resto do arquivo removido>"
 check "no temporary files left" "$(find "${R}/storage/roms/relatorios" -name '*.part' | wc -l)" "0"
 
 # Nothing left to zip (every file failed the filter): exit 1, no report.

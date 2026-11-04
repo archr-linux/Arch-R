@@ -152,21 +152,39 @@ done
 # name>=<removed>", or "<linha removida>" when there is no name. The value
 # is never cut out alone. Hints:
 #   - a secret name as a word or suffix: pass, pw, pwd, token, secret,
-#     key (never hotkey or keyboard), psk, auth, bearer, credential,
+#     key (never hotkey or keyboard), psk, auth, oauth, bearer, credential,
+#     senha, chave,
 #     cookie, session, user, username or login used as a name ("user="),
 #     and the URL fields u, t, p, pw, pwd, user, ssid and devid;
 #   - user:password@ (in a URL or not), or any @ after a URL's //;
 #   - the options -p, -P, -u, -U (with the value apart or attached),
-#     --user, --*-user and --*pass*.
+#     --user, --*-user and --*pass*;
+#   - a word mixing ASCII letters with other bytes (a look-alike name).
 # The last two kinds, and a URL field, remove the whole line even after a
 # name: what comes before the name may hold the secret.
 # A secret name whose line opens { or [ or leaves a quote open may go on
-# over the next lines: the rest of the file goes, a safe failure.
+# over the next lines: the rest of the file goes, a safe failure; so does
+# a BEGIN ... PRIVATE KEY line. A name with no value after it, or followed
+# by a line starting with = or :, takes the next line too.
 # Every file passes through here, text or not (NUL bytes become blanks,
 # bytes are read as is: LC_ALL=C); one that cannot be filtered is left out.
 sanitize() {
   tr '\0' ' ' | LC_ALL=C awk '
     gone { next }
+    # The line after a name that came without a value, or that starts
+    # with = or :, is that value.
+    pending {
+      pending = 0
+      if (empty || $0 ~ /^[[:space:]]*[=:]/) {
+        print "<linha removida>"
+        next
+      }
+    }
+    tolower($0) ~ /-----begin [a-z ]*private key/ {
+      print "<resto do arquivo removido>"
+      gone = 1
+      next
+    }
     {
       line = tolower($0)
       named = 0
@@ -176,8 +194,8 @@ sanitize() {
         word = substr(rest, RSTART, RLENGTH)
         at = length(line) - length(rest) + RSTART + RLENGTH - 1
         rest = substr(rest, RSTART + RLENGTH)
-        if (word ~ /(pass|token|secret|psk|bearer|credential|cookie|session)/ ||
-            word ~ /^(pw|pwd|auth[a-z]*)$/ || word ~ /key$/ && word !~ /hotkey$/ ||
+        if (word ~ /(pass|token|secret|psk|bearer|credential|cookie|session|senha|chave)/ ||
+            word ~ /^(pw|pwd|o?auth[a-z]*)$/ || word ~ /key$/ && word !~ /hotkey$/ ||
             word ~ /^(user(name)?|login)$/ && rest ~ /^"?[[:space:]]*[=:]/) {
           named = at
           break
@@ -187,7 +205,8 @@ sanitize() {
       bare = line ~ /[?&](u|t|p|pw|pwd|user|ssid|devid)=/ ||
         line ~ /[^[:space:]\/@:]+:[^[:space:]\/@]+@/ || line ~ /:\/\/[^[:space:]]*@/ ||
         $0 ~ /(^|[[:space:]])-[pPuU]/ ||
-        line ~ /(^|[[:space:]])--([a-z0-9-]*-)?user([^a-z0-9-]|$)|(^|[[:space:]])--[a-z0-9-]*pass/
+        line ~ /(^|[[:space:]])--([a-z0-9-]*-)?user([^a-z0-9-]|$)|(^|[[:space:]])--[a-z0-9-]*pass/ ||
+        line ~ /[a-z][\200-\377]|[\200-\377][a-z]/
       if (!named && !bare) {
         print
         next
@@ -198,6 +217,8 @@ sanitize() {
       }
       print substr($0, 1, named) "=<removed>"
       tail = substr($0, named + 1)
+      pending = 1
+      empty = tail ~ /^[^[:alnum:]]*$/
       opened = gsub(/[{[]/, "", tail) > 0
       if (opened || gsub(/"/, "\"", tail) % 2 || gsub(/\047/, "\047", tail) % 2) {
         print "<resto do arquivo removido>"
