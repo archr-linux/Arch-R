@@ -208,6 +208,17 @@ pick_governor() {
   esac
 }
 
+# The CPU ceiling of one launch (runemu.sh --cpu-max=, from a launcher
+# module): printed only when it is one of this CPU's own frequencies, in
+# kHz, regular or boost; nothing else ever reaches scaling_max_freq.
+pick_cpu_max() {
+  [[ "$1" =~ ^[1-9][0-9]{4,7}$ ]] || return 0
+  local policy="${CPUFREQ:-/sys/devices/system/cpu/cpufreq}/policy0"
+  cat "${policy}/scaling_available_frequencies" "${policy}/scaling_boost_frequencies" 2>/dev/null |
+    tr ' ' '\n' | grep -qx "$1" && echo "$1"
+  return 0
+}
+
 # The governor entry points below return the CPU governor status; the
 # boost, max_freq, DMC and tuning steps are best effort (`|| :`), also
 # for callers running under set -e.
