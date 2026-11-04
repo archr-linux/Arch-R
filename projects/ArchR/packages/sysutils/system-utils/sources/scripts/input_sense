@@ -451,8 +451,13 @@ set +e
 ### Every HOTPLUG_SCAN seconds the node list is compared (a glob, no
 ### process); only a changed list asks udev about new nodes.
 : "${HOTPLUG_SCAN:=2}"
+# 0: watch it, 1: not an input we use, 2: udev has not described it yet.
 input_wanted() {
-  udevadm info "${1}" | grep -qE 'ID_INPUT_(KEY|JOYSTICK|TOUCHSCREEN)='
+  local INFO
+  INFO=$(udevadm info "${1}" 2>/dev/null)
+  [[ "${INFO}" =~ ID_INPUT_(KEY|JOYSTICK|TOUCHSCREEN)= ]] && return 0
+  [[ "${INFO}" == *ID_INPUT=* ]] && return 1
+  return 2
 }
 watch_inputs() {
   local -A WATCHED=()
@@ -470,7 +475,12 @@ watch_inputs() {
       for DEV in "${INPUT_DIR}"/event[0-9]*; do
         [ -e "${DEV}" ] || continue
         [ -n "${WATCHED[${DEV}]:-}" ] && continue
-        input_wanted "${DEV}" || continue
+        input_wanted "${DEV}"
+        case $? in
+          1) continue ;;
+          # A node just created: look again at the next scan.
+          2) SEEN=""; continue ;;
+        esac
         ${DEBUG} && log $0 "Watching ${DEV}"
         evtest "${DEV}" 2>&1 &
         WATCHED[${DEV}]=$!
