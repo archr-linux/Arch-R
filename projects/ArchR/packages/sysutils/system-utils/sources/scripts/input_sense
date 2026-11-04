@@ -461,7 +461,7 @@ input_wanted() {
 }
 watch_inputs() {
   local -A WATCHED=()
-  local DEV SEEN="" NOW NODES
+  local DEV SEEN="" NOW NODES REMAP="" CHANGED
   for DEV in "${INPUT_DEVICES[@]}"; do
     evtest "${DEV}" 2>&1 &
     WATCHED[${DEV}]=$!
@@ -470,7 +470,7 @@ watch_inputs() {
     NODES=("${INPUT_DIR}"/event[0-9]*)
     NOW=${NODES[*]}
     if [ "${NOW}" != "${SEEN}" ]; then
-      [ -n "${SEEN}" ] && { mkcontroller 2>/dev/null || :; }
+      CHANGED=${SEEN:+1}
       SEEN=${NOW}
       for DEV in "${INPUT_DIR}"/event[0-9]*; do
         [ -e "${DEV}" ] || continue
@@ -485,6 +485,12 @@ watch_inputs() {
         evtest "${DEV}" 2>&1 &
         WATCHED[${DEV}]=$!
       done
+      # The controller mapping follows (it takes seconds on an R36S): in
+      # the background, after the new devices are already heard.
+      if [ -n "${CHANGED}" ] && { [ -z "${REMAP}" ] || ! kill -0 "${REMAP}" 2>/dev/null; }; then
+        mkcontroller >/dev/null 2>&1 &
+        REMAP=$!
+      fi
     fi
     # An evtest that ended on a node still present (a read error) starts
     # again; a vanished node is forgotten until it comes back.
