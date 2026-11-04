@@ -267,7 +267,7 @@ check "low: one warning" "$(cat "${TMP}/osd")" "send battery-low 9"
 check "low: no power off" "$(cat "${TMP}/power")" ""
 battery 3 Discharging
 guard
-check "critical, no game: countdown" "$(tr '\n' '|' <"${TMP}/osd")" "send battery-low 3|send battery 3 2 2 menu|send battery 3 1 2 menu|"
+check "critical, no game: countdown, no low warning" "$(tr '\n' '|' <"${TMP}/osd")" "send battery 3 2 2 menu|send battery 3 1 2 menu|"
 check "critical, no game: power off only" "$(tr '\n' '|' <"${TMP}/power")" "off|"
 emulator fakegame ":"
 game "${ROM}" snes retroarch snes9x

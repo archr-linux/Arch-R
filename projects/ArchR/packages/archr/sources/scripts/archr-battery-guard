@@ -71,7 +71,10 @@ while :; do
   if [[ "${LEVEL}" =~ ^[0-9]+$ ]] && ! charging; then
     LOW=$(percent power.battery.low 10)
     CRITICAL=$(percent power.battery.critical 3)
-    if [ "${LOW}" -gt 0 ] && [ "${LEVEL}" -le "${LOW}" ] && [ "${WARNED}" = 0 ]; then
+    # At the critical level the countdown says it all (and the game's
+    # picture, taken before it, must not hold this warning).
+    if [ "${LOW}" -gt 0 ] && [ "${LEVEL}" -le "${LOW}" ] && [ "${WARNED}" = 0 ] &&
+       { [ "${CRITICAL}" -eq 0 ] || [ "${LEVEL}" -gt "${CRITICAL}" ]; }; then
       ${OSD} send battery-low "${LEVEL}" 2>/dev/null
       WARNED=1
     fi
