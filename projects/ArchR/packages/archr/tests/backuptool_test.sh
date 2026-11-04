@@ -23,7 +23,7 @@ echo "== unzip: ${MODE}"
 TMP=$(cd "$(mktemp -d)" && pwd -P)
 trap '[ -n "${KEEPTMP:-}" ] || rm -rf "${TMP}"' EXIT
 ROOT="${TMP}/root"
-mkdir -p "${ROOT}/storage" "${TMP}/bin" "${TMP}/unzip"
+mkdir -p "${ROOT}/storage" "${TMP}/bin" "${TMP}/unzip" "${TMP}/sys"
 SCRIPT="${TMP}/backuptool"
 sed -e 's|^\. /etc/profile$|OS_NAME=ArchR; DEBUG=false|' \
     -e "s|/storage|${ROOT}/storage|g" \
@@ -32,11 +32,23 @@ sed -e 's|^\. /etc/profile$|OS_NAME=ArchR; DEBUG=false|' \
     -e "s|SYSTEM_CFG=\"storage/|SYSTEM_CFG=\"${ROOT#/}/storage/|g" \
     "${HERE}/../sources/scripts/backuptool" >"${SCRIPT}"
 export TMPDIR="${TMP}"
-RUNPATH="${PATH}"
+# A recording systemctl: the host's services are never touched. Services
+# listed in sys/active are running; sys/stop-fails makes "stop" fail.
+cat >"${TMP}/sys/systemctl" <<EOF
+#!/bin/sh
+echo "\$*" >>"${TMP}/sys/log"
+case "\$1" in
+  is-active) grep -qx "\$3" "${TMP}/sys/active" 2>/dev/null ;;
+  stop) [ ! -e "${TMP}/sys/stop-fails" ] ;;
+esac
+EOF
+chmod +x "${TMP}/sys/systemctl"
+printf 'smbd\nsyncthing\n' >"${TMP}/sys/active"
+RUNPATH="${TMP}/sys:${PATH}"
 if [ "${MODE}" = busybox ]; then
   printf '#!/bin/sh\nexec "%s" unzip "$@"\n' "${BUSYBOX}" >"${TMP}/unzip/unzip"
   chmod +x "${TMP}/unzip/unzip"
-  RUNPATH="${TMP}/unzip:${PATH}"
+  RUNPATH="${TMP}/unzip:${RUNPATH}"
 fi
 # The script sees the unzip under test; the checks here always use Info-ZIP.
 EXTRA=""
@@ -136,10 +148,14 @@ check grep -q 'KiB required' "${TMP}/backup.log"
 # 4. Every non-empty entry is deflated, and a sha256 manifest covers them all.
 check test "$(unzip -v "${ZIP}" | awk '$2 == "Stored" && $1 > 0' | wc -l)" = 0
 check cmp <(unzip -p "${ZIP}" "${R}/storage/roms/gba/Random.sav") "${ROOT}/storage/roms/gba/Random.sav"
-unzip -p "${ZIP}" "${R}/storage/.cache/backuptool.sha256" >"${TMP}/manifest"
+unzip -p "${ZIP}" "${R}/storage/.cache/backuptool.manifest" >"${TMP}/manifest"
 check test "$(wc -l <"${TMP}/manifest")" = "$(( $(wc -l <"${TMP}/entries") - 1 ))"
-check grep -Fq "  ${R}/storage/roms/bios/dsi_nand.bin" "${TMP}/manifest"
-mkdir "${TMP}/x" && (cd "${TMP}/x" && unzip -q "${ZIP}" && sha256sum -c --quiet "${R}/storage/.cache/backuptool.sha256")
+check test "$(grep -cvE '^[0-9a-f]{64} [0-9]+ ' "${TMP}/manifest" || true)" = 0
+# The manifest keeps each file's own mtime, whatever unzip later does.
+check test "$(grep -F " ${R}/storage/roms/bios/dsi_nand.bin" "${TMP}/manifest" | cut -d' ' -f2)" = \
+  "$(stat -c %Y "${ROOT}/storage/roms/bios/dsi_nand.bin")"
+mkdir "${TMP}/x" && (cd "${TMP}/x" && unzip -q "${ZIP}" &&
+  sed -E 's/^([0-9a-f]{64}) [0-9]+ /\1  /' "${R}/storage/.cache/backuptool.manifest" | sha256sum -c --quiet)
 echo "ok   manifest matches the archived files"
 rm -rf "${TMP}/x"
 
@@ -149,34 +165,54 @@ for f in "${FILES[@]}"; do check test "$(cat "${ROOT}/${f}")" = "$f"; done
 check cmp "${ROOT}/storage/roms/gba/Random.sav" <(unzip -p "${ZIP}" "${R}/storage/roms/gba/Random.sav")
 check grep -q '^wifi.key=secret$' "${ROOT}/storage/.config/system/configs/system.cfg"
 check grep -q '^system.language=pt_BR$' "${ROOT}/storage/.config/system/configs/system.cfg"
-check test ! -e "${ROOT}/storage/.cache/backuptool.sha256"
+check test ! -e "${ROOT}/storage/.cache/backuptool.manifest"
 check test "$(find "${ROOT}/storage/.cache" -maxdepth 1 -name 'backuptool-restore.*' | wc -l)" = 0
 
-# 1. Restore keeps newer saves, puts the backup's copy beside them, and logs it.
+# P1. The device copy of a save stays unless it is provably older than the
+# backed-up one, by the mtime recorded in the manifest. Real clocks: saves
+# age before the backup and change after it; nothing is pushed forward.
 SAVE="${ROOT}/storage/roms/gba/Game.sav"
 NAND="${ROOT}/storage/roms/bios/dsi_nand.bin"
 OLDSAVE="${ROOT}/storage/roms/gb/Game.rtc"
+EQUAL="${ROOT}/storage/roms/nds/Game.dsv"
+EXFAT="${ROOT}/storage/roms/n64/Game.sra"
 SAME="${ROOT}/storage/roms/n64/Game.eep"
 CFG="${ROOT}/storage/.config/retroarch/retroarch.cfg"
+touch -d '-1 hour' "${SAVE}" "${NAND}" "${OLDSAVE}" "${EQUAL}" "${SAME}"
+# exFAT/FAT clocks keep even seconds: a write 1 s after the backup reads back
+# as the backup's own time.
+EVEN=$(( $(date +%s) - 7200 )); EVEN=$(( EVEN - EVEN % 2 ))
+touch -d "@${EVEN}" "${EXFAT}"
+TZ=UTC run backup >"${TMP}/backup-p1.log" 2>&1
+RECORDED=$(stat -c %Y "${EQUAL}")
 printf 'played after the backup\n' >"${SAVE}"
 printf 'new DSiWare save\n' >"${NAND}"
 printf 'older than the backup\n' >"${OLDSAVE}"
-touch -d '2001-01-01' "${OLDSAVE}"
-touch -d '+1 hour' "${SAVE}" "${NAND}" "${SAME}"
+touch -d '-2 hours' "${OLDSAVE}"
+printf 'same timestamp, other bytes\n' >"${EQUAL}"
+touch -d "@${RECORDED}" "${EQUAL}"
+printf 'written 1 s later on exFAT\n' >"${EXFAT}"
+touch -d "@${EVEN}" "${EXFAT}"
 printf 'changed setting\n' >"${CFG}"
-touch -d '+1 hour' "${CFG}"
-run restore >"${TMP}/conflict.log" 2>&1
+TZ=America/Sao_Paulo run restore >"${TMP}/conflict.log" 2>&1
 check test "$(cat "${SAVE}")" = 'played after the backup'
 check test "$(cat "${NAND}")" = 'new DSiWare save'
+check test "$(cat "${EQUAL}")" = 'same timestamp, other bytes'
+check test "$(cat "${EXFAT}")" = 'written 1 s later on exFAT'
 check test "$(cat "${SAVE}".backup-*)" = storage/roms/gba/Game.sav
 check test "$(cat "${NAND}".backup-*)" = storage/roms/bios/dsi_nand.bin
+check test "$(cat "${EQUAL}".backup-*)" = storage/roms/nds/Game.dsv
+check test "$(cat "${EXFAT}".backup-*)" = storage/roms/n64/Game.sra
 check test "$(cat "${OLDSAVE}")" = storage/roms/gb/Game.rtc
-check test "$(find "${ROOT}/storage/roms/n64" -name 'Game.eep.backup-*' | wc -l)" = 0
+# A replaced file gets its backed-up mtime back.
+check test "$(stat -c %Y "${OLDSAVE}")" = "$(stat -c %Y "${SAME}")"
+check test "$(find "${ROOT}/storage/roms" -name 'Game.eep.backup-*' -o -name 'Game.rtc.backup-*' | wc -l)" = 0
 check test "$(cat "${CFG}")" = storage/.config/retroarch/retroarch.cfg
-check grep -q 'kept 2 newer saves' "${TMP}/conflict.log"
+check grep -q 'kept 4 device files' "${TMP}/conflict.log"
 REPORTS=("${ROOT}"/storage/roms/backup/ArchR_RESTORE-*.log)
 check test "${#REPORTS[@]}" = 1
-check grep -Fq "Kept newer save ${SAVE}" "${REPORTS[0]}"
+check grep -Fq "Kept ${SAVE}; the backup's copy is ${SAVE}.backup-" "${REPORTS[0]}"
+check test "$(find "${ROOT}/storage" -name '.*.restore-*' -o -name '.*.undo-*' | wc -l)" = 0
 # 5. Names carry seconds: a second report in the same minute is a new file.
 check matches "${REPORTS[0]}" '_RESTORE-[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}(-[0-9]+)?\.log$'
 COPIES=("${SAVE}".backup-*)
@@ -184,10 +220,15 @@ check matches "${COPIES[0]}" '\.backup-[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]
 run restore >"${TMP}/conflict2.log" 2>&1
 check test "$(find "${ROOT}/storage/roms/backup" -name 'ArchR_RESTORE-*.log' | wc -l)" = 2
 check test "$(find "${ROOT}/storage/roms/gba" -name 'Game.sav.backup-*' | wc -l)" = 2
+# Services that let other machines write to /storage were paused around it.
+check grep -qx 'stop smbd' "${TMP}/sys/log"
+check grep -qx 'stop syncthing' "${TMP}/sys/log"
+check grep -qx 'start smbd syncthing' "${TMP}/sys/log"
+check test "$(grep -c 'stop nmbd' "${TMP}/sys/log" || true)" = 0
 find "${ROOT}/storage" -name '*.backup-*' -delete
 rm -f "${ROOT}"/storage/roms/backup/ArchR_RESTORE-*.log
-echo storage/roms/gba/Game.sav >"${SAVE}"
-echo storage/roms/bios/dsi_nand.bin >"${NAND}"
+for f in "${SAVE}" "${NAND}" "${EQUAL}" "${EXFAT}"; do echo "${f#"${ROOT}"/}" >"${f}"; done
+run backup >"${TMP}/backup-good.log" 2>&1
 
 # Snapshot of everything restore could touch, to prove refusals touch nothing.
 # Directory times are left out: staging lives in, and leaves, /storage/.cache.
@@ -216,21 +257,30 @@ cp "${GOOD}" "${ZIP}"
 # 4. A STORED entry with bad bytes passes BusyBox's CRC; the sha256 does not.
 mkdir -p "${TMP}/stored/${R}/storage/roms/gba" "${TMP}/stored/${R}/storage/.cache"
 printf 'GOOD SAVE DATA\n' >"${TMP}/stored/${R}/storage/roms/gba/Game.sav"
-(cd "${TMP}/stored" && sha256sum "${R}/storage/roms/gba/Game.sav" >"${R}/storage/.cache/backuptool.sha256" &&
-  zip -q -0 "${ZIP}.new" "${R}/storage/roms/gba/Game.sav" "${R}/storage/.cache/backuptool.sha256")
+(cd "${TMP}/stored" && sha256sum "${R}/storage/roms/gba/Game.sav" | sed 's/  / 1 /' >"${R}/storage/.cache/backuptool.manifest" &&
+  zip -q -0 "${ZIP}.new" "${R}/storage/roms/gba/Game.sav" "${R}/storage/.cache/backuptool.manifest")
 mv "${ZIP}.new" "${ZIP}"
 LC_ALL=C sed -i 's/GOOD SAVE DATA/EVIL SAVE DATA/' "${ZIP}"
 fails restore >"${TMP}/stored.log" 2>&1
-# Info-ZIP catches the CRC itself; BusyBox extracts it and the sha256 catches it.
+# Info-ZIP catches the CRC itself; with BusyBox the script computes it.
+check grep -Eq 'CRC mismatch|extract cleanly' "${TMP}/stored.log"
+untouched
+# Without a CRC tool the sha256 in the manifest still catches it.
+cat >"${TMP}/bin/cksum" <<'EOF'
+#!/bin/sh
+[ "$1" != -a ] || exit 1
+exec /usr/bin/cksum "$@"
+EOF
+chmod +x "${TMP}/bin/cksum"
+EXTRA="${TMP}/bin" fails restore >"${TMP}/stored-nocrc.log" 2>&1
 if [ "${MODE}" = busybox ]; then
-  check grep -q 'checksum mismatch' "${TMP}/stored.log"
-else
-  check grep -Eq 'checksum mismatch|extract cleanly' "${TMP}/stored.log"
+  check grep -q 'checksum mismatch' "${TMP}/stored-nocrc.log"
 fi
 untouched
+mv "${TMP}/bin/cksum" "${TMP}/cksum.fake"
 # A manifest that leaves a member out is refused too.
-(cd "${TMP}/stored" && : >"${R}/storage/.cache/backuptool.sha256" &&
-  zip -q "${ZIP}.new" "${R}/storage/roms/gba/Game.sav" "${R}/storage/.cache/backuptool.sha256")
+(cd "${TMP}/stored" && : >"${R}/storage/.cache/backuptool.manifest" &&
+  zip -q "${ZIP}.new" "${R}/storage/roms/gba/Game.sav" "${R}/storage/.cache/backuptool.manifest")
 mv "${ZIP}.new" "${ZIP}"
 fails restore >"${TMP}/partial-manifest.log" 2>&1
 untouched
@@ -300,6 +350,120 @@ rm "${ROOT}/storage/.config/sneaky"
 check test "$(cat "${SAVE}")" = current
 cp "${GOOD}" "${ZIP}"
 
+# P1. A folder swapped for a symlink after the checks: the swap happens
+# inside mv itself, the worst moment. Nothing may land outside /storage.
+cp "${GOOD}" "${ZIP}"
+snapshot "${TMP}/before"
+GBA="${ROOT}/storage/roms/gba"
+cat >"${TMP}/bin/mv" <<EOF
+#!/bin/bash
+case "\$*" in
+  *roms/gba/*|*Game.sav*)
+    if [ ! -e "${TMP}/swapped" ]; then
+      touch "${TMP}/swapped"
+      /usr/bin/mv "${GBA}" "${GBA}-original" && ln -s "${TMP}/outside" "${GBA}"
+    fi ;;
+esac
+exec /usr/bin/mv "\$@"
+EOF
+chmod +x "${TMP}/bin/mv"
+EXTRA="${TMP}/bin" fails restore >"${TMP}/toctou.log" 2>&1
+check test -e "${TMP}/swapped"
+check test "$(find "${TMP}/outside" -mindepth 1 | wc -l)" = 0
+check test "$(cat "${GBA}-original/Game.sav")" = current
+rm "${GBA}" "${TMP}/swapped" "${TMP}/bin/mv"
+/usr/bin/mv "${GBA}-original" "${GBA}"
+# What the attack strands is a hidden temporary inside /storage.
+find "${GBA}" -name '.*.restore-*' -delete
+untouched
+
+# Restore runs in two phases and rolls back. Phase 1 failing (ENOSPC on the
+# save, after the setting is staged) leaves every file as it was and no
+# temporaries behind.
+printf 'changed setting\n' >"${CFG}"
+snapshot "${TMP}/before"
+leftovers() { check test "$(find "${ROOT}/storage" -name '.*.restore-*' -o -name '.*.undo-*' | wc -l)" = 0; }
+cat >"${TMP}/bin/mv" <<'EOF'
+#!/bin/bash
+case "$*" in
+  *roms/gba/Game.sav*) echo 'mv: No space left on device' >&2; exit 1 ;;
+esac
+exec /usr/bin/mv "$@"
+EOF
+chmod +x "${TMP}/bin/mv"
+EXTRA="${TMP}/bin" fails restore >"${TMP}/enospc.log" 2>&1
+check grep -q 'nothing was changed' "${TMP}/enospc.log"
+untouched
+leftovers
+# SIGTERM between two renames of phase 2: the first file is put back.
+cat >"${TMP}/bin/mv" <<EOF
+#!/bin/bash
+/usr/bin/mv "\$@" || exit
+case "\$*" in
+  *" .Game.sav.restore-"*|*/.Game.sav.restore-*" ${SAVE}") kill -TERM "\$PPID" ;;
+esac
+EOF
+EXTRA="${TMP}/bin" fails restore >"${TMP}/term.log" 2>&1
+untouched
+leftovers
+check test "$(cat "${SAVE}")" = current
+check test "$(cat "${CFG}")" = 'changed setting'
+check grep -qx 'start smbd syncthing' <(tail -n 1 "${TMP}/sys/log")
+rm "${TMP}/bin/mv"
+# Free space is checked before anything is unpacked.
+cat >"${TMP}/bin/df" <<'EOF'
+#!/bin/sh
+printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\nfake 1024 1024 0 100%% /\n'
+EOF
+chmod +x "${TMP}/bin/df"
+EXTRA="${TMP}/bin" fails restore >"${TMP}/restore-space.log" 2>&1
+check grep -q 'Not enough free space' "${TMP}/restore-space.log"
+untouched
+rm "${TMP}/bin/df"
+# A service that will not stop stops the restore, and the others come back.
+touch "${TMP}/sys/stop-fails"
+: >"${TMP}/sys/log"
+fails restore >"${TMP}/service.log" 2>&1
+check grep -qx 'start smbd' "${TMP}/sys/log"
+untouched
+rm "${TMP}/sys/stop-fails"
+
+# Real ENOSPC on a small filesystem, where user namespaces allow mounting one.
+TINY="${ROOT}/storage/roms/tiny"
+mkdir -p "${TINY}"
+if unshare -rm true 2>/dev/null; then
+  mkdir -p "${TMP}/bigdf"
+  cat >"${TMP}/bigdf/df" <<'EOF'
+#!/bin/sh
+printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\nfake 99999999 0 99999999 0%% /\n'
+EOF
+  chmod +x "${TMP}/bigdf/df"
+  cat >"${TMP}/tiny.sh" <<EOF
+set -e
+mount -t tmpfs -o size=96k tmpfs "${TINY}"
+head -c 8192 /dev/zero | tr '\\\\0' A >"${TINY}/a.sav"
+head -c 40960 /dev/zero | tr '\\\\0' B >"${TINY}/b.sav"
+touch -d '-1 hour' "${TINY}/a.sav" "${TINY}/b.sav"
+PATH="${RUNPATH}" bash "${SCRIPT}" backup >"${TMP}/tiny-backup.log" 2>&1
+printf CURRENT_A >"${TINY}/a.sav"; printf CURRENT_B >"${TINY}/b.sav"
+touch -d '-2 hours' "${TINY}/a.sav" "${TINY}/b.sav"
+head -c 65536 /dev/zero >"${TINY}/filler"
+# The free-space check refuses; a lying df lets ENOSPC hit phase 1 for real.
+if PATH="${RUNPATH}" bash "${SCRIPT}" restore >"${TMP}/tiny-space.log" 2>&1; then exit 3; fi
+if PATH="${TMP}/bigdf:${RUNPATH}" bash "${SCRIPT}" restore >"${TMP}/tiny-enospc.log" 2>&1; then exit 4; fi
+[ "\$(cat "${TINY}/a.sav")" = CURRENT_A ] || exit 5
+[ "\$(cat "${TINY}/b.sav")" = CURRENT_B ] || exit 6
+[ -z "\$(find "${TINY}" -name '.*' -type f)" ] || exit 7
+EOF
+  check unshare -rm bash "${TMP}/tiny.sh"
+  check grep -q 'Not enough free space' "${TMP}/tiny-space.log"
+  check grep -qi 'no space left\|espaço' "${TMP}/tiny-enospc.log"
+else
+  echo 'skip real ENOSPC: user namespaces unavailable'
+fi
+rmdir "${TINY}"
+cp "${GOOD}" "${ZIP}"
+
 # Wi-Fi still needs explicit consent for both collection and restoration.
 run backup --with-wifi >"${TMP}/wifi.log" 2>&1
 check test "$(unzip -p "${ZIP}" "${R}/storage/.cache/iwd/private.psk")" = storage/.cache/iwd/private.psk
@@ -321,6 +485,49 @@ run restore >"${TMP}/legacy.log" 2>&1
 check test -f "${ROOT}/storage/.config/retroarch/legacy.cfg"
 check test "$(cat "${ROOT}/storage/.cache/bluetooth/11:22:33:44:55:66/info")" = paired
 check test ! -e "${ROOT}/var/lib/bluetooth"
+# Old archives have no manifest: a save that differs is never replaced, even
+# when the device copy looks older; settings are, once their CRC checks out.
+rm "${ZIP}"
+mkdir -p "${TMP}/old/${R}/storage/roms/gba" "${TMP}/old/${R}/storage/.config/retroarch"
+printf 'old backup save\n' >"${TMP}/old/${R}/storage/roms/gba/Game.sav"
+printf 'old backup setting\n' >"${TMP}/old/${R}/storage/.config/retroarch/retroarch.cfg"
+(cd "${TMP}/old" && zip -q -0 "${ZIP}" "${R}/storage/roms/gba/Game.sav" "${R}/storage/.config/retroarch/retroarch.cfg")
+cp "${ZIP}" "${TMP}/old.zip"
+printf 'current\n' >"${SAVE}"
+touch -d '2001-01-01' "${SAVE}"
+printf 'changed setting\n' >"${CFG}"
+run restore >"${TMP}/old.log" 2>&1
+check test "$(cat "${SAVE}")" = current
+check test "$(cat "${SAVE}".backup-*)" = 'old backup save'
+check test "$(cat "${CFG}")" = 'old backup setting'
+check grep -q 'match the ZIP CRCs' "${TMP}/old.log"
+rm "${SAVE}".backup-*
+# A STORED entry changed inside an old archive: BusyBox unzip does not check
+# its CRC, so the script does, and refuses the archive.
+printf 'changed setting\n' >"${CFG}"
+LC_ALL=C sed -i 's/old backup setting/bad backup setting/' "${ZIP}"
+snapshot "${TMP}/before"
+fails restore >"${TMP}/old-corrupt.log" 2>&1
+check grep -Eq 'CRC mismatch|extract cleanly' "${TMP}/old-corrupt.log"
+check test "$(grep -c 'match the ZIP CRCs' "${TMP}/old-corrupt.log" || true)" = 0
+untouched
+# Without a CRC tool nothing is claimed and nothing is replaced: the copies
+# go beside the device files.
+mv "${TMP}/cksum.fake" "${TMP}/bin/cksum"
+EXTRA="${TMP}/bin" run restore >"${TMP}/old-nocrc.log" 2>&1 || { [ "${MODE}" = infozip ] && grep -q 'extract cleanly' "${TMP}/old-nocrc.log"; }
+check test "$(cat "${CFG}")" = 'changed setting'
+check test "$(cat "${SAVE}")" = current
+check test "$(grep -c 'CRCs\? \(was \)\?check' "${TMP}/old-nocrc.log" || true)" = 0
+if [ "${MODE}" = busybox ]; then
+  check grep -q 'cannot be checked here' "${TMP}/old-nocrc.log"
+  check test "$(cat "${CFG}".backup-*)" = 'bad backup setting'
+fi
+cp "${TMP}/old.zip" "${ZIP}"
+EXTRA="${TMP}/bin" run restore >"${TMP}/old-nocrc2.log" 2>&1
+check test "$(cat "${CFG}")" = 'changed setting'
+check grep -q 'cannot be checked here' "${TMP}/old-nocrc2.log"
+rm "${TMP}/bin/cksum"
+find "${ROOT}/storage" -name '*.backup-*' -delete
 # Both failed preflight and a mid-write failure preserve the previous archive.
 cp "${ZIP}" "${TMP}/previous.zip"
 # 5. Kernel-owned locks release when the owner dies; the file can stay on disk.
