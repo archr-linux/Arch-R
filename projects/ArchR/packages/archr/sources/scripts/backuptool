@@ -4,6 +4,7 @@
 # Copyright (C) 2020-present Shanti Gilbert (https://github.com/shantigilbert)
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
+# shellcheck source=/dev/null
 . /etc/profile
 
 # NOTE: to customize your backups, create a backuptool.conf file in
@@ -12,8 +13,9 @@
 # LOCATIONS=(
 #   /storage/.config/retroarch/*
 #   /storage/roms/savestates/*
-#   /some/other/folder/file.name*
+#   /storage/some/other/folder/file.name*
 # )
+# Only files under /storage are backed up, since only those can be restored.
 
 usage() {
     echo "Usage: ${0} {backup|restore} [--with-wifi]"
@@ -27,19 +29,23 @@ then
     exit 1
 fi
 
+set -o pipefail
+STORAGE="/storage"
 BACKUPFOLDER="/storage/roms/backup"
 BACKUPFILE="${BACKUPFOLDER}/${OS_NAME}_BACKUP.zip"
-mkdir -p "${BACKUPFOLDER}"
+mkdir -p "${BACKUPFOLDER}" || exit 1
 
 # Real paths, not the /storage/.emulationstation symlink: that link only
 # exists while EmulationStation is installed. WiFi is iwd, whose saved
-# networks (/var/lib/iwd) live in /storage/.cache/iwd.
+# networks (/var/lib/iwd) live in /storage/.cache/iwd; Bluetooth pairings
+# (/var/lib/bluetooth) live in /storage/.cache/bluetooth.
 ES_DIR="/storage/.config/emulationstation"
 
-DEFAULT=(
+# Restore overwrites these with the backup's copy.
+CONFIG_LOCATIONS=(
     /storage/.config/fancontrol.conf
     /storage/.config/backuptool.conf
-    /var/lib/bluetooth/*
+    /storage/.cache/bluetooth/*
     /storage/.config/system/configs/system.cfg
     /storage/.config/ppsspp/*
     /storage/.config/retroarch/*
@@ -50,15 +56,54 @@ DEFAULT=(
     "${ES_DIR}"/scripts/*
     "${ES_DIR}"/themesettings/*
 )
+# Restore never replaces a newer copy of these; everything under
+# /storage/roms counts as a save too. Save-only trees: no emulator binaries,
+# ROMs or BIOS images. Saves kept in system images are named one by one.
+SAVE_LOCATIONS=(
+    /storage/roms/savestates
+    /storage/roms/openbor/Saves
+    /storage/roms/pico-8/cdata
+    /storage/.lexaloffle/pico-8/cdata
+    /storage/.local/share/pico-8/cdata
+    /storage/.local/share/scummvm/saves
+    /storage/.config/scummvm/saves
+    /storage/.config/drastic/backup
+    /storage/.config/drastic/savestates
+    /storage/.config/duckstation/memcards
+    /storage/.config/duckstation/savestates
+    /storage/.config/flycast/data
+    /storage/.config/amiberry/savestates
+    /storage/.config/amiberry/nvram
+    /storage/.config/amiberry/whdboot/save-data
+    /storage/.config/hatari/auto.sav
+    /storage/.config/hatari/hatari.sav
+    /storage/.config/vice/*.vsf
+    /storage/.vice/*.vsf
+    /storage/.config/touchHLE/touchHLE_sandbox
+    /storage/.config/ppsspp/PSP/SAVEDATA
+    /storage/.config/ppsspp/PSP/PPSSPP_STATE
+    /storage/.config/retroarch/saves
+    /storage/.config/retroarch/states
+    /storage/.config/game/configs/hypseus/ram
+    /storage/.config/dolphin-emu/Wii/title/00010000
+    # DSiWare saves live inside melonDS's DSi NAND image.
+    /storage/roms/bios/dsi_nand.bin
+    /storage/roms/bios/yabasanshiro/backup.bin
+    /storage/roms/bios/dc/dc_flash.bin
+    /storage/roms/bios/dc/dc_nvmem.bin
+    /storage/roms/bios/GC/MemoryCard[AB].*.raw
+)
+DEFAULT=("${CONFIG_LOCATIONS[@]}" "${SAVE_LOCATIONS[@]}")
 while IFS= read -r -d '' THEME
 do
     DEFAULT+=("${THEME}")
 done < <(find "${ES_DIR}/themes" -mindepth 1 -maxdepth 1 -type d -not -name es-theme-art-book-next -not -name system-theme -print0 2>/dev/null)
 
+USE_DEFAULT=true
 if [ -e "/storage/.config/backuptool.conf" ]
 then
-    source /storage/.config/backuptool.conf
-    if [ ! $? = 0 ]
+    # shellcheck source=/dev/null
+    if ! source /storage/.config/backuptool.conf
     then
         WARN="Error loading custom backuptool configs. Using defaults."
         ${DEBUG} && echo "${WARN}"
@@ -66,66 +111,858 @@ then
         COMPRESSLOCATIONS=("${DEFAULT[@]}")
     else
         COMPRESSLOCATIONS=("${LOCATIONS[@]}")
+        USE_DEFAULT=false
     fi
 else
     COMPRESSLOCATIONS=("${DEFAULT[@]}")
 fi
 
 # Also exclude profiles when a custom location contains their parent directory.
-EXCLUDES=('storage/.cache/iwd' 'storage/.cache/iwd/*' 'var/lib/iwd' 'var/lib/iwd/*')
+EXCLUDES=('storage/.cache/iwd' 'storage/.cache/iwd/*')
 if [ "${2}" = "--with-wifi" ]
 then
     COMPRESSLOCATIONS+=(/storage/.cache/iwd/*)
     EXCLUDES=()
 fi
-# System-managed symlinks are recreated by the OS, and BusyBox unzip stops
-# at any entry whose destination is a symlink.
-mapfile -t LINKS < <(find "${COMPRESSLOCATIONS[@]}" -type l 2>/dev/null | sed 's|^/||')
-EXCLUDES+=("${LINKS[@]}")
-[ "${#EXCLUDES[@]}" -eq 0 ] || EXCLUDES=(-x "${EXCLUDES[@]}")
+PRUNE=(-path "${BACKUPFOLDER}" -o -path "${BACKUPFOLDER}/*")
+if [ "${2}" != "--with-wifi" ]; then
+    PRUNE+=(-o -path '/storage/.cache/iwd' -o -path '/storage/.cache/iwd/*')
+fi
+# Never restore an embedded backup over the archive being read, either.
+EXCLUDES+=('storage/roms/backup' 'storage/roms/backup/*')
+# System-managed symlinks are recreated by the OS: restore skips them and
+# everything below them instead of writing through them.
+declare -A LINKS=()
+while IFS= read -r -d '' LINK
+do
+    LINKS["${LINK#/}"]=1
+done < <(find "${COMPRESSLOCATIONS[@]}" -type l -print0 2>/dev/null)
 
+# Archives from before the FHS bridges hold these paths through their links.
+ALIASES=('var/lib/bluetooth/' 'storage/.cache/bluetooth/'
+         'var/lib/iwd/' 'storage/.cache/iwd/')
+# "sha256 mtime path" of every archived file, checked at backup and before
+# any restore. The mtime is the file's own at backup time.
+MANIFEST="${STORAGE#/}/.cache/backuptool.manifest"
+declare -A MTIMES=()
 SYSTEM_CFG="storage/.config/system/configs/system.cfg"
+STAMP=$(date +%Y-%m-%d_%H-%M-%S) || exit 1
+
+# One backup or restore at a time. The lock lives on ext4, not the possibly
+# exFAT ROMs card, and is released by the kernel even after a crash.
+take_lock() {
+    local error
+    if ! { mkdir -p /storage/.cache && enter /storage/.cache && exec 9>backuptool.lock; }
+    then
+        echo 'Error: cannot open the backup lock.' >&2
+        exit 1
+    fi
+    # flock -n fails silently when another holder has the lock.
+    if ! error=$(flock -n 9 2>&1); then
+        if [ -z "${error}" ]; then
+            echo 'A backup or restore is already running.' >&2
+        else
+            echo "Error: cannot take the backup lock: ${error}" >&2
+        fi
+        exit 1
+    fi
+    cd / || exit 1
+}
+
+# Emit regular files only. No traversal through system-managed symlinks and no
+# recursion into the output directory, even with LOCATIONS=(/storage/roms).
+collect_tree() {
+    local location
+    for location in "$@"; do
+        [ -e "${location}" ] && [ ! -L "${location}" ] || continue
+        find "${location}" \
+            \( "${PRUNE[@]}" \) -prune -o \
+            -type f -print0 || return 1
+    done
+}
+
+collect_rom_saves() {
+    [ -d /storage/roms ] || return 0
+    # Do not use *.st*: .st and .stx are Atari ST disk images, not N64 states.
+    # Large arbitrary trees (ROMs, ports, BIOS) are never added wholesale.
+    find /storage/roms -path "${BACKUPFOLDER}" -prune -o -type f \( \
+        -iname '*.srm' -o -iname '*.rtc' -o -iname '*.sav' -o -iname '*.dsv' -o \
+        -iname '*.eep' -o -iname '*.sra' -o -iname '*.fla' -o -iname '*.mpk' -o \
+        -iname '*.mcd' -o -iname '*.mcr' -o -iname '*.bkr' -o -iname '*.bcr' -o \
+        -iname '*.flash' -o -iname '*.smpc' -o -iname '*.seep' -o -iname '*.fxb' -o \
+        -iname '*.mg[0-9]' -o -iname '*.mednafen.fds' -o -iname '*.mednafen.type' -o \
+        -iname '*.fs' -o -iname '*.hi' -o -iname '*.memcard' -o -iname '*.nvram' -o \
+        -iname '*.brm' -o -iname '*.bup' -o -iname '*.sram' -o -iname '*.nv' -o \
+        -iname '*.nvmem' -o -iname '*.eeprom' -o -iname 'vmu_save*.bin' -o \
+        -iname '*.vmu' -o -iname '*.vms' -o -iname '*.vmi' -o -iname '*.p8d' -o \
+        -iname '*.ram' -o -iname '*.zds' -o -iname '*.vsf' -o -iname '*.uss' -o \
+        -iname '*.gci' -o \
+        -iname '*.st[0-9]*' -o -iname '*.state' -o -iname '*.state[0-9]*' -o \
+        -iname '*.state.auto*' -o -iname '*.sav.[0-9]*' -o -iname '*.mcr.[0-9]*' \
+    \) -print0 || return 1
+    # PPSSPP's patched SAVEDATA path is roms/psp/<game ID>, not PSP/SAVEDATA.
+    # Save containers may hold .BIN, .SFO, images and game-specific filenames.
+    local directory
+    for directory in /storage/roms/psp/[A-Za-z][A-Za-z][A-Za-z][A-Za-z][0-9][0-9][0-9][0-9][0-9]*; do
+        # An ID-named ROM folder is not necessarily a save. PPSSPP saves have
+        # PARAM.SFO at the root; an extracted disc has it under PSP_GAME.
+        [ -f "${directory}/PARAM.SFO" ] || continue
+        collect_tree "${directory}" || return 1
+    done
+    collect_tree /storage/roms/psp/SAVEDATA /storage/roms/psp/PSP/SAVEDATA \
+        /storage/roms/psp/PPSSPP_STATE /storage/roms/psp/PSP/PPSSPP_STATE
+}
+
+# Keep only what restore accepts: plain names under /storage, reached without
+# symlinks. NUL list in $1, newline list out (no name holds a newline).
+select_files() {
+    local files real index
+    mapfile -d '' -t files <"$1" || return 1
+    [ "${#files[@]}" -gt 0 ] || return 0
+    mapfile -d '' -t real < <(printf '%s\0' "${files[@]}" | xargs -0 realpath -m -z --) || return 1
+    [ "${#real[@]}" -eq "${#files[@]}" ] || return 1
+    for index in "${!files[@]}"; do
+        if [[ "${files[index]}" != "${STORAGE}/"* || "${real[index]}" != "${files[index]}" ||
+              "${files[index]}" == *[[:cntrl:]\\]* ]]; then
+            echo "Skipped (outside /storage, behind a symlink or oddly named): ${files[index]}" >&2
+            continue
+        fi
+        printf '%s\n' "${files[index]}"
+    done
+}
+
+# Names as BusyBox unzip prints them: every byte outside printable ASCII
+# becomes "?". Applied to any list, it makes Info-ZIP's output comparable.
+printable() {
+    LC_ALL=C sed 's/[^ -~]/?/g'
+}
+
+# Members of ZIP $1 from unzip -v, which BusyBox and Info-ZIP print alike:
+# printable names into $2, "decimal-CRC name" into $2.crc, and the total
+# uncompressed size in LISTED_BYTES. A newline in a name breaks the count;
+# the exact names come from the extraction and the manifest. BusyBox strips
+# "/" and ".." prefixes from what it lists and only warns on stderr, so any
+# warning refuses the archive.
+list_members() {
+    local listing total size crc name
+    listing=$(unzip -v "$1" 2>"$2.err") || return 1
+    if [ -s "$2.err" ]; then
+        echo "Refusing backup: unsafe member name; unzip says: $(cat "$2.err")" >&2
+        return 1
+    fi
+    LISTED_BYTES=0
+    : >"$2" && : >"$2.crc" || return 1
+    while read -r size crc name; do
+        LISTED_BYTES=$((LISTED_BYTES + size))
+        printf '%s\n' "${name}" >>"$2"
+        printf '%s %s\n' "$((16#${crc}))" "${name}" >>"$2.crc"
+    done < <(printf '%s\n' "${listing}" | printable | sed -nE \
+        's/^ *([0-9]+) +[^ ]+ +[0-9]+ +-?[0-9]+% +[0-9-]{10} +[0-9:]{5} +([0-9a-f]{8})  (.*)$/\1 \2 \3/p')
+    total=$(printf '%s\n' "${listing}" | sed -nE '$s/^ *[0-9]+ +[0-9]+ +-?[0-9]+% +([0-9]+) files?$/\1/p')
+    [ -n "${total}" ] && [ "${total}" -eq "$(wc -l <"$2")" ]
+}
+
+# The /storage-relative path a member restores to, in REL.
+map_member() {
+    local index path="$1/"
+    REL="$1"
+    for ((index = 0; index < ${#ALIASES[@]}; index += 2)); do
+        case "${path}" in
+            "${ALIASES[index]}"*)
+                REL="${ALIASES[index + 1]}${path#"${ALIASES[index]}"}"
+                REL="${REL%/}" ;;
+        esac
+    done
+}
+
+# Refuse the whole archive unless every member is a plain relative path
+# under storage/: no absolute names, no "." or ".." components, no empty
+# components, no backslashes, and no file that another member would treat
+# as its directory (a symlink entry). Duplicates and control characters are
+# caught after extraction.
+check_members() {
+    local name rel part parts path
+    local -A files=()
+    while IFS= read -r name; do
+        rel="${name%/}"
+        if [ -z "${rel}" ] || [[ "${rel}" == /* || "${rel}" == */ || "${rel}" == *\\* ]]; then
+            echo "Refusing backup: unsafe member name '${name}'." >&2
+            return 1
+        fi
+        IFS=/ read -r -a parts <<<"${rel}"
+        for part in "${parts[@]}"; do
+            case "${part}" in
+                '' | . | ..)
+                    echo "Refusing backup: unsafe member name '${name}'." >&2
+                    return 1 ;;
+            esac
+        done
+        map_member "${rel}"
+        if [[ "${REL}/" != "${STORAGE#/}/"?* && ! ( "${name}" == */ &&
+              "${STORAGE#/}/" == "${REL}/"* ) ]]; then
+            echo "Refusing backup: '${name}' is outside ${STORAGE}." >&2
+            return 1
+        fi
+        [[ "${name}" == */ ]] || files["${rel}"]=1
+    done <"$1"
+    while IFS= read -r name; do
+        path="${name%/}"
+        while [[ "${path}" == */* ]]; do
+            path="${path%/*}"
+            if [ -n "${files[${path}]}" ]; then
+                echo "Refusing backup: '${name}' would be written through '${path}'." >&2
+                return 1
+            fi
+        done
+    done <"$1"
+}
+
+# Check ZIP $1 completely before anyone trusts it: safe member names, room
+# to extract, an extraction into the empty directory $2/root holding exactly
+# those members as regular files, their real CRC32 (BusyBox unzip skips it
+# for STORED entries), and, when present (or required by $3), the manifest:
+# sha256 and modification time of every file when it was backed up.
+# Sets VERIFIED (contents proven by sha256 or CRC) and MTIMES.
+verify_archive() {
+    local zip="$1" dir="$2" available mtime name
+    VERIFIED=false
+    MTIMES=()
+    mkdir -p "${dir}/root" || return 1
+    if ! list_members "${zip}" "${dir}/members"; then
+        echo "Refusing backup: cannot list ${zip}." >&2
+        return 1
+    fi
+    check_members "${dir}/members" || return 1
+    available=$(df -Pk "${dir}" | awk 'END {print $4}')
+    if ! [[ "${available}" =~ ^[0-9]+$ ]] || \
+       [ "${available}" -lt $((LISTED_BYTES / 1024 + 1024)) ]; then
+        echo "Not enough free space to unpack the backup: $((LISTED_BYTES / 1024 + 1024)) KiB needed." >&2
+        return 1
+    fi
+    if ! unzip -q -o "${zip}" -d "${dir}/root" >"${dir}/unzip.log" 2>&1; then
+        cat "${dir}/unzip.log" >&2
+        echo "Refusing backup: ${zip} does not extract cleanly." >&2
+        return 1
+    fi
+    if [ -n "$(find "${dir}/root" ! -type f ! -type d -print -quit)" ]; then
+        echo 'Refusing backup: it holds links or special files.' >&2
+        return 1
+    fi
+    if (cd "${dir}/root" && find . -type f -print0) | LC_ALL=C grep -qz '[[:cntrl:]\\]'; then
+        echo 'Refusing backup: a member name holds control characters.' >&2
+        return 1
+    fi
+    (cd "${dir}/root" && find . -type f | sed 's|^\./||' | LC_ALL=C sort) >"${dir}/files" || return 1
+    # Exactly the listed members, each once: a duplicate leaves one file.
+    if ! grep -v '/$' "${dir}/members" | LC_ALL=C sort | \
+         cmp -s - <(printable <"${dir}/files" | LC_ALL=C sort); then
+        echo 'Refusing backup: the extracted files differ from its listing.' >&2
+        return 1
+    fi
+    # GNU cksum (coreutils 9.6+) computes the ZIP CRC32; BusyBox has none.
+    if cksum -a crc32b </dev/null >/dev/null 2>&1; then
+        if ! (cd "${dir}/root" && tr '\n' '\0' <../files | xargs -0 -r cksum -a crc32b --) | \
+               sed -E 's/^([0-9]+) [0-9]+ /\1 /' | printable | LC_ALL=C sort | \
+               cmp -s - <(grep -v '/$' "${dir}/members.crc" | LC_ALL=C sort); then
+            echo 'Refusing backup: CRC mismatch, the backup is corrupt.' >&2
+            return 1
+        fi
+        VERIFIED=true
+    fi
+    if ! grep -Fqx "${MANIFEST}" "${dir}/files"; then
+        if [ -n "$3" ]; then
+            echo 'Refusing backup: its manifest is missing.' >&2
+            return 1
+        fi
+        if "${VERIFIED}"; then
+            echo 'Note: this backup has no manifest; its contents match the ZIP CRCs.'
+        else
+            echo 'Note: this backup has no manifest and its CRCs cannot be checked here: files already on the device are kept and the backup copies go beside them.'
+        fi
+        return 0
+    fi
+    if grep -vqE '^[0-9a-f]{64} [0-9]+ .' "${dir}/root/${MANIFEST}" || \
+       ! cut -d' ' -f3- "${dir}/root/${MANIFEST}" | LC_ALL=C sort | \
+         cmp -s - <(grep -Fvx "${MANIFEST}" "${dir}/files"); then
+        echo 'Refusing backup: its manifest does not match its files.' >&2
+        return 1
+    fi
+    if ! (cd "${dir}/root" && grep -Fvx "${MANIFEST}" ../files | tr '\n' '\0' | \
+            xargs -0 -r sha256sum --) | LC_ALL=C sort | \
+         cmp -s - <(sed -E 's/^([0-9a-f]{64}) [0-9]+ /\1  /' "${dir}/root/${MANIFEST}" | LC_ALL=C sort); then
+        echo 'Refusing backup: checksum mismatch (corrupt, or a file changed while it was archived).' >&2
+        return 1
+    fi
+    while read -r _ mtime name; do
+        MTIMES["${name}"]="${mtime}"
+    done <"${dir}/root/${MANIFEST}"
+    VERIFIED=true
+}
+
+is_excluded() {
+    local pattern path
+    for pattern in "${EXCLUDES[@]}"; do
+        # shellcheck disable=SC2053 # EXCLUDES holds glob patterns.
+        [[ "$1" == ${pattern} || "$2" == ${pattern} ]] && return 0
+    done
+    for path in "$1" "$2"; do
+        while :; do
+            [ -z "${LINKS[${path}]}" ] || return 0
+            [[ "${path}" == */* ]] || break
+            path="${path%/*}"
+        done
+    done
+    return 1
+}
+
+is_save() {
+    local location
+    case "$1" in "${STORAGE}/roms/"*) return 0 ;; esac
+    for location in "${SAVE_LOCATIONS[@]}"; do
+        # shellcheck disable=SC2053 # Locations may be globs, such as *.vsf.
+        [[ "$1" == ${location} || "$1" == ${location}/* ]] && return 0
+    done
+    return 1
+}
+
+# Services through which other machines write to /storage stop while a
+# restore runs, and start again when it ends.
+SERVICES=(smbd nmbd simple-http-server syncthing)
+PAUSED=()
+pause_services() {
+    local service
+    command -v systemctl >/dev/null || return 0
+    for service in "${SERVICES[@]}"; do
+        systemctl is-active --quiet "${service}" 2>/dev/null || continue
+        PAUSED+=("${service}")
+        systemctl stop "${service}" || { echo "Cannot stop ${service}." >&2; return 1; }
+    done
+}
+resume_services() {
+    [ "${#PAUSED[@]}" -eq 0 ] || systemctl start "${PAUSED[@]}"
+}
+
+# USB file transfer (MTP) lets a PC write to /storage. Its daemon belongs to
+# the usbgadget mode the user chose, so restore asks instead of stopping it.
+mtp_active() {
+    pidof umtprd >/dev/null 2>&1 || [ -d /dev/ffs-umtp ]
+}
+
+# Enter directory $1 and require it to be exactly that path, reached with
+# no symlink. Relative names then resolve inside this directory even if a
+# component of its path is swapped later, so writes stay on its filesystem.
+enter() {
+    cd -P -- "$1" 2>/dev/null && [ "$(pwd -P)" = "$1" ]
+}
+
+sha_of() {
+    local sum
+    sum=$(sha256sum -- "$1") || return 1
+    echo "${sum%% *}"
+}
+
+# Create the missing directories of $1 one level at a time, each inside its
+# checked parent. CREATED keeps them for the rollback.
+make_dirs() {
+    local path="${STORAGE}" part
+    local -a parts
+    [ "$1" != "${STORAGE}" ] || return 0
+    [[ "$1" == "${STORAGE}/"* ]] || return 1
+    IFS=/ read -r -a parts <<<"${1#"${STORAGE}"/}"
+    for part in "${parts[@]}"; do
+        if [ ! -e "${path}/${part}" ] && [ ! -L "${path}/${part}" ]; then
+            { enter "${path}" && mkdir -- "${part}"; } || return 1
+            CREATED+=("${path}/${part}")
+        fi
+        path="${path}/${part}"
+    done
+}
+
+# The journal lists every planned rename, "new sha dest temp undo" with tabs,
+# so that the run after a crash or SIGKILL can undo an unfinished restore.
+# A last line "COMMITTED" means the restore finished: only cleanup is left.
+# It lives in a folder only root can enter: /storage is the only persistent
+# place, and Samba, syncthing and the HTTP server write to parts of it.
+CACHE="/storage/.cache"
+STATEDIR="${CACHE}/backuptool"
+JOURNAL="journal"
+enter_state() {
+    enter "${CACHE}" || return 1
+    [ -e backuptool ] || [ -L backuptool ] || mkdir -m 0700 backuptool || return 1
+    enter "${STATEDIR}" || return 1
+    [ "$(stat -c %u .)" = "${EUID}" ] || return 1
+    [ "$(stat -c %a .)" = 700 ] || chmod 0700 . || return 1
+}
+write_journal() {
+    local index
+    enter_state || return 1
+    for index in "${!P_DEST[@]}"; do
+        printf '%s\t%s\t%s\t%s\t%s\n' "${P_NEW[index]}" "${P_SHA[index]}" \
+            "${P_DEST[index]}" "${P_TEMP[index]}" "${P_UNDO[index]}"
+    done >"${JOURNAL}.new" || return 1
+    [ -z "$1" ] || echo "$1" >>"${JOURNAL}.new" || return 1
+    sync -- "${JOURNAL}.new" 2>/dev/null
+    mv -fT -- "${JOURNAL}.new" "${JOURNAL}"
+}
+drop_journal() {
+    enter_state && rm -f -- "${JOURNAL}" "${JOURNAL}.new"
+}
+
+# A journal record names only what restore itself creates: a path under
+# /storage made of plain components, and the temporary and undo names this
+# script derives from its last component.
+valid_record() {
+    local new="$1" sha="$2" dest="$3" temp="$4" undo="$5" base part number
+    local -a parts
+    [[ "${new}" == [01] && "${sha}" =~ ^[0-9a-f]{64}$ ]] || return 1
+    [[ "${dest}" == "${STORAGE}/"* ]] || return 1
+    [[ "${dest}" != *[[:cntrl:]]* ]] || return 1
+    IFS=/ read -r -a parts <<<"${dest#"${STORAGE}"/}"
+    [ "${#parts[@]}" -gt 0 ] || return 1
+    [[ "${dest}" != */ ]] || return 1
+    for part in "${parts[@]}"; do
+        case "${part}" in '' | . | ..) return 1 ;; esac
+    done
+    base="${dest##*/}"
+    [[ "${base}" != */* ]] || return 1
+    number="${temp#".${base}.restore-"}"
+    [[ "${number}" != "${temp}" && "${number}" =~ ^[0-9]+$ ]] || return 1
+    [ -n "${undo}" ] || return 0
+    number="${undo#".${base}.undo-"}"
+    [[ "${number}" != "${undo}" && "${number}" =~ ^[0-9]+$ ]]
+}
+
+# First thing of every run: finish what a killed restore left. Unfinished,
+# it is undone; a file the user changed since keeps its new content and the
+# file it replaced is kept beside it. Orphan staging folders go. If any
+# record cannot be carried out (a read-only card, a moved folder), the
+# journal stays for the next run and this run stops.
+recover() {
+    local new sha dest temp undo base keep committed=false failed=false
+    local -a notes=()
+    if ! { mkdir -p "${CACHE}" && enter "${CACHE}"; }; then
+        echo "Error: ${CACHE} is not a real folder." >&2
+        return 1
+    fi
+    if ! enter_state; then
+        echo "Error: ${STATEDIR} is not a folder that only root can use." >&2
+        return 1
+    fi
+    if [ -f "${JOURNAL}" ]; then
+        grep -qx COMMITTED "${JOURNAL}" && committed=true
+        while IFS=$'\t' read -r new sha dest temp undo; do
+            [ "${new}" != COMMITTED ] || continue
+            if ! valid_record "${new}" "${sha}" "${dest}" "${temp}" "${undo}"; then
+                notes+=("Ignored an invalid journal record:$(printf ' %q' "${new}" "${sha}" "${dest}" "${temp}" "${undo}")")
+                continue
+            fi
+            # Phase 1 creates missing folders: one that never appeared
+            # holds nothing to recover. One that exists must be entered.
+            if [ ! -e "${dest%/*}" ] && [ ! -L "${dest%/*}" ]; then
+                notes+=("Nothing to recover for ${dest}: its folder was never created.")
+                continue
+            fi
+            if ! enter "${dest%/*}"; then
+                notes+=("Could not recover ${dest}: its folder changed.")
+                failed=true
+                continue
+            fi
+            base="${dest##*/}"
+            rm -f -- "${temp}" || { notes+=("Could not remove ${dest%/*}/${temp}"); failed=true; }
+            if "${committed}"; then
+                [ -z "${undo}" ] || rm -f -- "${undo}" ||
+                    { notes+=("Could not remove ${dest%/*}/${undo}"); failed=true; }
+            elif [ -n "${undo}" ] && [ -e "${undo}" ]; then
+                if [ ! -e "${base}" ] || [ "$(sha_of "${base}")" = "${sha}" ]; then
+                    if mv -fT -- "${undo}" "${base}"; then
+                        notes+=("Put back ${dest}")
+                    else
+                        notes+=("Could not put back ${dest}"); failed=true
+                    fi
+                else
+                    keep="${base}.pre-restore-${STAMP}"
+                    if mv -fT -- "${undo}" "${keep}"; then
+                        notes+=("Kept ${dest}; the file it replaced is ${dest%/*}/${keep}")
+                    else
+                        notes+=("Could not keep ${dest%/*}/${undo} as ${keep}"); failed=true
+                    fi
+                fi
+            elif [ "${new}" = 1 ] && [ -f "${base}" ] && [ "$(sha_of "${base}")" = "${sha}" ]; then
+                if rm -f -- "${base}"; then
+                    notes+=("Removed ${dest}")
+                else
+                    notes+=("Could not remove ${dest}"); failed=true
+                fi
+            fi
+        done < <(tac "${JOURNAL}")
+        if "${failed}"; then
+            echo 'Error: an interrupted restore could not be recovered; its journal is kept for the next run.' >&2
+            printf '%s\n' "${notes[@]}" >&2
+            printf '%s\n' 'Recovery of an interrupted restore failed.' "${notes[@]}" | logger -t backuptool 2>/dev/null
+            cd / || :
+            return 1
+        fi
+        echo 'Recovered an interrupted restore.'
+        [ "${#notes[@]}" -eq 0 ] || printf '%s\n' "${notes[@]}"
+        printf '%s\n' 'Recovered an interrupted restore.' "${notes[@]}" | logger -t backuptool 2>/dev/null
+        enter_state || return 1
+    fi
+    rm -f -- "${JOURNAL}" "${JOURNAL}.new"
+    enter "${CACHE}" || return 1
+    rm -rf -- backuptool-restore.*
+    cd / || return 1
+}
+
+# Each planned file: staged source, final path, backed-up mtime ("" if
+# unknown), whether the path is new, the sha256 of the new content, the
+# temporary and undo names, the device file's sha256 and mtime when it was
+# planned, and how far the transaction got.
+P_SRC=() P_DEST=() P_MTIME=() P_NEW=() P_SHA=() P_TEMP=() P_UNDO=()
+P_DSHA=() P_DMTIME=() P_BESIDE=() P_STATE=() CREATED=()
+COMMITTED=false
+plan() {
+    local index="${#P_DEST[@]}" base="${2##*/}"
+    P_SRC+=("$1") P_DEST+=("$2") P_MTIME+=("$3") P_NEW+=("$4") P_BESIDE+=("${5:-0}")
+    P_SHA+=("$(sha_of "$1")") || return 1
+    P_TEMP+=(".${base}.restore-$$")
+    P_UNDO+=("")
+    P_DSHA+=("") P_DMTIME+=("")
+    if [ "$4" = 0 ]; then
+        P_UNDO[index]=".${base}.undo-$$"
+        P_DSHA[index]=$(sha_of "$2") || return 1
+        P_DMTIME[index]=$(stat -c %Y -- "$2") || return 1
+    fi
+}
+
+# The device file $1 (relative) is still what was planned for item $2.
+unchanged() {
+    [ -f "$1" ] && [ ! -L "$1" ] &&
+        [ "$(stat -c %Y -- "$1")" = "${P_DMTIME[$2]}" ] &&
+        [ "$(sha_of "$1")" = "${P_DSHA[$2]}" ]
+}
+
+# Undo every step taken, newest first, from what is on disk: a file moved
+# aside comes back, a new file placed goes, temporaries go.
+ROLLBACK_FAILED=false
+rollback() {
+    local index base
+    for ((index = ${#P_STATE[@]} - 1; index >= 0; index--)); do
+        [ -n "${P_STATE[index]}" ] || continue
+        base="${P_DEST[index]##*/}"
+        if ! enter "${P_DEST[index]%/*}"; then
+            echo "Cannot roll back ${P_DEST[index]}: its folder changed." >&2
+            ROLLBACK_FAILED=true
+            continue
+        fi
+        if [ -n "${P_UNDO[index]}" ] && [ -e "${P_UNDO[index]}" ]; then
+            mv -fT -- "${P_UNDO[index]}" "${base}" || ROLLBACK_FAILED=true
+        elif [ "${P_NEW[index]}" = 1 ] && [ ! -e "${P_TEMP[index]}" ] &&
+             { [ "${P_STATE[index]}" = committing ] || [ "${P_STATE[index]}" = placed ]; }; then
+            rm -f -- "${base}" || ROLLBACK_FAILED=true
+        fi
+        rm -f -- "${P_TEMP[index]}"
+    done
+    for ((index = ${#CREATED[@]} - 1; index >= 0; index--)); do
+        rmdir -- "${CREATED[index]}" 2>/dev/null
+    done
+}
+
+abort() {
+    echo "$1" >&2
+    exit 1
+}
+
+# Runs on every exit of a restore: an unfinished restore is rolled back,
+# the staging folder goes, the services come back.
+STAGE="" STAGENAME="" STAGEFD=""
+finish_restore() {
+    trap '' HUP INT TERM
+    if ! "${COMMITTED}" && [ "${#P_STATE[@]}" -gt 0 ]; then
+        rollback
+        if "${ROLLBACK_FAILED}"; then
+            echo 'Restore failed; some changes could not be rolled back (see above).' >&2
+        else
+            echo 'Restore failed; every change was rolled back.' >&2
+        fi
+    fi
+    "${ROLLBACK_FAILED}" || drop_journal
+    if [ -n "${STAGENAME}" ]; then
+        if enter "${CACHE}"; then
+            rm -rf -- "${STAGENAME}"
+        else
+            find "${STAGE}/" -mindepth 1 -delete
+        fi
+        exec {STAGEFD}<&-
+    fi
+    cd / || :
+    resume_services
+}
+
+# Free space for the files that must be copied to another filesystem; a
+# move inside the staging filesystem is only a rename.
+check_space() {
+    local index dir dev stage_dev available need
+    local -A devices=() needs=() places=()
+    stage_dev=$(stat -c %d "${STAGE}/root") || return 1
+    for index in "${!P_DEST[@]}"; do
+        dir="${P_DEST[index]%/*}"
+        while [ ! -d "${dir}" ]; do dir="${dir%/*}"; done
+        [ -n "${devices[${dir}]}" ] || devices["${dir}"]=$(stat -c %d "${dir}/") || return 1
+        dev="${devices[${dir}]}"
+        [ "${dev}" != "${stage_dev}" ] || continue
+        needs["${dev}"]=$(( ${needs[${dev}]:-0} + $(stat -c %s "${P_SRC[index]}") ))
+        places["${dev}"]="${dir}"
+    done
+    for dev in "${!needs[@]}"; do
+        available=$(df -Pk "${places[${dev}]}/" | awk 'END {print $4}')
+        need=$(( needs[${dev}] / 1024 + 1024 ))
+        if ! [[ "${available}" =~ ^[0-9]+$ ]] || [ "${available}" -lt "${need}" ]; then
+            echo "Not enough free space in ${places[${dev}]}: ${need} KiB needed." >&2
+            return 1
+        fi
+    done
+}
+
+# A device file that changed after planning keeps its place: item $1 is
+# placed beside it instead, as a new file.
+divert() {
+    local keep="${P_DEST[$1]}.backup-${STAMP}"
+    [ ! -e "${keep}" ] || keep="${keep}-$$"
+    NOTES+=("Kept ${P_DEST[$1]}, changed during the restore; the backup's copy is ${keep}")
+    if [ "${P_BESIDE[$1]}" != 1 ]; then
+        KEPT=$((KEPT + 1)) RESTORED=$((RESTORED - 1))
+    fi
+    P_DEST[$1]="${keep}" P_NEW[$1]=1 P_UNDO[$1]="" P_BESIDE[$1]=1
+}
+
+restore() {
+    local member src dest mtime index base keep report
+    local -a real=() bad=() dests=() members=()
+    take_lock
+    recover || exit 1
+    [ -f "${BACKUPFILE}" ] || { echo "No backup at ${BACKUPFILE}." >&2; exit 1; }
+    if mtp_active; then
+        echo 'USB file transfer (MTP) is on. Turn it off, then restore the backup.' >&2
+        logger -t backuptool 'Restore refused: MTP is on.' 2>/dev/null
+        exit 1
+    fi
+    RESTORED=0 KEPT=0 NOTES=()
+    trap finish_restore EXIT
+    trap 'exit 1' HUP INT TERM
+    pause_services || exit 1
+    # Stage on /storage itself, so most promotions are renames on one disk.
+    # The folder is created inside a checked .cache and then used through
+    # an open descriptor: swapping .cache for a symlink cannot move it.
+    enter "${CACHE}" || abort "${CACHE} is not a real folder."
+    STAGENAME=$(mktemp -d backuptool-restore.XXXXXX) || exit 1
+    exec {STAGEFD}<"${STAGENAME}" || exit 1
+    STAGE="/proc/$$/fd/${STAGEFD}"
+    [ "$(readlink "${STAGE}")" = "${CACHE}/${STAGENAME}" ] || abort 'Unsafe staging folder.'
+    cd / || exit 1
+    verify_archive "${BACKUPFILE}" "${STAGE}" "" || exit 1
+
+    while IFS= read -r member; do
+        [ "${member}" != "${MANIFEST}" ] || continue
+        map_member "${member}"
+        is_excluded "${member}" "${REL}" && continue
+        members+=("${member}")
+        dests+=("/${REL}")
+    done <"${STAGE}/files"
+    [ "${#members[@]}" -gt 0 ] || { echo 'Nothing to restore.'; exit 0; }
+    # Refuse early when a destination is reached through a symlink or is not
+    # a file. Every step below checks its folder again right before acting.
+    mapfile -d '' -t real < <(printf '%s\0' "${dests[@]}" | xargs -0 realpath -m -z --) || exit 1
+    [ "${#real[@]}" -eq "${#dests[@]}" ] || exit 1
+    for index in "${!dests[@]}"; do
+        dest="${dests[index]}"
+        if [[ "${real[index]}" != "${dest}" || "${dest}" != "${STORAGE}/"* ]] || \
+           { [ -e "${dest}" ] && [ ! -f "${dest}" ]; }; then
+            bad+=("${dest}")
+        fi
+    done
+    if [ "${#bad[@]}" -gt 0 ]; then
+        printf 'Unsafe destination (symlink or not a file): %s\n' "${bad[@]}" >&2
+        abort 'Refusing backup: nothing was restored.'
+    fi
+    # Current Wi-Fi credentials stay unless the user restores Wi-Fi as well.
+    if [ "${2}" != "--with-wifi" ] && [ -f "${STAGE}/root/${SYSTEM_CFG}" ]; then
+        KEEP=$(grep '^wifi\.\(ssid\|key\)=' "/${SYSTEM_CFG}" 2>/dev/null)
+        sed -i '/^wifi\.\(ssid\|key\)=/d' "${STAGE}/root/${SYSTEM_CFG}" || exit 1
+        [ -z "${KEEP}" ] || printf '%s\n' "${KEEP}" >>"${STAGE}/root/${SYSTEM_CFG}" || exit 1
+    fi
+
+    # Decide every file first. A save is replaced only when the device copy
+    # is provably older than the backed-up one (by the mtime recorded at
+    # backup time; the extracted mtime is meaningless with BusyBox). Equal
+    # times, as on 2-second FAT clocks, or no record at all keep the device
+    # copy and put the backup's beside it. Unverified contents never replace.
+    for index in "${!members[@]}"; do
+        member="${members[index]}" dest="${dests[index]}"
+        src="${STAGE}/root/${member}" mtime="${MTIMES[${member}]}"
+        if [ ! -e "${dest}" ]; then
+            plan "${src}" "${dest}" "${mtime}" 1 || exit 1
+            RESTORED=$((RESTORED + 1))
+            continue
+        fi
+        cmp -s -- "${dest}" "${src}" && continue
+        if is_save "${dest}"; then
+            if [ -n "${mtime}" ] && [ "$(stat -c %Y -- "${dest}")" -lt "${mtime}" ]; then
+                plan "${src}" "${dest}" "${mtime}" 0 || exit 1
+                RESTORED=$((RESTORED + 1))
+                continue
+            fi
+        elif "${VERIFIED}"; then
+            plan "${src}" "${dest}" "${mtime}" 0 || exit 1
+            RESTORED=$((RESTORED + 1))
+            continue
+        fi
+        keep="${dest}.backup-${STAMP}"
+        [ ! -e "${keep}" ] || keep="${keep}-$$"
+        plan "${src}" "${keep}" "${mtime}" 1 1 || exit 1
+        KEPT=$((KEPT + 1))
+        NOTES+=("Kept ${dest}; the backup's copy is ${keep}")
+    done
+    check_space || abort 'Refusing to start the restore: nothing was changed.'
+    write_journal || abort 'Cannot write the restore journal.'
+
+    # Phase 1: every file waits as a temporary next to its destination, on
+    # the destination's filesystem. A failure here leaves nothing changed.
+    for index in "${!P_DEST[@]}"; do
+        dest="${P_DEST[index]}"
+        { make_dirs "${dest%/*}" && enter "${dest%/*}"; } || abort "Unsafe folder for ${dest}."
+        P_STATE[index]=staging
+        mv -fT -- "${P_SRC[index]}" "${P_TEMP[index]}" || abort "Cannot write ${dest}."
+        if [ -n "${P_MTIME[index]}" ]; then
+            touch -m -d "@${P_MTIME[index]}" -- "${P_TEMP[index]}" || abort "Cannot write ${dest}."
+        fi
+        P_STATE[index]=staged
+    done
+    # Phase 2: renames only. Right before each one the device file must
+    # still be what was planned; if a game or a user wrote it meanwhile it
+    # stays, and the backup's copy goes beside it. The old file moves aside
+    # first, so that a failure or a signal can put it back.
+    for index in "${!P_DEST[@]}"; do
+        dest="${P_DEST[index]}" base="${P_DEST[index]##*/}"
+        enter "${dest%/*}" || abort "Unsafe folder for ${dest}."
+        if [ "${P_NEW[index]}" = 0 ] && ! unchanged "${base}" "${index}"; then
+            divert "${index}"
+            dest="${P_DEST[index]}" base="${P_DEST[index]##*/}"
+        fi
+        if [ "${P_NEW[index]}" = 1 ]; then
+            if [ -e "${base}" ] || [ -L "${base}" ]; then
+                divert "${index}"
+                dest="${P_DEST[index]}" base="${P_DEST[index]##*/}"
+            fi
+            P_STATE[index]=committing
+        else
+            P_STATE[index]=committing
+            mv -fT -- "${base}" "${P_UNDO[index]}" || abort "Cannot replace ${dest}."
+            # Written between the check and the rename: put it back.
+            if ! unchanged "${P_UNDO[index]}" "${index}"; then
+                mv -fT -- "${P_UNDO[index]}" "${base}" || abort "Cannot replace ${dest}."
+                divert "${index}"
+                dest="${P_DEST[index]}" base="${P_DEST[index]##*/}"
+            fi
+        fi
+        mv -fT -- "${P_TEMP[index]}" "${base}" || abort "Cannot replace ${dest}."
+        P_STATE[index]=placed
+    done
+    COMMITTED=true
+    write_journal COMMITTED || :
+    for index in "${!P_DEST[@]}"; do
+        [ -z "${P_UNDO[index]}" ] || { enter "${P_DEST[index]%/*}" && rm -f -- "${P_UNDO[index]}"; }
+    done
+    drop_journal
+    cd / || exit 1
+
+    echo "Restored ${RESTORED} files; kept ${KEPT} device files that differ, with the backup's copy beside them."
+    if [ "${#NOTES[@]}" -gt 0 ]; then
+        report="${BACKUPFOLDER}/${OS_NAME}_RESTORE-${STAMP}.log"
+        [ ! -e "${report}" ] || report="${BACKUPFOLDER}/${OS_NAME}_RESTORE-${STAMP}-$$.log"
+        printf '%s\n' "${NOTES[@]}" | tee "${report}"
+        printf '%s\n' "${NOTES[@]}" | logger -t backuptool 2>/dev/null
+    fi
+    return 0
+}
+
+backup() {
+    local bytes names cfgsize required available
+    take_lock
+    recover || exit 1
+    WORKDIR="" ARCHIVEFILENAME=""
+    trap '[ -z "${WORKDIR}" ] || rm -rf "${WORKDIR}"
+        if [ -n "${ARCHIVEFILENAME}" ] && [ ! -f "${BACKUPFILE}" ]; then
+            mv "${BACKUPFOLDER}/${ARCHIVEFILENAME}" "${BACKUPFILE}"
+        fi' EXIT
+    trap 'exit 1' HUP INT TERM
+    # Build on the destination filesystem, so publication never copies
+    # across mounts.
+    WORKDIR=$(mktemp -d "${BACKUPFOLDER}/.backuptool.XXXXXX") || exit 1
+    collect_tree "${COMPRESSLOCATIONS[@]}" >"${WORKDIR}/files.raw" || exit 1
+    if "${USE_DEFAULT}"; then
+        collect_rom_saves >>"${WORKDIR}/files.raw" || exit 1
+    fi
+    sort -zu "${WORKDIR}/files.raw" >"${WORKDIR}/files.sorted" || exit 1
+    select_files "${WORKDIR}/files.sorted" >"${WORKDIR}/files" || exit 1
+    [ -s "${WORKDIR}/files" ] || { echo 'No files to back up.' >&2; exit 1; }
+    # Raw file sizes plus deflate expansion, names and ZIP headers, for the
+    # ZIP and for its verification copy, which coexist.
+    bytes=$(tr '\n' '\0' <"${WORKDIR}/files" | xargs -0 -r stat -c '%s' | \
+        awk '{bytes += $1; files++} END {printf "%.0f", bytes + bytes/1000 + files*256}') || exit 1
+    names=$(wc -c <"${WORKDIR}/files") || exit 1
+    cfgsize=0
+    [ ! -f "/${SYSTEM_CFG}" ] || cfgsize=$(stat -c '%s' "/${SYSTEM_CFG}") || exit 1
+    required=$(( (bytes*2 + names*6 + cfgsize*3 + 1048576 + 1023) / 1024 ))
+    available=$(df -Pk "${BACKUPFOLDER}" | awk 'END {print $4}') || exit 1
+    [[ "${available}" =~ ^[0-9]+$ ]] || { echo 'Cannot check free space.' >&2; exit 1; }
+    echo "Backup: up to ${required} KiB required; ${available} KiB free."
+    if [ "${available}" -lt "${required}" ]; then
+        echo 'Not enough free space for the backup.' >&2
+        exit 1
+    fi
+    # Wi-Fi credentials leave system.cfg unless the user opted in: the
+    # archive gets a sanitized copy under the same name.
+    if [ "${2}" != "--with-wifi" ] && grep -Fqx "/${SYSTEM_CFG}" "${WORKDIR}/files"; then
+        mkdir -p "${WORKDIR}/${SYSTEM_CFG%/*}" || exit 1
+        grep -v '^wifi\.\(ssid\|key\)=' "/${SYSTEM_CFG}" >"${WORKDIR}/${SYSTEM_CFG}"
+        [ "$?" -le 1 ] || exit 1
+        grep -Fvx "/${SYSTEM_CFG}" "${WORKDIR}/files" >"${WORKDIR}/files.zip"
+        [ "$?" -le 1 ] || exit 1
+        echo "${SYSTEM_CFG}" >>"${WORKDIR}/files.zip" || exit 1
+    else
+        cp "${WORKDIR}/files" "${WORKDIR}/files.zip" || exit 1
+    fi
+    # Checksum and mtime of what goes in, relative to the archive root.
+    # sha256sum and stat keep their input order, so the lines pair up.
+    mkdir -p "${WORKDIR}/${MANIFEST%/*}" || exit 1
+    (cd "${WORKDIR}" && paste -d ' ' \
+        <(tr '\n' '\0' <files.zip | xargs -0 -r stat -c '%Y' --) \
+        <(tr '\n' '\0' <files.zip | xargs -0 -r sha256sum --)) | \
+        sed -E 's|^([0-9]+) ([0-9a-f]{64})  /?|\2 \1 |' >"${WORKDIR}/${MANIFEST}" || exit 1
+    [ "$(wc -l <"${WORKDIR}/${MANIFEST}")" -eq "$(wc -l <"${WORKDIR}/files.zip")" ] || exit 1
+    echo "${MANIFEST}" >>"${WORKDIR}/files.zip" || exit 1
+    # Absolute names lose their leading slash, so live files and the staged
+    # ones share one archive root. Writing to a pipe keeps every non-empty
+    # entry deflated: Info-ZIP stores incompressible files only when it can
+    # seek back, and BusyBox unzip checks CRCs of deflated entries alone.
+    (cd "${WORKDIR}" && zip -q -9 -MM - -@ <files.zip | cat >backup.zip) || exit 1
+    # The finished archive must pass the same checks as a restore.
+    verify_archive "${WORKDIR}/backup.zip" "${WORKDIR}/verify" required || exit 1
+    rm -rf "${WORKDIR}/verify"
+    # Keep the last good backup at its usual path until the new ZIP is ready.
+    if [ -f "${BACKUPFILE}" ]; then
+        ARCHIVEFILENAME="ARCHIVED_${OS_NAME}_BACKUP-${STAMP}-$$.zip"
+        mv "${BACKUPFILE}" "${BACKUPFOLDER}/${ARCHIVEFILENAME}" || exit 1
+    fi
+    if ! mv "${WORKDIR}/backup.zip" "${BACKUPFILE}"; then
+        [ -z "${ARCHIVEFILENAME}" ] || mv "${BACKUPFOLDER}/${ARCHIVEFILENAME}" "${BACKUPFILE}"
+        exit 1
+    fi
+}
+
 case "${1}" in
-    "restore")
-        if [ "${2}" != "--with-wifi" ]
-        then
-            KEEP=$(grep '^wifi\.\(ssid\|key\)=' "/${SYSTEM_CFG}" 2>/dev/null)
-        fi
-        unzip -o "${BACKUPFILE}" -d / "${EXCLUDES[@]}"
-        RC=$?
-        if [ "${2}" != "--with-wifi" ] && [ -f "/${SYSTEM_CFG}" ]
-        then
-            sed -i '/^wifi\.\(ssid\|key\)=/d' "/${SYSTEM_CFG}" || exit 1
-            [ -z "${KEEP}" ] || printf '%s\n' "${KEEP}" >> "/${SYSTEM_CFG}" || exit 1
-        fi
-        exit "${RC}"
-    ;;
-    "backup")
-        mkdir -p /storage/.cache || exit 1
-        WORKDIR=$(mktemp -d "/storage/.cache/backuptool.XXXXXX") || exit 1
-        PUBLISHFILE=""
-        trap 'rm -rf "${WORKDIR}"; rm -f "${PUBLISHFILE}"' EXIT
-        trap 'exit 1' HUP INT TERM
-        if [ -f "${BACKUPFILE}" ]
-        then
-            TODAY=`date +%y-%m-%d_%H_%M_%S`
-            ARCHIVEFILENAME="ARCHIVED_${OS_NAME}_BACKUP-${TODAY}.zip"
-            mv "${BACKUPFILE}" "${BACKUPFOLDER}/${ARCHIVEFILENAME}"
-        fi
-        zip -9 -r "${WORKDIR}/backup.zip" \
-        "${COMPRESSLOCATIONS[@]}" "${EXCLUDES[@]}" || exit $?
-        if [ "${2}" != "--with-wifi" ] && \
-           unzip -l "${WORKDIR}/backup.zip" | grep -q " ${SYSTEM_CFG}$"
-        then
-            mkdir -p "${WORKDIR}/${SYSTEM_CFG%/*}" || exit 1
-            grep -v '^wifi\.\(ssid\|key\)=' "/${SYSTEM_CFG}" > "${WORKDIR}/${SYSTEM_CFG}"
-            [ "$?" -le 1 ] || exit 1
-            (cd "${WORKDIR}" && zip -9 backup.zip "${SYSTEM_CFG}") || exit $?
-        fi
-        PUBLISHFILE=$(mktemp "${BACKUPFOLDER}/.backup.XXXXXX") || exit 1
-        mv "${WORKDIR}/backup.zip" "${PUBLISHFILE}" || exit 1
-        mv "${PUBLISHFILE}" "${BACKUPFILE}"
-    ;;
+    "restore") restore "$@" ;;
+    "backup") backup "$@" ;;
     *)
         usage >&2
         exit 1
