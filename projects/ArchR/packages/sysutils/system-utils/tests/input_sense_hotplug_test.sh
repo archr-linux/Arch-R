@@ -33,13 +33,14 @@ PROFILE
 export INPUT_SENSE_PROFILE="${TMP}/profile"
 touch "${TMP}/system.cfg"
 
-# event0 is the keys, any other node a joystick; <node>.pending: not
-# described by udev yet.
+# event0 is the keys, any other node a joystick; pending-<node> (outside
+# the input folder, where the node glob would see it): not described by
+# udev yet.
 cat >"${TMP}/bin/udevadm" <<'STUB'
 #!/bin/bash
 [ -e "${2}" ] || exit 1
 # A node udev has not processed yet has no ID_INPUT properties.
-[ -e "${2}.pending" ] && { echo "E: DEVNAME=${2}"; exit 0; }
+[ -e "${2%/*}/../pending-${2##*/}" ] && { echo "E: DEVNAME=${2}"; exit 0; }
 echo "E: ID_INPUT=1"
 case ${2} in */event0) echo "E: ID_INPUT_KEY=1" ;; *) echo "E: ID_INPUT_JOYSTICK=1" ;; esac
 echo "E: DEVNAME=${2}"
@@ -88,14 +89,15 @@ check "the script keeps running" "$(alive)" yes
 printf '%s 1\n%s 0\n' "${VOLUP}" "${VOLUP}" >"${TMP}/scripts/event1"
 touch "${TMP}/input/event1"
 sleep 1
-touch "${TMP}/input/event2.pending" "${TMP}/input/event2"
+touch "${TMP}/pending-event2" "${TMP}/input/event2"
 sleep 0.6
 check "undescribed: not yet" "$(calls 'start event2')" 0
-rm "${TMP}/input/event2.pending"
+rm "${TMP}/pending-event2"
 sleep 0.6
 check "back: reopened" "$(calls 'start event1')" 2
 check "new device watched" "$(calls 'start event2')" 1
 check "its keys work" "$(calls 'volume hold up osd')" 1
+# At start, then for the pad gone, back, and the new one.
 check "controllers remapped on each change" "$(calls mkcontroller)" 4
 check "keys never reopened" "$(calls 'start event0')" 1
 check "still running" "$(alive)" yes
@@ -106,5 +108,6 @@ echo archr-keypress >"${TMP}/sysfs/event3/device/name"
 touch "${TMP}/input/event3"
 sleep 1
 check "archr-keypress's keyboard is left alone" "$(calls 'start event3')" 0
+check "and it does not remap the controllers" "$(calls mkcontroller)" 4
 
 exit ${FAILED}
