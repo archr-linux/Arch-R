@@ -132,16 +132,23 @@ CALLS=$(run 2.5)
 check "the hold starts and ends once" "$(echo "${CALLS}" | sed 's/ renew//g')" "release volume hold up osd release"
 RENEWS=$(echo "${CALLS}" | grep -o renew | wc -l)
 check "renewed every 200 ms while held" "$([ "${RENEWS}" -ge 4 ] && [ "${RENEWS}" -le 6 ] && echo yes)" yes
-# Function (BTN_SELECT on the RK3326) + R1: save and open the switcher.
+# A tap on FN (BTN_MODE, bound by no emulator): save and open the switcher.
 # Only the switcher's call counts here (archr-levels sees releases too).
 switcher() { run "$@" | tr ' ' '\n' | grep -x switch | tr '\n' ' ' | sed 's/ $//'; }
 key() { echo "Event: time 1.0, type 1 (EV_KEY), code 0 (${1}), value ${2}"; }
+events "0.3 $(key BTN_MODE 1)" "0.2 $(key BTN_MODE 0)"
+check "a tap on FN saves and switches" "$(switcher 2)" "switch"
+check "the switcher can be turned off" "$(switcher 2 "hotkey.switcher.enabled=0")" ""
+events "0.3 $(key BTN_MODE 1)"
+check "held, nothing until it is released" "$(switcher 2)" ""
+events "0.3 $(key BTN_MODE 1)" "0.1 $(key BTN_EAST 1)" "0.1 $(key BTN_EAST 0)" "0.1 $(key BTN_MODE 0)"
+check "FN with another button is not a tap" "$(switcher 2)" ""
+check "FN with another button, as the hotkey modifier: no tap" "$(switcher 2 "key.hotkey.a=BTN_MODE")" ""
+events "0.3 $(key BTN_MODE 1)" "0.2 $(key BTN_MODE 0)"
+check "FN as the hotkey modifier: a tap switches" "$(switcher 2 "key.hotkey.a=BTN_MODE")" "switch"
 events "0.3 $(key BTN_SELECT 1)" "0.1 $(key BTN_TR 1)" "0.1 $(key BTN_TR 0)" "0.1 $(key BTN_SELECT 0)"
-check "function + R1 saves and switches" "$(switcher 2 "key.function.a=BTN_SELECT")" "switch"
-check "the switcher can be turned off" "$(switcher 2 "key.function.a=BTN_SELECT" "hotkey.switcher.enabled=0")" ""
-events "0.3 $(key BTN_TR 1)"
-check "R1 alone does nothing" "$(switcher 2 "key.function.a=BTN_SELECT")" ""
-events "0.3 $(key BTN_SELECT 1)" "0.1 $(key BTN_TR2 1)"
-check "another button can be the shortcut" "$(switcher 2 "key.function.a=BTN_SELECT" "hotkey.switcher=BTN_TR2")" "switch"
+check "select + R1 (RetroArch's save state) does not switch" "$(switcher 2)" ""
+events "0.3 $(key BTN_THUMBR 1)" "0.2 $(key BTN_THUMBR 0)"
+check "another button can be the shortcut" "$(switcher 2 "hotkey.switcher=BTN_THUMBR")" "switch"
 
 exit ${FAILED}

@@ -72,6 +72,7 @@ alive() { kill -0 "${PID}" 2>/dev/null && echo yes || echo no; }
 VOLUP="Event: time 1.0, type 1 (EV_KEY), code 115 (KEY_VOLUMEUP), value"
 
 touch "${TMP}/input/event0" "${TMP}/input/event1"
+export INPUT_SYSFS="${TMP}/sysfs"
 setsid bash "${SCRIPT}" >/dev/null 2>&1 &
 PID=$!
 sleep 1.5
@@ -98,5 +99,12 @@ check "its keys work" "$(calls 'volume hold up osd')" 1
 check "controllers remapped on each change" "$(calls mkcontroller)" 4
 check "keys never reopened" "$(calls 'start event0')" 1
 check "still running" "$(alive)" yes
+
+# archr-keypress's keyboard (the emulators' save keys) is never watched.
+mkdir -p "${TMP}/sysfs/event3/device"
+echo archr-keypress >"${TMP}/sysfs/event3/device/name"
+touch "${TMP}/input/event3"
+sleep 1
+check "archr-keypress's keyboard is left alone" "$(calls 'start event3')" 0
 
 exit ${FAILED}
