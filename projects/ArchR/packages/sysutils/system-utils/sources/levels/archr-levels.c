@@ -12,9 +12,9 @@
 //   archr-levels renew                    the button is still down
 //   archr-levels release
 //
-// A hold that hears nothing stops by itself (a release can be lost when
-// input_sense restarts): after HOLD_CAP_MS, or RENEW_MS after the last
-// "renew" (key repeats renew it, so a held key can go on).
+// A hold lasts RENEW_MS after it starts or after the last "renew": the
+// caller renews it while the button is down, so a lost release (the caller
+// died) ends it by itself.
 //
 // KIND is volume, brightness (first backlight) or brightness2 (the second).
 // A level is what the user sees: volume follows a decibel scale and the
@@ -51,7 +51,6 @@ enum {
 	TAP = 2,
 	HOLD_DELAY_MS = 350,
 	TICK_MS = 40,
-	HOLD_CAP_MS = 2000,
 	RENEW_MS = 400,
 	SETTLE_MS = 1500,
 	SCREENS = 2, /* the handhelds have one panel, a few two */
@@ -471,7 +470,7 @@ static int command(char *text)
 		apply(l, l->value + dir * TAP, show);
 		long now = now_ms();
 		hold.level = l, hold.dir = dir, hold.show = show;
-		hold.start = now, hold.next = now + HOLD_DELAY_MS, hold.deadline = now + HOLD_CAP_MS;
+		hold.start = now, hold.next = now + HOLD_DELAY_MS, hold.deadline = now + RENEW_MS;
 		return l->value;
 	}
 	if (n != 2)

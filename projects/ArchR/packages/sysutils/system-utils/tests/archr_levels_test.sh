@@ -166,10 +166,13 @@ rm -f "${TMP}/saves"
 : >"${TMP}/osd"
 ${L} volume 10 >/dev/null
 check "hold tap" "$(${L} volume hold up osd)" 12
+( for _ in $(seq 8); do sleep 0.2; ${L} renew; done ) &
+RENEWER=$!
 sleep 0.3
 check "hold delay" "$(${L} volume)" 12
 sleep 1.0
 ${L} release
+wait "${RENEWER}"
 HELD=$(${L} volume)
 if [ "${HELD}" -lt 30 ] || [ "${HELD}" -gt 50 ]; then
   echo "FAIL: 1.3 s hold reached ${HELD}, expected 30-50"
@@ -186,23 +189,20 @@ check "pill shows the last level" "$(tail -n1 "${TMP}/osd")" "volume ${HELD}"
 sleep 2
 check "hold saved once" "$(saves)" "audio.volume=${HELD}"
 
-# A release can be lost (input_sense restarting): a hold that hears
-# nothing stops after 2 s, short of the top; renewals (key repeats) keep it
-# going and it stops 400 ms after the last one.
+# A release can be lost (the caller died): a hold that is not renewed
+# ends 400 ms after it started or after the last renewal, near where it was.
 ${L} volume 0 >/dev/null
 ${L} volume hold up >/dev/null
-sleep 2.3
+sleep 0.8
 LOST=$(${L} volume)
-sleep 0.6
-check "lost release: stopped" "$(${L} volume)" "${LOST}"
-if [ "${LOST}" -ge 95 ]; then
-  echo "FAIL: a hold without release reached ${LOST}"
+if [ "${LOST}" -gt 4 ]; then
+  echo "FAIL: a hold never renewed reached ${LOST}"
   FAILED=1
 fi
 ${L} volume 0 >/dev/null
 ${L} volume hold up >/dev/null
-for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do sleep 0.2; ${L} renew; done
-check "renewed past the cap" "$(${L} volume)" 100
+for _ in $(seq 25); do sleep 0.2; ${L} renew; done
+check "renewed for 5 s: goes on to the top" "$(${L} volume)" 100
 ${L} volume 0 >/dev/null
 ${L} volume hold up >/dev/null
 for _ in 1 2 3 4; do sleep 0.2; ${L} renew; done
@@ -210,11 +210,16 @@ sleep 0.5
 STOPPED=$(${L} volume)
 sleep 0.5
 check "stops 400 ms after the last renewal" "$(${L} volume)" "${STOPPED}"
+# 0.8 s of renewals plus the 400 ms lease: 1.2 s of hold, about 30.
+if [ "${STOPPED}" -gt 35 ]; then
+  echo "FAIL: 0.8 s of renewals reached ${STOPPED}"
+  FAILED=1
+fi
 
 # A hold stops at the end of the range by itself.
 ${L} brightness 96 >/dev/null
 ${L} brightness hold up >/dev/null
-sleep 0.6
+for _ in 1 2 3; do sleep 0.2; ${L} renew; done
 check "hold stops at 100" "$(${L} brightness)" 100
 
 # Settled levels follow system.cfg edits (a reset, a restore).

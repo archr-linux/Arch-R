@@ -240,29 +240,39 @@ show_osd() {
 }
 
 ### Volume and brightness while a button is held: archr-levels steps once
-### now, then keeps going, faster and faster, until the release.
-LEVEL_HOLD=false
-LEVEL_RENEWED=0
+### now, then keeps going, faster and faster, until the release. A hold
+### lasts 400 ms unless renewed: a timer here renews it every 200 ms while
+### the button is down (the dpad has no key repeat), so if this script dies
+### the hold ends by itself. Only the button that started it ends it.
+LEVEL_KEY=""
+LEVEL_RENEWER=""
 start_level_hold() {
+  stop_level_hold
   archr-levels "${1}" hold "${2}" osd >/dev/null 2>&1
-  LEVEL_HOLD=true
-}
-
-# A hold that hears nothing stops by itself (a lost release cannot run the
-# level to the end); key repeats say the button is still down, at most
-# every 200 ms.
-renew_level_hold() {
-  ${LEVEL_HOLD} || return 0
-  local NOW=${EPOCHREALTIME/[.,]/}
-  (( NOW - LEVEL_RENEWED < 200000 )) && return 0
-  LEVEL_RENEWED=${NOW}
-  archr-levels renew >/dev/null 2>&1
+  [[ "${line}" =~ code\ [0-9]+\ \(([A-Z0-9_]+)\) ]] && LEVEL_KEY=${BASH_REMATCH[1]} || LEVEL_KEY="?"
+  local PARENT=${BASHPID}
+  (
+    while kill -0 "${PARENT}" 2>/dev/null; do
+      sleep 0.2
+      archr-levels renew >/dev/null 2>&1
+    done
+  ) &
+  LEVEL_RENEWER=$!
 }
 
 stop_level_hold() {
-  ${LEVEL_HOLD} || return 0
-  LEVEL_HOLD=false
+  [ -n "${LEVEL_KEY}" ] || return 0
+  kill "${LEVEL_RENEWER}" 2>/dev/null
+  wait "${LEVEL_RENEWER}" 2>/dev/null
+  LEVEL_KEY=""
+  LEVEL_RENEWER=""
   archr-levels release >/dev/null 2>&1
+}
+
+# A release ends the hold only when it is the button that started it.
+release_level_hold() {
+  [ -n "${LEVEL_KEY}" ] && [[ "${1}" == *"(${LEVEL_KEY}), value 0"* ]] && stop_level_hold
+  return 0
 }
 
 # A hold left by a previous run, whose release never came, ends now.
@@ -549,9 +559,7 @@ watch_inputs | grep --line-buffered "EV_KEY\|EV_SW\|error reading" | while next_
         elif [[ "${line}" =~ ${RELEASE} ]]; then
           ${DEBUG} && log $0 "Volume Up: Released"
           VOLUME_UP_PRESSED=false
-          stop_level_hold
-        elif [[ "${line}" =~ ${REPEAT} ]]; then
-          renew_level_hold
+          release_level_hold "${line}"
         fi
       ;;
       (${FUNCTION_VOLUME_DOWN_EVENT})
@@ -570,9 +578,7 @@ watch_inputs | grep --line-buffered "EV_KEY\|EV_SW\|error reading" | while next_
         elif [[ "${line}" =~ ${RELEASE} ]]; then
           ${DEBUG} && log $0 "Volume Down: Released"
           VOLUME_DOWN_PRESSED=false
-          stop_level_hold
-        elif [[ "${line}" =~ ${REPEAT} ]]; then
-          renew_level_hold
+          release_level_hold "${line}"
         fi
       ;;
       (${FUNCTION_POWER_PRESSED_EVENT})
@@ -685,7 +691,7 @@ watch_inputs | grep --line-buffered "EV_KEY\|EV_SW\|error reading" | while next_
      ;;
      (*", value 0")
        # A level held with the dpad stops when its button is released.
-       stop_level_hold
+       release_level_hold "${line}"
      ;;
   esac
 done
