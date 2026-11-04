@@ -13,14 +13,32 @@
 # the amp is gated by the card's "Internal Speakers" pin. The other
 # cards drive the speaker from the class-D, on "SPK" (Arch-R#35).
 DT="${ARCHR_DT:-/proc/device-tree}"
-card_on() { [ "$(tr -d '\0' <"${DT}/${1}/status" 2>/dev/null)" = "okay" ]; }
-if card_on rk817-sound-amplified; then
-  SPK_PATH="HP" JACK_DEV="/dev/input/by-path/platform-rk817-sound-amplified-event"
-elif card_on rk817-sound-simple; then
-  SPK_PATH="SPK" JACK_DEV="/dev/input/by-path/platform-rk817-sound-simple-event"
-else
-  SPK_PATH="SPK" JACK_DEV="/dev/input/by-path/platform-rk817-sound-event"
+# A card is on when its node is a real card (has compatible) and its
+# status is absent, "okay" or "ok", as the kernel reads it.
+card_on() {
+  [ -e "${DT}/${1}/compatible" ] || return 1
+  [ -e "${DT}/${1}/status" ] || return 0
+  case "$(tr -d '\0' <"${DT}/${1}/status")" in okay|ok) return 0 ;; esac
+  return 1
+}
+# Only one should be on; if more are, the first of this list wins (the
+# order the overlay generator prefers) and the boot log says so.
+CARDS=""
+for c in rk817-sound-amplified rk817-sound-simple rk817-sound; do
+  card_on "${c}" && CARDS="${CARDS} ${c}"
+done
+set -- ${CARDS}
+CARD="${1:-}"
+if [ $# -gt 1 ]; then
+  echo "R36S Clone audio: sound cards on:${CARDS}; using ${CARD}" >&2
+elif [ $# -eq 0 ]; then
+  echo "R36S Clone audio: no rk817 sound card on; speaker path left at SPK" >&2
 fi
+case "${CARD}" in
+  rk817-sound-amplified) SPK_PATH="HP" ;;
+  *) SPK_PATH="SPK" ;;
+esac
+JACK_DEV="/dev/input/by-path/platform-${CARD:-rk817-sound}-event"
 
 cat <<CONF >"${ARCHR_PROFILE_DIR:-/storage/.config/profile.d}/001-device_config"
 # LED nodes use color+function (no label), so sysfs is blue:power.
