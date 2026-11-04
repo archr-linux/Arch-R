@@ -44,6 +44,9 @@ fi
 [ -d "${CONF_DIR}/memcards" ] && rm -rf ${CONF_DIR}/memcards
 ln -sfv ${MEMCARDS_DIR} ${CONF_DIR}/memcards
 
+# Cards named after the game file once no title-named card holds a save.
+/usr/bin/duckstation_card_filetitle.sh "${CONF_FILE}"
+
 #Link gamecontrollerdb.txt
 ln -sf /usr/config/SDL-GameControllerDB/gamecontrollerdb.txt "${CONF_DIR}/gamecontrollerdb.txt"
 
