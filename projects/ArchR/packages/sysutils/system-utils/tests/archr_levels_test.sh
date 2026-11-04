@@ -16,6 +16,7 @@ DAEMON=
 OSD=
 cleanup() {
   [ -n "${DAEMON}" ] && kill "${DAEMON}" 2>/dev/null
+  [ -n "${OSD}" ] && kill -CONT "${OSD}" 2>/dev/null
   [ -n "${OSD}" ] && kill "${OSD}" 2>/dev/null
   wait 2>/dev/null
   rm -rf "${TMP}"
@@ -49,11 +50,13 @@ rewrite_config() {
   real_rewrite_config "\$@" && printf '%s\n' "\${pairs[@]}" >>"${TMP}/saves"
 }
 PROFILE
-export ARCHR_LEVELS_SOCKET="${TMP}/run/archr-levels.sock"
+# Relative socket names also work under long TMPDIR paths (sun_path is short).
+cd "${TMP}" || exit 1
+export ARCHR_LEVELS_SOCKET="run/archr-levels.sock"
 export ARCHR_LEVELS_CFG="${TMP}/system.cfg"
 export ARCHR_LEVELS_BACKLIGHT="${TMP}/backlight"
 export ARCHR_LEVELS_FUNCTIONS="${TMP}/functions"
-export XDG_RUNTIME_DIR="${TMP}/run"
+export XDG_RUNTIME_DIR="run"
 export PULSE_SERVER="unix:${TMP}/no-pulse"
 L="${TMP}/archr-levels"
 
@@ -84,15 +87,19 @@ case ${ERR} in *"not running"*) ;; *) echo "FAIL: unclear error '${ERR}'"; FAILE
 check "no daemon: nothing saved" "$(saves)" ""
 
 python3 -I -c '
-import socket, sys
-s = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
-s.bind(sys.argv[1])
-with open(sys.argv[2], "a", buffering=1) as out:
-    while True:
-        out.write(s.recv(64).decode() + "\n")
-' "${TMP}/run/archr-osd.sock" "${TMP}/osd" &
+import selectors, socket, sys
+listeners = selectors.DefaultSelector()
+for path, log in zip(sys.argv[1::2], sys.argv[2::2]):
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+    s.bind(path)
+    listeners.register(s, selectors.EVENT_READ, open(log, "a", buffering=1))
+while True:
+    for key, _ in listeners.select():
+        key.data.write(key.fileobj.recv(64).decode() + "\n")
+' "run/archr-osd.sock" "${TMP}/osd" \
+  "run/archr-launcher-levels.sock" "${TMP}/launcher" &
 OSD=$!
-for _ in $(seq 50); do [ -S "${TMP}/run/archr-osd.sock" ] && break; sleep 0.1; done
+for _ in $(seq 50); do [ -S "${TMP}/run/archr-launcher-levels.sock" ] && break; sleep 0.1; done
 
 # Levels saved with the old linear/cubic scales are converted once:
 # 50 % of the backlight and PulseAudio's 40 % look and sound the same.
@@ -226,6 +233,68 @@ check "hold stops at 100" "$(${L} brightness)" 100
 sleep 2
 printf 'audio.volume=33\ndisplay.brightness=50\nlevels.perceptual=1\n' >"${TMP}/system.cfg"
 check "follows the file" "$(${L} volume)" 33
+
+# Sequence-aware clients opt in; legacy commands and the installed OSD keep
+# their old format. The same state version travels in replies and notices.
+read -r VALUE SEQ < <(${L} volume seq)
+check "sequenced read: value" "${VALUE}" 33
+if ! [[ ${SEQ} =~ ^[0-9]+$ ]]; then
+  echo "FAIL: missing sequence '${SEQ}'"
+  FAILED=1
+else
+  read -r VALUE SAME < <(${L} volume seq)
+  check "read keeps the state version" "${SAME}" "${SEQ}"
+  read -r VALUE NEXT < <(${L} volume +2 osd seq)
+  check "sequenced step" "${VALUE}" 35
+  if ! [[ ${NEXT} =~ ^[0-9]+$ ]] || [ "${NEXT}" -le "${SEQ}" ]; then
+    echo "FAIL: step sequence did not advance '${SEQ}' -> '${NEXT}'"
+    FAILED=1
+  fi
+  for _ in $(seq 50); do grep -q "^volume 35 ${NEXT}$" "${TMP}/launcher" 2>/dev/null && break; sleep 0.02; done
+  check "launcher gets the response sequence" "$(tail -n1 "${TMP}/launcher")" "volume 35 ${NEXT}"
+  check "installed OSD still gets two fields" "$(tail -n1 "${TMP}/osd")" "volume 35"
+  read -r VALUE HELD_SEQ < <(${L} volume hold up osd seq)
+  check "sequenced hold" "${VALUE}" 37
+  if ! [[ ${HELD_SEQ} =~ ^[0-9]+$ ]] || [ "${HELD_SEQ}" -le "${NEXT}" ]; then
+    echo "FAIL: hold sequence did not advance"
+    FAILED=1
+  fi
+  sleep 0.38
+  ${L} release
+  read -r VALUE LAST < <(${L} volume seq)
+  if ! [[ ${LAST} =~ ^[0-9]+$ ]] || [ "${LAST}" -le "${HELD_SEQ}" ]; then
+    echo "FAIL: hold tick sequence did not advance"
+    FAILED=1
+  fi
+  read -r VALUE SAME < <(${L} volume seq)
+  check "release read keeps the last version" "${SAME}" "${LAST}"
+  stop
+  start
+  read -r VALUE RESTARTED < <(${L} volume seq)
+  if ! [[ ${RESTARTED} =~ ^[0-9]+$ ]] || [ "${RESTARTED}" -le "${LAST}" ]; then
+    echo "FAIL: sequence went backwards after daemon restart"
+    FAILED=1
+  fi
+fi
+
+# The launcher also hears changes made without requesting a pill.
+PILL=$(tail -n1 "${TMP}/osd")
+read -r VALUE BRIGHT_SEQ < <(${L} brightness 44 seq)
+check "sequenced brightness" "${VALUE}" 44
+for _ in $(seq 50); do grep -q "^brightness 44 ${BRIGHT_SEQ}$" "${TMP}/launcher" && break; sleep 0.02; done
+check "notice without OSD" "$(tail -n1 "${TMP}/launcher")" "brightness 44 ${BRIGHT_SEQ}"
+check "no extra pill" "$(tail -n1 "${TMP}/osd")" "${PILL}"
+
+# Full or absent listeners cannot block the command daemon.
+kill -STOP "${OSD}"
+for _ in $(seq 30); do
+  ${L} volume +1 osd >/dev/null || { echo "FAIL: full notice queue blocked a command"; FAILED=1; break; }
+done
+kill -CONT "${OSD}"
+kill "${OSD}"
+wait "${OSD}" 2>/dev/null
+OSD=
+${L} brightness +1 osd >/dev/null || { echo "FAIL: absent listeners blocked a command"; FAILED=1; }
 
 stop
 [ -S "${ARCHR_LEVELS_SOCKET}" ] && { echo "FAIL: socket left behind"; FAILED=1; }

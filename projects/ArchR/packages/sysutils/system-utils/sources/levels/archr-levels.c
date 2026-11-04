@@ -17,6 +17,8 @@
 // died) ends it by itself.
 //
 // KIND is volume, brightness (first backlight) or brightness2 (the second).
+// Append "seq" to a KIND command to get "level sequence". Launcher notices
+// carry that state version; the installed OSD still gets just "kind level".
 // A level is what the user sees: volume follows a decibel scale and the
 // backlight a 2.2 gamma above a legible minimum, so every step feels the
 // same size. The daemon keeps one PulseAudio connection (a step costs one
@@ -30,6 +32,7 @@
 #include <dirent.h>
 #include <dlfcn.h>
 #include <errno.h>
+#include <inttypes.h>
 #include <limits.h>
 #include <stddef.h>
 #include <math.h>
@@ -64,6 +67,7 @@ struct level {
 	char key[24];
 	int screen; /* 0: volume, else the backlight's number */
 	int value, saved;
+	uint64_t seq; /* the version of this value, shared by replies and notices */
 	int writing; /* the value the running writer saves, -1: none */
 	int listed;  /* in system.cfg before the conversion */
 };
@@ -93,6 +97,17 @@ static long now_ms(void)
 	struct timespec t;
 	clock_gettime(CLOCK_MONOTONIC, &t);
 	return t.tv_sec * 1000L + t.tv_nsec / 1000000;
+}
+
+/* The boot's clock keeps versions increasing even if the daemon restarts
+ * while the launcher stays alive. The counter also covers equal clock ticks. */
+static void stamp(struct level *l)
+{
+	static uint64_t last;
+	struct timespec t;
+	clock_gettime(CLOCK_MONOTONIC, &t);
+	uint64_t now = (uint64_t)t.tv_sec * 1000000000 + t.tv_nsec;
+	l->seq = last = now > last ? now : last + 1;
 }
 
 static int clamp(const struct level *l, long v)
@@ -148,9 +163,14 @@ static struct level *find(const char *kind)
 		else
 			strcpy(l->key, "display.brightness2");
 		l->value = l->saved = read_saved(l);
+		stamp(l);
 	} else if (l->value == l->saved && hold.level != l && !writer && !unmarked) {
 		/* Settled: the file is the truth (a reset or a restore may have changed it). */
-		l->value = l->saved = read_saved(l);
+		int saved = read_saved(l);
+		if (saved != l->value) {
+			l->value = l->saved = saved;
+			stamp(l);
+		}
 	}
 	return l;
 }
@@ -297,17 +317,25 @@ static void set_brightness(int screen, int level)
 
 /* ---- pill and persistence ---- */
 
-static void osd(const struct level *l)
+static void notice(const struct level *l, int show)
 {
-	struct sockaddr_un to = { .sun_family = AF_UNIX };
-	snprintf(to.sun_path, sizeof to.sun_path, "%s/archr-osd.sock", env_or("XDG_RUNTIME_DIR", "/run"));
-	char text[32];
-	int n = snprintf(text, sizeof text, "%s %d", l->screen ? "brightness" : "volume", l->value);
 	int fd = socket(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
-	if (fd >= 0) {
-		sendto(fd, text, n, 0, (struct sockaddr *)&to, sizeof to);
-		close(fd);
+	if (fd < 0)
+		return;
+	const char *names[] = { "archr-osd.sock", "archr-launcher-levels.sock" };
+	for (int i = show ? 0 : 1; i < 2; i++) {
+		struct sockaddr_un to = { .sun_family = AF_UNIX };
+		snprintf(to.sun_path, sizeof to.sun_path, "%s/%s", env_or("XDG_RUNTIME_DIR", "/run"), names[i]);
+		char text[64];
+		const char *kind = l->screen ? "brightness" : "volume";
+		if (i && l->screen == 2)
+			kind = "brightness2";
+		int n = snprintf(text, sizeof text, "%s %d", kind, l->value);
+		if (i)
+			n += snprintf(text + n, sizeof text - n, " %" PRIu64, l->seq);
+		sendto(fd, text, n, MSG_DONTWAIT, (struct sockaddr *)&to, sizeof to);
 	}
+	close(fd);
 }
 
 /* Writes key/value pairs into system.cfg in one atomic replacement, under
@@ -411,6 +439,7 @@ static void migrate(void)
 		else
 			old = old <= 0 ? 0 : fmax(1, lround(100 + 100 * 60 * log10(f) / VOLUME_RANGE_DB));
 		l->value = clamp(l, old);
+		stamp(l);
 	}
 	unmarked = 1;
 	flush();
@@ -423,16 +452,16 @@ static void migrate(void)
 static void apply(struct level *l, long value, int show)
 {
 	l->value = clamp(l, value);
+	stamp(l);
 	if (l->screen)
 		set_brightness(l->screen, l->value);
 	else
 		set_volume(l->value);
-	if (show)
-		osd(l);
+	notice(l, show);
 }
 
 /* Returns the level after the command, or -1 when it is malformed. */
-static int command(char *text)
+static int command(char *text, struct level **snapshot, int *sequenced)
 {
 	char *word[5], *save_ptr;
 	int n = 0;
@@ -449,14 +478,17 @@ static int command(char *text)
 		hold.deadline = now_ms() + RENEW_MS;
 		return 0;
 	}
+	*sequenced = n > 1 && !strcmp(word[n - 1], "seq");
+	n -= *sequenced;
 	struct level *l = n ? find(word[0]) : NULL;
 	if (!l)
 		return -1;
+	*snapshot = l;
 	int show = n > 1 && !strcmp(word[n - 1], "osd");
 	n -= show;
 	if (n == 1) {
 		if (show)
-			osd(l);
+			notice(l, show);
 		return l->value;
 	}
 	if (n == 2 && !strcmp(word[1], "restore")) {
@@ -581,9 +613,17 @@ static int serve(void)
 			ssize_t n = recvfrom(fd, text, sizeof text - 1, 0, (struct sockaddr *)&from, &from_len);
 			if (n >= 0) {
 				text[n] = 0;
-				int level = command(text);
-				char reply[16];
-				int r = level < 0 ? snprintf(reply, sizeof reply, "error") : snprintf(reply, sizeof reply, "%d", level);
+				struct level *snapshot = NULL;
+				int sequenced = 0;
+				int level = command(text, &snapshot, &sequenced);
+				char reply[64];
+				int r;
+				if (level < 0)
+					r = snprintf(reply, sizeof reply, "error");
+				else if (sequenced && snapshot)
+					r = snprintf(reply, sizeof reply, "%d %" PRIu64, level, snapshot->seq);
+				else
+					r = snprintf(reply, sizeof reply, "%d", level);
 				if (from_len > sizeof(sa_family_t))
 					sendto(fd, reply, r, MSG_DONTWAIT, (struct sockaddr *)&from, from_len);
 				if (level >= 0)
@@ -636,7 +676,7 @@ int main(int argc, char **argv)
 {
 	if (argc < 2)
 		return serve();
-	char text[128] = "", reply[16];
+	char text[128] = "", reply[64];
 	for (int i = 1; i < argc; i++)
 		if (snprintf(text + strlen(text), sizeof text - strlen(text), "%s%s", i > 1 ? " " : "", argv[i]) < 0)
 			return 1;
@@ -647,7 +687,7 @@ int main(int argc, char **argv)
 		return 1;
 	}
 	if (!strcmp(reply, "error")) {
-		fprintf(stderr, "usage: archr-levels [volume|brightness[N] [N|+N|-N|restore|hold up|down] [osd] | renew | release]\n");
+		fprintf(stderr, "usage: archr-levels [volume|brightness[N] [N|+N|-N|restore|hold up|down] [osd] [seq] | renew | release]\n");
 		return 1;
 	}
 	if (strcmp(argv[1], "release") && strcmp(argv[1], "renew"))
