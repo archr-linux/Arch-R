@@ -45,14 +45,21 @@ else
 fi
 echo "E: DEVNAME=\${2}"
 STUB
-# One evtest replays the scenario ("seconds line" per row); the rest idle.
+# One evtest replays the scenario ("seconds line" per row), a second one
+# the second pad's (events2, when there is one); the rest idle.
 cat >"${TMP}/bin/evtest" <<STUB
 #!/bin/bash
+SCRIPT=""
 if mkdir "${TMP}/evtest.first" 2>/dev/null; then
+  SCRIPT="${TMP}/events"
+elif mkdir "${TMP}/evtest.second" 2>/dev/null; then
+  SCRIPT="${TMP}/events2"
+fi
+if [ -f "\${SCRIPT}" ]; then
   while read -r DELAY LINE; do
     sleep "\${DELAY}"
     echo "\${LINE}"
-  done <"${TMP}/events"
+  done <"\${SCRIPT}"
 fi
 exec sleep 600
 STUB
@@ -70,7 +77,7 @@ run() {
   local LENGTH=${1}
   shift
   printf '%s\n' "$@" >"${TMP}/system.cfg"
-  rm -rf "${TMP}/calls" "${TMP}/udev.first" "${TMP}/evtest.first"
+  rm -rf "${TMP}/calls" "${TMP}/udev.first" "${TMP}/evtest.first" "${TMP}/evtest.second"
   touch "${TMP}/calls"
   setsid bash "${SCRIPT}" >/dev/null 2>&1 &
   local PID=$!
@@ -80,7 +87,8 @@ run() {
   sleep 0.2
   tr '\n' ' ' <"${TMP}/calls" | sed 's/ $//'
 }
-events() { printf '%s\n' "$@" >"${TMP}/events"; }
+events() { printf '%s\n' "$@" >"${TMP}/events"; rm -f "${TMP}/events2"; }
+events2() { printf '%s\n' "$@" >"${TMP}/events2"; }
 check() {
   if [ "${2}" = "${3}" ]; then
     echo "ok   ${1}"
@@ -180,6 +188,16 @@ events "${CHORD[@]}" "0.3 /dev/input/event3: error reading: No such device" \
 check "back and held again: the report" "$(report 3.5)" "--osd"
 events "${CHORD[@]}" "1.3 $(key BTN_MODE 0)"
 check "FN as the hotkey modifier: the report still" "$(report 3 "key.hotkey.a=BTN_MODE")" "--osd"
+# Two pads: the chord counts on one device only.
+events "0.3 $(key BTN_MODE 1)" "1.8 $(key BTN_MODE 0)"
+events2 "0.4 $(key BTN_TL 1)" "0.1 $(key BTN_TR 1)" "1.5 $(key BTN_TR 0)" "0.1 $(key BTN_TL 0)"
+check "FN on one pad, L1 + R1 on another: nothing" "$(report 3)" ""
+events "${CHORD[@]}" "1.5 $(key BTN_MODE 0)"
+events2 "0.6 $(key BTN_TL 1)" "0.2 $(key BTN_TL 0)"
+check "L1 on another pad does not cancel the chord" "$(report 3)" "--osd"
+events "${CHORD[@]}" "1.5 $(key BTN_MODE 0)"
+events2 "0.6 /dev/input/x: error reading: No such device"
+check "another pad gone does not cancel the chord" "$(report 3)" "--osd"
 check "the report's unit is capped" \
   "$(grep -o 'RuntimeMaxSec=120 -p MemoryMax=128M -p CPUQuota=50%' "${TMP}/units" | sort -u)" \
   "RuntimeMaxSec=120 -p MemoryMax=128M -p CPUQuota=50%"

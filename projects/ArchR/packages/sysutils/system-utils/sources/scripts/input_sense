@@ -215,12 +215,16 @@ SWITCHER_ARMED=false
 SWITCHER_DOWN=0
 : "${SWITCHER_TAP:=600}"
 
-# The report chord: the buttons held down now, and the timer that runs the
-# report once they have all been held REPORT_HOLD seconds.
+# The report chord: the buttons held down now ("<device> <button>"), and
+# the timer that runs the report once all three have been held on one
+# device for REPORT_HOLD seconds (REPORT_DEV: that device).
 HOTKEY_REPORT_ENABLED=$(hotkey_enabled hotkey.report)
 REPORT_KEYS="BTN_MODE BTN_TL BTN_TR"
 declare -A REPORT_DOWN=()
 REPORT_TIMER=""
+REPORT_DEV=""
+# The device of the line being handled: every evtest line starts with it.
+LINE_DEV=""
 : "${REPORT_HOLD:=3}"
 
 FUNCTION_HOTKEY_DPAD_UP_EVENT=$(press_event "${HOTKEY_VOLUME_UP}")
@@ -314,32 +318,45 @@ release_level_hold() {
 # A hold left by a previous run, whose release never came, ends now.
 archr-levels release >/dev/null 2>&1
 
-### The report chord. A press or release of one of its buttons: all of them
-### down starts the timer, any release stops it. Once it fires, the chord
-### must be let go before another report. Its own unit, as the switcher's:
-### a second report while one is written finds the unit running.
-# A pad gone mid-hold sends no release: forget its buttons and the timer.
-report_reset() {
-  REPORT_DOWN=()
+### The report chord. A press or release of one of its buttons: all three
+### down on one device starts the timer, a release on that device stops it;
+### another pad never arms nor cancels it. Once it fires, the chord must be
+### let go before another report. Its own unit, as the switcher's: a second
+### report while one is written finds the unit running.
+report_stop() {
   [ -n "${REPORT_TIMER}" ] || return 0
   kill "${REPORT_TIMER}" 2>/dev/null
   wait "${REPORT_TIMER}" 2>/dev/null
   REPORT_TIMER=""
+  REPORT_DEV=""
+}
+# A pad gone mid-hold sends no release: forget its buttons, and the timer
+# when the chord was on it.
+report_reset() {
+  local KEY
+  for KEY in "${!REPORT_DOWN[@]}"; do
+    [ "${KEY% *}" = "${LINE_DEV}" ] && unset "REPORT_DOWN[${KEY}]"
+  done
+  [ "${REPORT_DEV}" = "${LINE_DEV}" ] && report_stop
+  return 0
+}
+# Held on the device of this line: report_held BTN_TL
+report_held() {
+  [ -n "${REPORT_DOWN["${LINE_DEV} ${1}"]:-}" ]
 }
 report_key() {
   [[ "${line}" =~ \((BTN_[A-Z]+)\),\ value\ ([01]) ]] || return 0
+  local KEY="${LINE_DEV} ${BASH_REMATCH[1]}"
   if [ "${BASH_REMATCH[2]}" = 1 ]; then
-    REPORT_DOWN[${BASH_REMATCH[1]}]=1
+    REPORT_DOWN[${KEY}]=1
   else
-    unset "REPORT_DOWN[${BASH_REMATCH[1]}]"
+    unset "REPORT_DOWN[${KEY}]"
+    [ "${REPORT_DEV}" = "${LINE_DEV}" ] && report_stop
+    return 0
   fi
-  if [ "${#REPORT_DOWN[@]}" -lt 3 ]; then
-    if [ -n "${REPORT_TIMER}" ]; then
-      kill "${REPORT_TIMER}" 2>/dev/null
-      wait "${REPORT_TIMER}" 2>/dev/null
-      REPORT_TIMER=""
-    fi
-  elif [ -z "${REPORT_TIMER}" ] && ${HOTKEY_REPORT_ENABLED}; then
+  if [ -z "${REPORT_TIMER}" ] && ${HOTKEY_REPORT_ENABLED} &&
+     report_held BTN_MODE && report_held BTN_TL && report_held BTN_TR; then
+    REPORT_DEV=${LINE_DEV}
     (
       sleep "${REPORT_HOLD}"
       ${DEBUG} && log "$0" "${REPORT_KEYS}: diagnostic report"
@@ -560,6 +577,11 @@ input_wanted() {
   [[ "${INFO}" == *ID_INPUT=* ]] && return 1
   return 2
 }
+# One device's events, each line led by its node (the report chord tells
+# pads apart by it).
+watch_one() {
+  evtest "${1}" 2>&1 | sed -u "s|^|${1} |"
+}
 watch_inputs() {
   local -A WATCHED=()
   # REMAP_DUE: a device we watch came or went (the first scan only finds
@@ -567,7 +589,7 @@ watch_inputs() {
   # keyboard) never remap the controllers.
   local DEV SEEN="" NOW NODES REMAP="" REMAP_DUE="" FIRST=1
   for DEV in "${INPUT_DEVICES[@]}"; do
-    evtest "${DEV}" 2>&1 &
+    watch_one "${DEV}" &
     WATCHED[${DEV}]=$!
   done
   while true; do
@@ -585,7 +607,7 @@ watch_inputs() {
           2) SEEN=""; continue ;;
         esac
         ${DEBUG} && log $0 "Watching ${DEV}"
-        evtest "${DEV}" 2>&1 &
+        watch_one "${DEV}" &
         WATCHED[${DEV}]=$!
         [ -n "${FIRST}" ] || REMAP_DUE=1
       done
@@ -605,7 +627,7 @@ watch_inputs() {
       unset "WATCHED[${DEV}]"
       [ -e "${DEV}" ] || REMAP_DUE=1
       if [ -e "${DEV}" ]; then
-        evtest "${DEV}" 2>&1 &
+        watch_one "${DEV}" &
         WATCHED[${DEV}]=$!
       fi
     done
@@ -621,6 +643,7 @@ watch_inputs | grep --line-buffered "EV_KEY\|EV_SW\|error reading" | while next_
     # Its own unit: it outlives a restart of this service, and a second
     # tap while it saves finds the unit running.
     # (A case, as below: [[ == ]] would read "*(...)" as an extglob.)
+    LINE_DEV=${line%% *}
     case ${line} in
       (*"(BTN_MODE), value "[01]|*"(BTN_TL), value "[01]|*"(BTN_TR), value "[01]) report_key ;;
     esac
@@ -629,7 +652,7 @@ watch_inputs | grep --line-buffered "EV_KEY\|EV_SW\|error reading" | while next_
         if [[ "${line}" =~ ${PRESS} ]]; then
           SWITCHER_ARMED=${HOTKEY_SWITCHER_ENABLED}
           # Pressed while L1 or R1 is held: the report chord, not a tap.
-          [ "${#REPORT_DOWN[@]}" -gt 1 ] && SWITCHER_ARMED=false
+          { report_held BTN_TL || report_held BTN_TR; } && SWITCHER_ARMED=false
           now_ms
           SWITCHER_DOWN=${NOW}
         elif [[ "${line}" =~ ${RELEASE} ]] && ${SWITCHER_ARMED} && now_ms &&
