@@ -24,8 +24,9 @@
 // same size. The daemon keeps one PulseAudio connection (a step costs one
 // round trip, not a process) and writes system.cfg once a level settles.
 // A sink that appears later (the card at boot, a profile switch) or a new
-// default sink gets the level too. ARCHR_LEVELS_SINK names the sink for the
-// host test, where no session manager picks a default.
+// default sink gets the level too, and a lost or refused connection (the
+// server not up yet, or restarted) is retried on its own with a short
+// backoff, the level applied again once it is back.
 // Commands only talk to the daemon (systemd restarts it): without it they
 // fail with a clear message instead of racing it for system.cfg.
 //
@@ -46,6 +47,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/eventfd.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
@@ -186,7 +188,8 @@ static struct level *find(const char *kind)
 	X(pa_threaded_mainloop_new) X(pa_threaded_mainloop_start) X(pa_threaded_mainloop_lock)          \
 	X(pa_threaded_mainloop_unlock) X(pa_threaded_mainloop_get_api) X(pa_context_new)                \
 	X(pa_context_set_state_callback) X(pa_context_connect) X(pa_context_get_state) X(pa_context_unref) \
-	X(pa_context_set_sink_volume_by_name) X(pa_operation_unref) X(pa_sw_volume_from_dB) X(pa_cvolume_set) \
+	X(pa_context_get_sink_info_by_name) X(pa_context_set_sink_volume_by_index)                       \
+	X(pa_operation_unref) X(pa_sw_volume_from_dB) X(pa_cvolume_set)                                 \
 	X(pa_context_set_subscribe_callback) X(pa_context_subscribe)
 #define DECLARE(f) static __typeof__(f) *dl_##f;
 PULSE(DECLARE)
@@ -209,28 +212,51 @@ static pa_threaded_mainloop *ml;
 static pa_context *ctx;
 static pa_volume_t target;
 static int queued, busy; /* a level waits for the connection; requests in flight */
+/* The connection failed or was refused: the main loop connects again after
+ * retry_ms (100 ms, doubling to 2 s while it keeps failing). wake_fd stops
+ * its poll so it notices. All of these are under the mainloop lock. */
+static int lost, wake_fd = -1;
+static long retry_at, retry_ms;
 
-static const char *sink(void)
-{
-	return env_or("ARCHR_LEVELS_SINK", "@DEFAULT_SINK@");
-}
+enum { RETRY_FIRST_MS = 100, RETRY_MAX_MS = 2000 };
 
 static void push_volume(void);
 
-/* One change in flight: the newest level goes out when the last is done. */
+/* One change in flight: the newest level goes out when the last is done.
+ * Answers from a context already replaced are not ours to count. */
 static void sink_set(pa_context *c, int ok, void *u)
 {
-	(void)c, (void)ok, (void)u;
+	(void)ok, (void)u;
+	if (c == ctx && --busy == 0 && queued)
+		push_volume();
+}
+
+/* The level on every channel of the default sink. A one-channel volume is
+ * not spread over the others by every server: PipeWire's pulse server sets
+ * the first channel only and leaves the rest where they were. */
+static void sink_found(pa_context *c, const pa_sink_info *i, int eol, void *u)
+{
+	(void)u;
+	if (c != ctx)
+		return;
+	if (!eol && i) {
+		pa_cvolume cv;
+		dl_pa_cvolume_set(&cv, i->volume.channels ? i->volume.channels : 1, target);
+		pa_operation *op = dl_pa_context_set_sink_volume_by_index(c, i->index, &cv, sink_set, NULL);
+		if (op) {
+			busy++;
+			dl_pa_operation_unref(op);
+		}
+		return;
+	}
 	if (--busy == 0 && queued)
 		push_volume();
 }
 
-/* A one-channel volume sets every channel of whichever sink is the default. */
+/* Whichever sink is the default when the request arrives. */
 static void push_volume(void)
 {
-	pa_cvolume cv;
-	dl_pa_cvolume_set(&cv, 1, target);
-	pa_operation *op = dl_pa_context_set_sink_volume_by_name(ctx, sink(), &cv, sink_set, NULL);
+	pa_operation *op = dl_pa_context_get_sink_info_by_name(ctx, "@DEFAULT_SINK@", sink_found, NULL);
 	queued = 0;
 	if (op) {
 		busy++;
@@ -253,19 +279,69 @@ static void sink_event(pa_context *c, pa_subscription_event_type_t t, uint32_t i
 	}
 }
 
+static void connection_lost(void)
+{
+	busy = 0;
+	if (!lost) {
+		lost = 1;
+		retry_ms = retry_ms ? (retry_ms * 2 > RETRY_MAX_MS ? RETRY_MAX_MS : retry_ms * 2) : RETRY_FIRST_MS;
+		retry_at = now_ms() + retry_ms;
+		uint64_t one = 1;
+		if (wake_fd >= 0 && write(wake_fd, &one, sizeof one) < 0) {
+			/* the counter is full: the main loop is awake anyway */
+		}
+	}
+}
+
 static void state_changed(pa_context *c, void *u)
 {
 	(void)u;
+	if (c != ctx)
+		return;
 	pa_context_state_t s = dl_pa_context_get_state(c);
 	if (s == PA_CONTEXT_READY) {
+		retry_ms = 0;
 		dl_pa_context_set_subscribe_callback(c, sink_event, NULL);
 		pa_operation *op = dl_pa_context_subscribe(c, PA_SUBSCRIPTION_MASK_SINK | PA_SUBSCRIPTION_MASK_SERVER, NULL, NULL);
 		if (op)
 			dl_pa_operation_unref(op);
-		if (queued)
-			push_volume();
+		/* A new connection may face a restarted server: the level again. */
+		queued = 1;
+		push_volume();
 	} else if (!PA_CONTEXT_IS_GOOD(s))
-		busy = 0;
+		connection_lost();
+}
+
+/* A new context; the lock is held. */
+static void connect_pulse(void)
+{
+	if (ctx)
+		dl_pa_context_unref(ctx);
+	lost = 0;
+	busy = 0;
+	ctx = dl_pa_context_new(dl_pa_threaded_mainloop_get_api(ml), "archr-levels");
+	if (!ctx) {
+		connection_lost();
+		return;
+	}
+	dl_pa_context_set_state_callback(ctx, state_changed, NULL);
+	if (dl_pa_context_connect(ctx, NULL, PA_CONTEXT_NOAUTOSPAWN, NULL) < 0)
+		connection_lost();
+}
+
+/* Main loop: when the connection is to be tried again, -1 if never. */
+static long pulse_retry(long now)
+{
+	long wake = -1;
+	if (!ml)
+		return -1;
+	dl_pa_threaded_mainloop_lock(ml);
+	if (lost && now >= retry_at)
+		connect_pulse();
+	if (lost)
+		wake = retry_at;
+	dl_pa_threaded_mainloop_unlock(ml);
+	return wake;
 }
 
 static void set_volume(int level)
@@ -286,16 +362,10 @@ static void set_volume(int level)
 	if (s == PA_CONTEXT_READY) {
 		if (!busy)
 			push_volume();
-	} else if (!PA_CONTEXT_IS_GOOD(s)) {
-		if (ctx)
-			dl_pa_context_unref(ctx);
-		ctx = dl_pa_context_new(dl_pa_threaded_mainloop_get_api(ml), "archr-levels");
-		if (ctx) {
-			dl_pa_context_set_state_callback(ctx, state_changed, NULL);
-			if (dl_pa_context_connect(ctx, NULL, PA_CONTEXT_NOAUTOSPAWN, NULL) < 0)
-				queued = 0;
-		}
+	} else if (!ctx) {
+		connect_pulse();
 	}
+	/* Connecting, or waiting for the retry: the level goes out once ready. */
 	dl_pa_threaded_mainloop_unlock(ml);
 }
 
@@ -615,6 +685,7 @@ static int serve(void)
 		perror(a.sun_path);
 		return 1;
 	}
+	wake_fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
 	migrate();
 	ready_for_systemd();
 	struct sigaction sa = { .sa_handler = stop };
@@ -629,8 +700,18 @@ static int serve(void)
 			wake = settle;
 		if (writer && (wake < 0 || now + 100 < wake))
 			wake = now + 100; /* to collect the writer */
-		struct pollfd p = { .fd = fd, .events = POLLIN };
-		int ready = poll(&p, 1, wake < 0 ? -1 : wake > now ? (int)(wake - now) : 0);
+		long retry = pulse_retry(now);
+		if (retry >= 0 && (wake < 0 || retry < wake))
+			wake = retry;
+		struct pollfd p[2] = { { .fd = fd, .events = POLLIN }, { .fd = wake_fd, .events = POLLIN } };
+		int ready = poll(p, wake_fd >= 0 ? 2 : 1, wake < 0 ? -1 : wake > now ? (int)(wake - now) : 0);
+		if (wake_fd >= 0 && (p[1].revents & POLLIN)) {
+			uint64_t count;
+			if (read(wake_fd, &count, sizeof count) < 0) {
+				/* nothing to drain */
+			}
+		}
+		ready = ready > 0 && (p[0].revents & POLLIN);
 		int status;
 		if (writer && waitpid(writer, &status, WNOHANG) == writer && !written(status))
 			settle = now_ms() + SETTLE_MS;

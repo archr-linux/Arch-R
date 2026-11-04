@@ -21,6 +21,7 @@ cleanup() {
   [ -n "${OSD}" ] && kill -CONT "${OSD}" 2>/dev/null
   [ -n "${OSD}" ] && kill "${OSD}" 2>/dev/null
   wait 2>/dev/null
+  [ -n "${PW:-}" ] && [ -d "${PW}" ] && rm -r "${PW}"
   rm -rf "${TMP}"
 }
 trap cleanup EXIT
@@ -301,50 +302,88 @@ ${L} brightness +1 osd >/dev/null || { echo "FAIL: absent listeners blocked a co
 stop
 [ -S "${ARCHR_LEVELS_SOCKET}" ] && { echo "FAIL: socket left behind"; FAILED=1; }
 
-# A level asked for before its sink exists reaches the sink once it appears
-# (#39): at boot the restore can come before the card's sink, which then
-# starts at the session's remembered or default volume. A private PipeWire
-# (no session manager, so no hardware is touched) stands for the console's;
-# the sink is named because without a session manager there is no default.
+# The volume reaches the default sink whenever there is one (#39): the
+# daemon starts before the audio server, the card's sink appears after the
+# boot's restore, the server restarts, the default sink changes. A private
+# PipeWire stands for the console's, with no session manager (no hardware
+# touched): the test sets the default sink through the "default" metadata,
+# as WirePlumber does. No command is sent after the first level: the
+# daemon has to follow on its own.
 if ! command -v pipewire >/dev/null || ! command -v pipewire-pulse >/dev/null ||
-  ! command -v pactl >/dev/null; then
+  ! command -v pactl >/dev/null || ! command -v pw-metadata >/dev/null; then
   if [ "${ARCHR_LEVELS_NO_PIPEWIRE:-}" = 1 ]; then
     echo "SKIP (ARCHR_LEVELS_NO_PIPEWIRE=1): sink tests"
   else
-    echo "FAIL: sink tests need pipewire, pipewire-pulse and pactl (ARCHR_LEVELS_NO_PIPEWIRE=1 skips them)"
+    echo "FAIL: sink tests need pipewire, pipewire-pulse, pactl and pw-metadata (ARCHR_LEVELS_NO_PIPEWIRE=1 skips them)"
     FAILED=1
   fi
 else
-  PW="${TMP}/pw"
-  mkdir -p "${PW}"
+  # Socket paths are short (sun_path): a directory of its own under /tmp.
+  PW=$(mktemp -d /tmp/alv.XXXXXX)
+  mkdir -p "${PW}/cfg/pipewire/pipewire.conf.d"
+  printf 'context.objects = [ { factory = metadata args = { metadata.name = default } } ]\n' \
+    >"${PW}/cfg/pipewire/pipewire.conf.d/archr-levels-test.conf"
   pw() { env -u DBUS_SESSION_BUS_ADDRESS XDG_RUNTIME_DIR="${PW}" PIPEWIRE_RUNTIME_DIR="${PW}" \
-    PULSE_RUNTIME_PATH="${PW}/pulse" "$@"; }
-  pw pipewire >"${PW}/pipewire.log" 2>&1 &
-  AUDIO=$!
-  for _ in $(seq 50); do [ -S "${PW}/pipewire-0" ] && break; sleep 0.1; done
-  pw pipewire-pulse >"${PW}/pipewire-pulse.log" 2>&1 &
-  AUDIO="${AUDIO} $!"
+    PULSE_RUNTIME_PATH="${PW}/pulse" XDG_CONFIG_HOME="${PW}/cfg" "$@"; }
+  PIPEWIRE=
+  PULSE=
+  start_pulse() {
+    pw pipewire-pulse >>"${PW}/pipewire-pulse.log" 2>&1 &
+    PULSE=$!
+    AUDIO="${PIPEWIRE} ${PULSE}"
+    for _ in $(seq 50); do pactl info >/dev/null 2>&1 && break; sleep 0.1; done
+  }
+  stop_pulse() {
+    kill "${PULSE}"
+    wait "${PULSE}" 2>/dev/null
+    AUDIO="${PIPEWIRE}"
+  }
+  # A sink at the server's own 100 %, made the default.
+  new_sink() {
+    pactl load-module module-null-sink sink_name="${1}" >/dev/null
+    for _ in $(seq 30); do pactl get-sink-volume "${1}" >/dev/null 2>&1 && break; sleep 0.1; done
+    pw timeout 5 pw-metadata -n default 0 default.audio.sink "{ \"name\": \"${1}\" }" >/dev/null
+  }
+  # Both channels: "-35.00 dB -35.00 dB".
+  sink_db() { LC_ALL=C pactl get-sink-volume "${1}" 2>/dev/null | head -n1 | grep -o -- '-*[0-9.]* dB' | tr '\n' ' ' | sed 's/ $//'; }
+  sink_is() {
+    for _ in $(seq 50); do [ "$(sink_db "${2}")" = "${3}" ] && break; sleep 0.1; done
+    check "${1}" "$(sink_db "${2}")" "${3}"
+  }
   export PULSE_SERVER="unix:${PW}/pulse/native"
-  for _ in $(seq 50); do pactl info >/dev/null 2>&1 && break; sleep 0.1; done
-  export ARCHR_LEVELS_SINK=archr-test
-  sink_db() { LC_ALL=C pactl get-sink-volume archr-test 2>/dev/null | grep -o -m1 -- '-*[0-9.]* dB' | head -n1; }
-  sink_is() { for _ in $(seq 30); do [ "$(sink_db)" = "${2}" ] && break; sleep 0.1; done; check "${1}" "$(sink_db)" "${2}"; }
-  new_sink() { pactl load-module module-null-sink sink_name=archr-test >/dev/null; }
 
+  # The daemon is up before the audio server, as at boot.
   start
-  check "level before the sink" "$(${L} volume 30)" 30
-  new_sink
-  sink_is "the sink gets the level once it appears" "-35.00 dB"
+  check "level with no audio server" "$(${L} volume 30)" 30
+  pw pipewire >"${PW}/pipewire.log" 2>&1 &
+  PIPEWIRE=$!
+  AUDIO="${PIPEWIRE}"
+  for _ in $(seq 50); do [ -S "${PW}/pipewire-0" ] && break; sleep 0.1; done
+  start_pulse
+  new_sink card
+  sink_is "the server comes up later: the level reaches the sink" card "-35.00 dB -35.00 dB"
   ${L} volume 81 >/dev/null
-  sink_is "steps reach it" "-9.50 dB"
-  # A sink can go and come back (a profile switch, a card probed again).
+  sink_is "steps reach it" card "-9.50 dB -9.50 dB"
+
+  # The audio server restarts: its sinks come back at 100 %.
+  stop_pulse
+  start_pulse
+  new_sink card
+  sink_is "the server restarts: the level comes back" card "-9.50 dB -9.50 dB"
+
+  # Another sink becomes the default (headset, HDMI).
+  new_sink other
+  sink_is "a new default sink gets the level" other "-9.50 dB -9.50 dB"
+
+  # A sink goes and comes back (a profile switch, a card probed again).
   pactl unload-module module-null-sink
-  new_sink
-  sink_is "a sink that comes back gets the level" "-9.50 dB"
+  new_sink card
+  sink_is "a sink that comes back gets the level" card "-9.50 dB -9.50 dB"
   stop
   kill ${AUDIO} 2>/dev/null
   wait ${AUDIO} 2>/dev/null
   AUDIO=
+  rm -r "${PW}"
 fi
 
 [ ${FAILED} -eq 0 ] && echo "archr_levels_test: OK"
