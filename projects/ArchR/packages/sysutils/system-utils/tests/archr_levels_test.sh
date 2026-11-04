@@ -399,6 +399,29 @@ else
   new_sink card
   sink_is "a sink that comes back gets the level" card "-9.50 dB -9.50 dB"
   stop
+
+  # Only the session's server: on the consoles libpulse's own discovery
+  # reached a socket systemd holds with nobody answering (/run/pulse/native)
+  # whenever the session's was briefly missing, and hung for 30 s. Here
+  # PULSE_RUNTIME_PATH points libpulse at such a socket; the daemon has no
+  # PULSE_SERVER, only XDG_RUNTIME_DIR, and must still reach the server.
+  STUCK=$(mktemp -d /tmp/alv.XXXXXX)
+  python3 -I -c '
+import socket, sys, time
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.bind(sys.argv[1]); s.listen(8); time.sleep(60)
+' "${STUCK}/native" &
+  STUCKER=$!
+  for _ in $(seq 50); do [ -S "${STUCK}/native" ] && break; sleep 0.1; done
+  env -u PULSE_SERVER XDG_RUNTIME_DIR="${PW}" PULSE_RUNTIME_PATH="${STUCK}" "${L}" &
+  DAEMON=$!
+  for _ in $(seq 50); do [ -S "${ARCHR_LEVELS_SOCKET}" ] && break; sleep 0.1; done
+  ${L} volume 30 >/dev/null
+  sink_is "the session's server, not a silent fallback" card "-35.00 dB -35.00 dB"
+  stop
+  kill "${STUCKER}" 2>/dev/null
+  wait "${STUCKER}" 2>/dev/null
+  rm -r "${STUCK}"
   kill ${AUDIO} 2>/dev/null
   wait ${AUDIO} 2>/dev/null
   AUDIO=

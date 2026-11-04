@@ -26,7 +26,8 @@
 // A sink that appears later (the card at boot, a profile switch) or a new
 // default sink gets the level too, and a lost or refused connection (the
 // server not up yet, or restarted) is retried on its own with a short
-// backoff, the level applied again once it is back.
+// backoff, the level applied again once it is back. It talks to the
+// session's server only (PULSE_SERVER, else XDG_RUNTIME_DIR/pulse/native).
 // Commands only talk to the daemon (systemd restarts it): without it they
 // fail with a clear message instead of racing it for system.cfg.
 //
@@ -312,6 +313,27 @@ static void state_changed(pa_context *c, void *u)
 		connection_lost();
 }
 
+/* The session's server and nothing else: PULSE_SERVER if set, else the
+ * socket under XDG_RUNTIME_DIR. Left to itself libpulse falls back to the
+ * system socket (/run/pulse/native) while the session's is missing, as it
+ * is for a moment while pipewire-pulse restarts; on the consoles systemd
+ * holds that one open with nobody answering, and the connection hung for
+ * the 30 s timeout before the level could come back. */
+static const char *pulse_server(void)
+{
+	static char server[PATH_MAX + 32];
+	const char *env = getenv("PULSE_SERVER"), *dir = getenv("XDG_RUNTIME_DIR");
+	char abs[PATH_MAX];
+	if (env && *env)
+		return env;
+	if (!dir || !*dir)
+		return NULL;
+	if (realpath(dir, abs))
+		dir = abs;
+	snprintf(server, sizeof server, "unix:%s/pulse/native", dir);
+	return server;
+}
+
 /* A new context; the lock is held. */
 static void connect_pulse(void)
 {
@@ -325,7 +347,7 @@ static void connect_pulse(void)
 		return;
 	}
 	dl_pa_context_set_state_callback(ctx, state_changed, NULL);
-	if (dl_pa_context_connect(ctx, NULL, PA_CONTEXT_NOAUTOSPAWN, NULL) < 0)
+	if (dl_pa_context_connect(ctx, pulse_server(), PA_CONTEXT_NOAUTOSPAWN, NULL) < 0)
 		connection_lost();
 }
 
