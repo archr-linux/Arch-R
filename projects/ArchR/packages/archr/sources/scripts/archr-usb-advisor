@@ -285,7 +285,8 @@ locked() {
   local lock="${ROOT}/run/archr/usb-advisor.lock"
   mkdir -p "${lock%/*}" || exit 1
   exec 9>"${lock}"
-  flock -w 30 9 || die "busy"
+  # BusyBox flock has no -w: wait for the other run.
+  flock -x 9 || die "busy"
   "$@"
 }
 
