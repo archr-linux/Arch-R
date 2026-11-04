@@ -18,12 +18,10 @@
 # installed packages and libretro cores, system.cfg and the emulator and
 # launcher configs, the last game's exec.log, the launcher's log and pstore.
 #
-# Every text file is sanitized before it is zipped: on any "name = value",
-# "name=value" or "name: value" line whose name holds pass, token, key,
-# secret, login, auth, credential, cookie, session or psk, or a user name of
-# the scraper or of RetroAchievements, the value becomes <removed>. Files
-# that only hold secrets (iwd, scraper and RetroAchievements credentials)
-# are never copied. Each command runs with a time limit and each log is
+# Every file is sanitized before it is zipped (see sanitize below): secret
+# values become <removed>, and a file that cannot be filtered is left out.
+# Files that only hold secrets (iwd, scraper and RetroAchievements
+# credentials) are never copied. Each command runs with a time limit and each log is
 # capped, so the report stays small and the run short.
 #
 # ARCHR_REPORT_ROOT prefixes every file read and written (tests).
@@ -150,34 +148,76 @@ for src in "${ROOT}"/sys/fs/pstore/*; do
   [ -f "${src}" ] && mkdir -p "${DIR}/pstore" && head -c "${CAP}" "${src}" >"${DIR}/pstore/${src##*/}"
 done
 
-# Values of secret-looking names become <removed>, anywhere in a line.
-# Names match in any case; the name and its separator are kept. A value
-# is a quoted string or runs to the next blank, comma, semicolon or &.
+# Secrets become <removed>; every file passes through here, text or not
+# (NUL bytes become blanks, any other byte is read as is: LC_ALL=C), and a
+# file that cannot be filtered is left out, never copied as it was.
+#   - A line that starts with a secret name ("name=", "name = ",
+#     "name: ", "\"name\":") loses everything after the separator.
+#   - Elsewhere in a line, a secret name followed by = or : loses its value:
+#     a quoted string, or up to the next blank, comma, semicolon or &.
+#   - "Bearer X", "--passphrase X" (any secret option) and the URL fields
+#     u, t, p, ssid and devid (RetroAchievements, ScreenScraper) lose X.
+# Secret names hold pass, token, secret, login, auth, credential, cookie,
+# session or psk; or end in key as a word or suffix (key, wifi.key,
+# api_key, apikey, PreSharedKey), never hotkey or keyboard; or are a user
+# name of the scraper or of RetroAchievements.
 sanitize() {
-  awk '
-    function cut(line, re,    lower, out) {
-      out = ""
-      lower = tolower(line)
-      while (match(lower, re)) {
-        out = out substr(line, 1, RSTART + RLENGTH - 1) "<removed>"
-        line = substr(line, RSTART + RLENGTH)
-        lower = substr(lower, RSTART + RLENGTH)
-        if (match(lower, /^"[^"]*"?/) || match(lower, /^\047[^\047]*\047?/) ||
-            match(lower, /^[^[:space:],;&]*/)) {
-          line = substr(line, RLENGTH + 1)
-          lower = substr(lower, RLENGTH + 1)
-        }
-      }
-      return out line
+  tr '\0' ' ' | LC_ALL=C awk '
+    function secret(name,    n) {
+      n = tolower(name)
+      gsub(/["\047\[\]]/, "", n)
+      return n ~ /(pass|token|secret|login|auth|credential|cookie|session|psk)/ ||
+        n ~ /(^|[_.-]|api|private|shared|access|web|auth|secret)key$/ ||
+        n ~ /(scraper|screenscraper|cheevos|retroachievements).*(user|name)/
+    }
+    # What follows a removed name: a quoted string or a word.
+    function value(rest) {
+      if (match(rest, /^"[^"]*"?/) || match(rest, /^\047[^\047]*\047?/) ||
+          match(rest, /^[^[:space:],;&]*/))
+        return RLENGTH
+      return 0
     }
     {
-      line = cut($0, "[a-z0-9_.-]*(pass|token|key|secret|login|auth|credential|cookie|session|psk)[a-z0-9_.-]*\"?[[:space:]]*[=:][[:space:]]*")
-      print cut(line, "(scraper|screenscraper|cheevos|retroachievements)[a-z0-9_.-]*(user|name)[a-z0-9_.-]*\"?[[:space:]]*[=:][[:space:]]*")
+      line = $0
+      if (match(line, /^[[:space:]]*["\047]?[A-Za-z0-9_.\[\]"\047-]+["\047]?[[:space:]]*[=:][[:space:]]*/)) {
+        head = substr(line, 1, RLENGTH)
+        name = head
+        sub(/[[:space:]]*[=:][[:space:]]*$/, "", name)
+        if (secret(name)) {
+          print head "<removed>"
+          next
+        }
+      }
+      out = ""
+      while (match(line, /(--[A-Za-z0-9_-]+[[:space:]]+|[Bb][Ee][Aa][Rr][Ee][Rr][[:space:]]+|[A-Za-z0-9_.-]+"?[[:space:]]*[=:][[:space:]]*)/)) {
+        token = substr(line, RSTART, RLENGTH)
+        before = substr(line, RSTART - 1, 1)
+        out = out substr(line, 1, RSTART + RLENGTH - 1)
+        line = substr(line, RSTART + RLENGTH)
+        name = token
+        sub(/"?[[:space:]]*[=:]?[[:space:]]*$/, "", name)
+        sub(/^--/, "", name)
+        lower = tolower(name)
+        cut = secret(name) || lower == "bearer" ||
+          ((before == "?" || before == "&") && lower ~ /^(u|t|p|ssid|devid)$/)
+        if (cut && lower ~ /authorization/) {
+          line = ""
+          out = out "<removed>"
+        } else if (cut) {
+          n = value(line)
+          line = substr(line, n + 1)
+          out = out "<removed>"
+        }
+      }
+      print out line
     }'
 }
+# Compressed pstore records cannot be read through the filter: left out.
+find "${DIR}/pstore" -type f -name '*.z' -delete 2>/dev/null
 while IFS= read -r -d '' f; do
-  if grep -Iq . "${f}" 2>/dev/null; then
-    sanitize <"${f}" >"${f}.clean" && mv -f "${f}.clean" "${f}"
+  if ! sanitize <"${f}" >"${f}.clean" || ! mv -f "${f}.clean" "${f}"; then
+    rm -f "${f}" "${f}.clean"
+    echo "archr-report: ${f#"${DIR}/"} left out, could not be filtered" >&2
   fi
 done < <(find "${DIR}" -type f -print0)
 

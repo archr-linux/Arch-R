@@ -35,8 +35,9 @@ mkdir -p "${TMP}/bin" "${R}/storage/.config/system/configs" "${R}/storage/.confi
 # Every secret carries SECRET so one grep finds a leak.
 cat >"${R}/storage/.config/system/configs/system.cfg" <<'EOF'
 wifi.ssid=MinhaCasa
-wifi.key=SECRET-wifi
-root.password=SECRET-root
+wifi.key=SECRET-wifi with spaces
+root.password=abc;SECRET-semicolon
+wifi.adhoc.key=a&SECRET-ampersand
 global.retroachievements.username=SECRET-rauser
 global.retroachievements.password=SECRET-rapass
 global.retroachievements.token=SECRET-ratoken
@@ -51,6 +52,8 @@ cheevos_password = "SECRET with spaces"
 cheevos_token = "SECRET-cheevostoken"
 netplay_password = "SECRET-netplay"
 video_driver = "gl"
+input_enable_hotkey = "nul"
+keyboard_layout = "us"
 EOF
 cat >"${R}/storage/.config/archr-launcher/launcher.toml" <<'EOF'
 api_key = 'SECRET-apikey'
@@ -60,9 +63,18 @@ theme = "default"
 EOF
 echo "Passphrase=SECRET-iwd" >"${R}/storage/.cache/iwd/MinhaCasa.psk"
 printf 'Running: retroarch -L core.so\nlogin user=foo SessionId=SECRET-session done\n' >"${R}/var/log/exec.log"
-echo "launcher: signed in, token: SECRET-launcherlog" >"${R}/var/log/archr-launcher-session.log"
+cat >"${R}/var/log/archr-launcher-session.log" <<'EOF'
+launcher: signed in, token: SECRET-launcherlog
+GET https://api.screenscraper.fr/api2/jeuInfos.php?devid=SECRET-devid&devpassword=x&ssid=SECRET-ssuser&sspassword=y&romnom=Zelda
+GET https://retroachievements.org/dorequest.php?r=login&u=SECRET-rauser&t=SECRET-ratoken
+Authorization: Bearer SECRET-bearer
+iwctl --passphrase SECRET-passphrase station wlan0 connect MinhaCasa
+EOF
+# NUL bytes and a Latin-1 SSID: no longer "text", still filtered.
+printf 'bin\000ary\nretroarch: password=SECRET-binary\nconnected to Caf\351 wifi.key=SECRET-latin1\n' >>"${R}/var/log/exec.log"
 echo "Kernel panic - not syncing: secret_key=SECRET-pstore" >"${R}/sys/fs/pstore/dmesg-ramoops-0"
-printf 'Game Console R36S\0' >"${R}/proc/device-tree/model"
+printf 'compressed\000SECRET-compressed' >"${R}/sys/fs/pstore/dmesg-ramoops-1.enc.z"
+printf 'Game Console R36S\0password=SECRET-model' >"${R}/proc/device-tree/model"
 touch "${R}/usr/lib/libretro/pcsx_rearmed_libretro.so"
 
 fake() { printf '#!/bin/sh\n%s\n' "$2" >"${TMP}/bin/$1"; chmod +x "${TMP}/bin/$1"; }
@@ -86,11 +98,19 @@ mkdir "${TMP}/x" && (cd "${TMP}/x" && unzip -q "${R}${ZIP}")
 check "no secret leaks" "$(grep -rl SECRET "${TMP}/x" | sed "s#${TMP}/x/##")" ""
 check "iwd file never copied" "$(grep -rl Passphrase "${TMP}/x")" ""
 for want in MinhaCasa pcsx_rearmed_libretro.so archr-broken.service duckstation-sa \
-  "R36S" "video_driver" "previous boot" "Kernel panic" "Running: retroarch"; do
+  "R36S" "video_driver" "previous boot" "Kernel panic" "Running: retroarch" \
+  'input_enable_hotkey = "nul"' 'keyboard_layout = "us"' "romnom=Zelda" "r=login" \
+  "station wlan0 connect" "Caf"; do
   if grep -rqF -- "${want}" "${TMP}/x"; then echo "ok   keeps ${want}"; else echo "FAIL lost ${want}"; FAILED=1; fi
 done
 check "names kept, values removed" \
   "$(grep -h '^root.password=' "${TMP}"/x/*/configs/system.cfg)" "root.password=<removed>"
+check "unquoted value with blanks removed whole" \
+  "$(grep -h '^wifi.key=' "${TMP}"/x/*/configs/system.cfg)" "wifi.key=<removed>"
+check "URL fields" \
+  "$(grep -ho 'u=[^&]*&t=.*' "${TMP}"/x/*/logs/launcher.log)" "u=<removed>&t=<removed>"
+check "bearer token" "$(grep -h '^Authorization' "${TMP}"/x/*/logs/launcher.log)" "Authorization: <removed>"
+check "compressed pstore left out" "$(find "${TMP}/x" -name '*.enc.z' | wc -l)" "0"
 check "quoted value removed whole" \
   "$(grep -h '^cheevos_password' "${TMP}"/x/*/configs/retroarch.cfg)" 'cheevos_password = <removed>'
 check "no temporary files left" "$(find "${R}/storage/roms/relatorios" -name '*.part' | wc -l)" "0"
