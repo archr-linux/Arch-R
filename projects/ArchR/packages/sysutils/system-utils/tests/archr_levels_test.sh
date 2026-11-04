@@ -23,9 +23,14 @@ cleanup() {
 trap cleanup EXIT
 FAILED=0
 
-if ! ${CC:-cc} -std=c11 -O2 -Wall -Wextra -Werror -o "${TMP}/archr-levels" "${SOURCE}" -lm; then
-  echo "SKIP: cannot build archr-levels (compiler or PulseAudio headers missing)"
+# Skipped only without the PulseAudio headers; any other build failure fails.
+if ! printf '#include <pulse/pulseaudio.h>\n' | ${CC:-cc} -E -x c - >/dev/null 2>&1; then
+  echo "SKIP: pulse/pulseaudio.h not found"
   exit 0
+fi
+if ! ${CC:-cc} -std=c11 -O2 -Wall -Wextra -Werror -o "${TMP}/archr-levels" "${SOURCE}" -lm; then
+  echo "FAIL: archr-levels does not build"
+  exit 1
 fi
 
 mkdir -p "${TMP}/backlight/panel" "${TMP}/run"
