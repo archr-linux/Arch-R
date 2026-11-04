@@ -160,7 +160,16 @@ exec 9>"${SAVING}.lock"
 if [ "${REASON}" = switch ]; then
   flock -n 9 || exit 0
 else
-  flock -w "$((LOCK_WAIT / 10))" 9 || echo "archr-game-save-exit: lock busy, going on" >&2
+  # BusyBox flock has no -w: try every tick, up to LOCK_WAIT tenths.
+  n=0
+  until flock -n 9; do
+    if [ "${n}" -ge "${LOCK_WAIT}" ]; then
+      echo "archr-game-save-exit: lock busy, going on" >&2
+      break
+    fi
+    sleep "${TICK}"
+    n=$((n + 1))
+  done
   alive "${PID}" || exit 0
 fi
 printf '%s\n' "$$" >"${SAVING}"
