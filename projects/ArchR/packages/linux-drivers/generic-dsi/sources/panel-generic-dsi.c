@@ -50,10 +50,18 @@ struct generic_panel_mode {
     int horizontal[5];
     int vertical[5];
     int is_default;
+    int hsync_high;
+    int vsync_high;
     struct generic_panel_mode *prev;
 };
 
 #define DCS_PSEUDO_CMD_SEQ 0x10000
+
+/*
+ * Upper bound for one wait= step. The longest wait any known sequence
+ * needs is 0x250 = 592 ms (eeclone, kept from the old hex reading).
+ */
+#define GENERIC_PANEL_MAX_WAIT_MS 1000
 struct generic_panel_init_seq {
     int dcs;
     int len;
@@ -120,22 +128,24 @@ int load_globals(char *data, struct mipi_dsi_device *dsi, struct generic_panel *
             } else if (strcmp(val, "rgb565") == 0) {
                 dsi->format = MIPI_DSI_FMT_RGB565;
             } else {
-                dev_info(dev, "bad format %s\n", val);
+                dev_err(dev, "bad format %s\n", val);
+                return -EINVAL;
             }
         } else if (strcmp(param, "lanes") == 0) {
             if (get_option(&val, &dsi->lanes) == 0) {
-                dev_info(dev, "bad lanes %s\n", val);
+                dev_err(dev, "bad lanes %s\n", val);
+                return -EINVAL;
             }
         } else if (strcmp(param, "flags") == 0) {
             int flags;
             if (get_option(&val, &flags) == 0) {
-                dev_info(dev, "bad flags %s\n", val);
-            } else {
-                dsi->mode_flags = flags;
+                dev_err(dev, "bad flags %s\n", val);
+                return -EINVAL;
             }
+            dsi->mode_flags = flags;
         } else {
-            dev_info(dev, "unknown param %s\n", param);
-            return -1;
+            /* Unknown keys are skipped so newer descriptions still load. */
+            dev_warn(dev, "unknown G param %s, ignored\n", param);
         }
     }
     return 0;
@@ -148,22 +158,37 @@ int load_mode(char *data, struct mipi_dsi_device *dsi, struct generic_panel *ctx
     char *param, *val;
 
     mode = devm_kzalloc(dev, sizeof(*mode), GFP_KERNEL);
+    if (!mode)
+        return -ENOMEM;
 
     while (*data) {
         data = next_arg(data, &param, &val);
         if (!val) continue;
         if (strcmp(param, "clock") == 0) {
             if (get_option(&val, &mode->clock) == 0) {
-                dev_info(dev, "bad clock %s\n", val);
+                dev_err(dev, "bad clock %s\n", val);
+                return -EINVAL;
             }
         } else if (strcmp(param, "horizontal") == 0) {
             get_options(val, 5, &mode->horizontal[0]);
+            if (mode->horizontal[0] != 4) {
+                dev_err(dev, "horizontal needs 4 values: %s\n", val);
+                return -EINVAL;
+            }
         } else if (strcmp(param, "vertical") == 0) {
             get_options(val, 5, &mode->vertical[0]);
+            if (mode->vertical[0] != 4) {
+                dev_err(dev, "vertical needs 4 values: %s\n", val);
+                return -EINVAL;
+            }
         } else if (strcmp(param, "default") == 0) {
             get_option(&val, &mode->is_default);
+        } else if (strcmp(param, "hsync-active") == 0) {
+            get_option(&val, &mode->hsync_high);
+        } else if (strcmp(param, "vsync-active") == 0) {
+            get_option(&val, &mode->vsync_high);
         } else {
-            dev_info(dev, "Mode unhandled %s = %s\n", param, val);
+            dev_warn(dev, "unknown M param %s, ignored\n", param);
         }
     }
 
@@ -173,7 +198,54 @@ int load_mode(char *data, struct mipi_dsi_device *dsi, struct generic_panel *ctx
         dev_dbg(dev, "Mode %d %d %d  %p -> %p\n", mode->clock, mode->vertical[1], mode->horizontal[1], mode, mode->prev);
         return 0;
     }
-    return -1;
+    dev_err(dev, "mode needs clock > 5000 kHz, horizontal and vertical\n");
+    return -EINVAL;
+}
+
+/*
+ * wait= is decimal milliseconds, or hex with a 0x prefix. Descriptions
+ * written before this rule (decimal digits read as hex by older drivers)
+ * were rewritten with 0x so that they keep their old timing.
+ */
+static int parse_wait(struct device *dev, const char *val, int *wait)
+{
+    unsigned int ms;
+    int ret;
+
+    if (val[0] == '0' && (val[1] == 'x' || val[1] == 'X'))
+        ret = kstrtouint(val + 2, 16, &ms);
+    else
+        ret = kstrtouint(val, 10, &ms);
+    if (ret) {
+        dev_err(dev, "bad wait %s\n", val);
+        return -EINVAL;
+    }
+    if (ms > GENERIC_PANEL_MAX_WAIT_MS) {
+        dev_err(dev, "wait %s is %u ms, more than %d ms\n", val, ms, GENERIC_PANEL_MAX_WAIT_MS);
+        return -EINVAL;
+    }
+    *wait = ms;
+    return 0;
+}
+
+static int parse_hex_bytes(struct device *dev, const char *what, const char *val,
+        u8 **out, int *len)
+{
+    size_t n = strlen(val);
+
+    if (n == 0 || (n & 1)) {
+        dev_err(dev, "bad %s %s: needs an even number of hex digits\n", what, val);
+        return -EINVAL;
+    }
+    *len = n >> 1;
+    *out = devm_kzalloc(dev, *len, GFP_KERNEL);
+    if (!*out)
+        return -ENOMEM;
+    if (hex2bin(*out, val, *len) != 0) {
+        dev_err(dev, "bad %s %s\n", what, val);
+        return -EINVAL;
+    }
+    return 0;
 }
 
 int load_init_seq(char *data, struct mipi_dsi_device *dsi, struct generic_panel *ctx) {
@@ -181,9 +253,14 @@ int load_init_seq(char *data, struct mipi_dsi_device *dsi, struct generic_panel 
     struct generic_panel_init_seq *item;
     char *param, *val;
 
+    unsigned int num;
+    int ret;
+
     item = devm_kzalloc(dev, sizeof(*item), GFP_KERNEL);
+    if (!item)
+        return -ENOMEM;
     item->dcs = -1;
-    item->len = -1;
+    item->len = 0;
     item->read = 0;
     item->wait = 0;
 
@@ -191,42 +268,44 @@ int load_init_seq(char *data, struct mipi_dsi_device *dsi, struct generic_panel 
         data = next_arg(data, &param, &val);
         if (!val) continue;
         if (strcmp(param, "dcs") == 0) {
-            item->dcs = simple_strtoul(val, NULL, 16) & 0xFF;
-            //dev_info(dev, "Init dcs %02x\n", item->dcs);
-        } else if (strcmp(param, "data") == 0) {
-            item->len = (strlen(val)) >> 1;
-            item->data = devm_kzalloc(dev, item->len, GFP_KERNEL);
-            if (hex2bin(item->data, val, item->len) != 0) {
-                dev_info(dev, "bad data %s\n", val);
-                return -1;
+            if (kstrtouint(val, 16, &num) || num > 0xff) {
+                dev_err(dev, "bad dcs %s\n", val);
+                return -EINVAL;
             }
-            //for (int i=0; i < (item->len); i++) { dev_info(dev, " %02x", item->data[i]);};
-            //dev_info(dev, "\n");
+            item->dcs = num;
+        } else if (strcmp(param, "data") == 0) {
+            ret = parse_hex_bytes(dev, "data", val, &item->data, &item->len);
+            if (ret)
+                return ret;
         } else if (strcmp(param, "seq") == 0) {
             item->dcs = DCS_PSEUDO_CMD_SEQ;
-            item->len = (strlen(val)) >> 1;
-            item->data = devm_kzalloc(dev, item->len, GFP_KERNEL);
-            if (hex2bin(item->data, val, item->len) != 0) {
-                dev_info(dev, "bad seq %s\n", val);
-                return -1;
-            }
+            ret = parse_hex_bytes(dev, "seq", val, &item->data, &item->len);
+            if (ret)
+                return ret;
             dev_dbg(dev, "loaded seq len=%d %s\n", item->len, val);
         } else if (strcmp(param, "read") == 0) {
-            item->read = simple_strtoul(val, NULL, 16);
+            if (kstrtouint(val, 16, &num)) {
+                dev_err(dev, "bad read %s\n", val);
+                return -EINVAL;
+            }
+            item->read = num;
         } else if (strcmp(param, "wait") == 0) {
-            item->wait = simple_strtoul(val, NULL, 16);
+            ret = parse_wait(dev, val, &item->wait);
+            if (ret)
+                return ret;
         } else {
-            dev_info(dev, "Init unhandled %s = %s\n", param, val);
+            dev_warn(dev, "unknown I param %s, ignored\n", param);
         }
     }
 
-    if (item->dcs >= 0) {
-        item->link = ctx->iseq;
-        ctx->iseq = item;
-        return 0;
+    if (item->dcs < 0) {
+        dev_err(dev, "init step needs seq= or dcs=\n");
+        return -EINVAL;
     }
 
-    return -1;
+    item->link = ctx->iseq;
+    ctx->iseq = item;
+    return 0;
 }
 
 /*
@@ -234,29 +313,28 @@ int load_init_seq(char *data, struct mipi_dsi_device *dsi, struct generic_panel 
  */
 int load_panel_description_line(char *data, struct mipi_dsi_device *dsi, struct generic_panel *ctx) {
     size_t pos;
+
+    data = skip_spaces(data);
     for (pos = 0; data[pos] != 0; pos ++) {
         if ((data[pos] == '#') || data[pos] == '\n') {
             data[pos] = 0;
             break;
         }
     }
-    if (pos < 2) return 0;
+    data = strim(data);
+    if (data[0] == 0) return 0;
 
     switch (data[0]) {
         case 'G':
-            load_globals(data+1, dsi, ctx);
-            break;
+            return load_globals(data+1, dsi, ctx);
         case 'M':
-            load_mode(data+1, dsi, ctx);
-            break;
+            return load_mode(data+1, dsi, ctx);
         case 'I':
-            load_init_seq(data+1, dsi, ctx);
-            break;
+            return load_init_seq(data+1, dsi, ctx);
         default:
-            dev_info(NULL, "Unhandled %s\n", data);
+            dev_err(&dsi->dev, "unknown line type '%c'\n", data[0]);
+            return -EINVAL;
     }
-
-    return 0;
 }
 
 int panel_description_foreach(struct mipi_dsi_device *dsi, struct generic_panel *ctx,
@@ -285,7 +363,12 @@ int panel_description_foreach(struct mipi_dsi_device *dsi, struct generic_panel 
             if (pos < size) pos++;
             data[pos - 1] = 0;
 
-            handle_line(data, dsi, ctx);
+            ret = handle_line(data, dsi, ctx);
+            if (ret < 0) {
+                dev_err(dev, "%s: bad line \"%s\": %d\n", descfile, data, ret);
+                release_firmware(fw);
+                return ret;
+            }
 
             data = &data[pos];
             size = size - pos;
@@ -318,8 +401,12 @@ int panel_description_foreach(struct mipi_dsi_device *dsi, struct generic_panel 
             }
 
             dev_dbg(dev, "desc[%ld]: %s", i, line);
-            handle_line(buf, dsi, ctx);
+            ret = handle_line(buf, dsi, ctx);
             kfree(buf);
+            if (ret < 0) {
+                dev_err(dev, "panel_description[%ld] \"%s\": %d\n", i, line, ret);
+                return ret;
+            }
         }
     }
     return 0;
@@ -553,10 +640,11 @@ static int generic_panel_get_modes(struct drm_panel *panel,
         mode_tmp.width_mm       = ctx->size.width;
         mode_tmp.height_mm      = ctx->size.height;
 
-        // All tested panels (R36s orig, new-3, new-4; rgb10s) either require no sync or work OK with it.
-        // So for now just always set no sync drm flags
-        // TODO: pass drm flags in mode line if some future panel requires that
-        mode_tmp.flags          = DRM_MODE_FLAG_NHSYNC | DRM_MODE_FLAG_NVSYNC;
+        // Active-low sync unless the mode line says hsync-active=1 /
+        // vsync-active=1. Every panel tested so far (R36s orig, new-3,
+        // new-4; rgb10s) works with active-low.
+        mode_tmp.flags          = (genmode->hsync_high ? DRM_MODE_FLAG_PHSYNC : DRM_MODE_FLAG_NHSYNC) |
+                                  (genmode->vsync_high ? DRM_MODE_FLAG_PVSYNC : DRM_MODE_FLAG_NVSYNC);
 
         mode = drm_mode_duplicate(connector->dev, &mode_tmp);
         if (!mode) {
