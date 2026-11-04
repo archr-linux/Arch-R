@@ -157,14 +157,6 @@ export MESA_GLTHREAD=true
 
 #Run flycast emulator
 $GPTOKEYB "flycast" -c "${CONF_DIR}/flycast.gptk" &
-# "Save and exit" (archr-game-save-exit) closes Flycast with SIGTERM: it
-# writes its state as the game unloads, and loads it again for a resume
-# (runemu.sh --entrystate).
-STATE=()
-if [ "${ARCHR_SAVE_ON_EXIT}" = 1 ]; then
-  STATE=(-config "config:Dreamcast.AutoSaveState=yes")
-  [ -f "${ARCHR_ENTRY_STATE}" ] && STATE=(-config "config:Dreamcast.AutoSaveState=yes,config:Dreamcast.AutoLoadState=yes")
-fi
-${EMUPERF} /usr/bin/flycast "${STATE[@]}" "${1}"
+${EMUPERF} /usr/bin/flycast "${1}"
 _gptokeyb_pid="$(pidof gptokeyb 2>/dev/null)"
 [ -n "${_gptokeyb_pid}" ] && kill -9 ${_gptokeyb_pid}

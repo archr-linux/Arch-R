@@ -4,14 +4,15 @@
 """archr-keypress KEY...: press and release keys on a short-lived virtual
 keyboard (uinput), so the focused window, the running emulator, gets them as
 from a real keyboard. archr-game-save-exit uses it for the emulators' own
-"save state" keys. Keys: F1..F12, ESC."""
+"save state" and slot keys. Keys: F1..F12, ESC, 0..9."""
 import fcntl
 import os
 import struct
 import sys
 import time
 
-KEYS = {"ESC": 1, **{f"F{n}": 58 + n for n in range(1, 11)}, "F11": 87, "F12": 88}
+KEYS = {"ESC": 1, **{f"F{n}": 58 + n for n in range(1, 11)}, "F11": 87, "F12": 88,
+        **{str(n): 1 + n for n in range(1, 10)}, "0": 11}
 EV_SYN, EV_KEY = 0, 1
 UI_SET_EVBIT, UI_SET_KEYBIT = 0x40045564, 0x40045565
 UI_DEV_CREATE, UI_DEV_DESTROY = 0x5501, 0x5502
@@ -22,7 +23,7 @@ SETTLE = float(os.environ.get("ARCHR_KEYPRESS_SETTLE", "0.6"))
 def main(names):
     codes = [KEYS.get(name.upper()) for name in names]
     if not codes or None in codes:
-        print("usage: archr-keypress KEY... (F1..F12, ESC)", file=sys.stderr)
+        print("usage: archr-keypress KEY... (F1..F12, ESC, 0..9)", file=sys.stderr)
         return 2
     fd = os.open("/dev/uinput", os.O_WRONLY | os.O_NONBLOCK)
     try:
