@@ -68,8 +68,14 @@ DEFAULT=(
     /storage/.config/vice/*.vsf
     /storage/.vice/*.vsf
     /storage/.config/touchHLE/touchHLE_sandbox
+    /storage/.config/dolphin-emu/Wii/title/00010000
+    # Saves kept in system images are named one by one, never *.bin.
+    # DSiWare saves live inside melonDS's DSi NAND image.
+    /storage/roms/bios/dsi_nand.bin
     /storage/roms/bios/yabasanshiro/backup.bin
     /storage/roms/bios/dc/dc_flash.bin
+    /storage/roms/bios/dc/dc_nvmem.bin
+    /storage/roms/bios/GC/MemoryCard[AB].*.raw
     "${ES_DIR}"/es_*.cfg
     "${ES_DIR}"/scripts/*
     "${ES_DIR}"/themesettings/*
@@ -144,6 +150,7 @@ collect_rom_saves() {
         -iname '*.nvmem' -o -iname '*.eeprom' -o -iname 'vmu_save*.bin' -o \
         -iname '*.vmu' -o -iname '*.vms' -o -iname '*.vmi' -o -iname '*.p8d' -o \
         -iname '*.ram' -o -iname '*.zds' -o -iname '*.vsf' -o -iname '*.uss' -o \
+        -iname '*.gci' -o \
         -iname '*.st[0-9]*' -o -iname '*.state' -o -iname '*.state[0-9]*' -o \
         -iname '*.state.auto*' -o -iname '*.sav.[0-9]*' -o -iname '*.mcr.[0-9]*' \
     \) -print0 || return 1

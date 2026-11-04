@@ -40,6 +40,10 @@ FILES=(
   storage/roms/c64/Game.vsf storage/.config/hatari/hatari.sav
   storage/roms/bios/dc/vmu_save_A1.bin storage/roms/bios/dc/Game.zip.eeprom
   storage/roms/bios/dc/Game.zip.nvmem storage/roms/bios/dc/dc_flash.bin
+  storage/roms/bios/dc/dc_nvmem.bin
+  storage/roms/bios/dsi_nand.bin
+  storage/roms/bios/GC/MemoryCardA.USA.raw storage/roms/bios/GC/MemoryCardB.EUR.raw
+  storage/roms/bios/GC/USA/01-GALE-SuperSmashBros.gci
   storage/roms/dreamcast/data/vmu_save_B1.bin
   storage/roms/bios/yabasanshiro/backup.bin
   storage/roms/psp/ULUS12345DATA00/PARAM.SFO
@@ -53,6 +57,7 @@ FILES=(
   storage/.config/amiberry/savestates/Game.uss storage/.config/amiberry/nvram/Game.nvr
   storage/.config/hatari/auto.sav storage/.config/touchHLE/touchHLE_sandbox/id/Documents/save
   storage/.config/game/configs/hypseus/ram/Game.ram
+  storage/.config/dolphin-emu/Wii/title/00010000/52534245/data/banner.bin
   storage/roms/gzdoom/save0.zds
   storage/roms/savestates/snes/Game.state.auto
   storage/roms/savestates/snes/Game.state1.png
@@ -62,10 +67,14 @@ FILES=(
   storage/roms/savestates/saturn/yabasanshiro/Game.yss
   storage/roms/snes/UPPER.SRM
 )
+# BIOS and firmware images next to the save images stay out: no generic *.bin.
 ROMS=(storage/roms/snes/Game.sfc storage/roms/nds/Game.nds storage/roms/psp/Game.iso
   storage/roms/psx/Game.bin storage/roms/atarist/Game.st storage/roms/atarist/Game.stx
   storage/roms/fds/Game.fds
   storage/roms/bios/dc/dc_boot.bin storage/roms/pico-8/Game.p8.png
+  storage/roms/bios/bios7.bin storage/roms/bios/dsi_bios7.bin
+  storage/roms/bios/dsi_firmware.bin storage/roms/bios/firmware.bin
+  storage/roms/bios/GC/USA/IPL.bin storage/.config/dolphin-emu/Wii/title/00010001/app.bin
   storage/roms/psp/Extracted/PSP_GAME/PARAM.SFO storage/roms/snes/gamelist.xml
   storage/roms/psp/ULUS77777/Disc.iso storage/roms/psp/ULUS88888/PSP_GAME/PARAM.SFO)
 put storage/.config/system/configs/system.cfg
