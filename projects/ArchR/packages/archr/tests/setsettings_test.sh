@@ -147,14 +147,14 @@ game() { # PLATFORM CORE [system.cfg lines...]
   bash "${SCRIPTS}/setsettings.sh" "${platform}" "/roms/${platform}/Game.bin" "${core}" \
     --controllers=" -p1index 0 -p1guid abc " --autosave="" --snapshot="" >"${TMP}/stdout" 2>/dev/null # atari800 options live under /storage
 }
-rm -rf "${RM}"
-game atari5200 atari800
-check "atari800: 5200 joystick on its 4 ports" \
-  "[ \$(grep -c '^input_libretro_device_p[1-4] = \"769\"$' '${RM}/Atari800/Atari800.rmp') = 4 ]"
-check "atari5200: nothing dead in the append config" "! grep -q '^input_libretro_device_p' '${A}'"
-rm -rf "${RM}"
-game atari5200 a5200
-check "a5200 keeps its own pad" "[ ! -e '${RM}' ]"
+# Atari800 also runs 800/XL games: a 5200 game must not leave a core remap
+# behind (the core picks the 5200 joystick itself).
+for core in atari800 a5200; do
+  rm -rf "${RM}"
+  game atari5200 "${core}"
+  check "atari5200 on ${core}: no core remap" "[ ! -e '${RM}/Atari800/Atari800.rmp' ] && [ ! -e '${RM}' ]"
+  check "atari5200 on ${core}: nothing dead in the append config" "! grep -q '^input_libretro_device_p' '${A}'"
+done
 
 # Netplay host only: a multitap for this run, from a copy of the user's
 # remaps in a run folder; the user's folder is left as it was.

@@ -900,17 +900,15 @@ function run_remap_devices() {
 #   sticks (Ape Escape stops at "DUALSHOCK not plugged"). A DualShock on
 #   ports 1 to 5; the d-pad works as before and the game turns analog mode
 #   on, or L1+R1+Select on PCSX ReARMed.
-# - atari5200 on atari800: the core starts as an Atari 800 joystick; the
-#   5200 joystick (keypad, start/pause/reset) on its 4 ports. The a5200
-#   core needs nothing.
+# A core remap applies to every game of that core: a device only one of
+# the core's systems needs does not belong here (Atari800 runs both 800/XL
+# and 5200, and switches to the 5200 joystick itself for the 5200).
 function set_core_devices() {
     case "${PLATFORM}:${CORE}" in
         psx:pcsx_rearmed*) # PCSX-ReARMed: SUBCLASS(ANALOG, 1) dualshock
             core_remap_devices "PCSX-ReARMed" "${REMAPS_DIR}" 1=517 2=517 3=517 4=517 5=517 ;;
         psx:swanstation)   # SwanStation: SUBCLASS(ANALOG, 0) dualshock
             core_remap_devices "SwanStation" "${REMAPS_DIR}" 1=261 2=261 3=261 4=261 5=261 ;;
-        atari5200:atari800) # Atari800: SUBCLASS(JOYPAD, 2) 5200 joystick
-            core_remap_devices "Atari800" "${REMAPS_DIR}" 1=769 2=769 3=769 4=769 ;;
     esac
 }
 
