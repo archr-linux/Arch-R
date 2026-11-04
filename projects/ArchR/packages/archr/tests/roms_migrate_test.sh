@@ -58,7 +58,7 @@ case "$*" in *TYPE*) cat "$T/dev/$d.type" 2>/dev/null ;; *LABEL*) cat "$T/dev/$d
 tool mkfs.exfat 'echo "mkfs.exfat $*" >>"$T/calls"; d=${!#}; d=${d##*/}; echo exfat >"$T/dev/$d.type"; echo ARCHR_ROMS >"$T/dev/$d.label"; rm -rf "$T/exfat"; mkdir -p "$T/exfat"'
 tool fsck.exfat 'echo "fsck.exfat $*" >>"$T/calls"; [ "$1" = -p ] && exit $(cat "$T/fsck-exfat-rc" 2>/dev/null || echo 0); exit 0'
 tool e2fsck 'echo "e2fsck $*" >>"$T/calls"; exit 0'
-tool dumpe2fs 'echo "Block size:               4096"'
+tool tune2fs 'echo "Block size:               4096"'
 tool resize2fs '
 echo "resize2fs $*" >>"$T/calls"
 [ "$1" = -P ] && echo "Estimated minimum size of the filesystem: $(cat "$T/minblocks")"

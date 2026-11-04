@@ -378,7 +378,8 @@ make_partition() {
   fi
   start=$(roms_field "${DISK}" 3 2)
   size=$(( P3_END - start + 1 ))
-  bs=$(dumpe2fs -h "${DEV}" 2>/dev/null | awk -F: '/^Block size/ { gsub(/ /, "", $2); print $2 }')
+  # tune2fs, not dumpe2fs: the image leaves dumpe2fs out (e2fsprogs).
+  bs=$(tune2fs -l "${DEV}" 2>/dev/null | awk -F: '/^Block size/ { gsub(/ /, "", $2); print $2 }')
   min=$(resize2fs -P "${DEV}" 2>/dev/null | awk -F: '/minimum/ { gsub(/ /, "", $2); print $2 }')
   if [ -z "${bs}" ] || [ -z "${min}" ] || [ $(( min * bs / 512 + 524288 )) -gt "${size}" ]; then
     abort "STORAGE does not fit in $(( size / 2048 )) MiB."
