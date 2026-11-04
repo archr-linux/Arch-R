@@ -201,14 +201,10 @@ HOTKEY_SWITCHER=$(hotkey_button hotkey.switcher BTN_MODE)
 HOTKEY_SWITCHER_ENABLED=$(hotkey_enabled hotkey.switcher)
 FUNCTION_HOTKEY_SWITCHER_EVENT=$(press_event "${HOTKEY_SWITCHER}" '*')
 # Pressed with nothing else since: its release is a tap, when it came
-# within SWITCHER_TAP milliseconds.
+# within SWITCHER_TAP milliseconds (now_ms, below, sets NOW).
 SWITCHER_ARMED=false
 SWITCHER_DOWN=0
 : "${SWITCHER_TAP:=600}"
-now_ms() {
-  local t=${EPOCHREALTIME/[.,]/}
-  echo $((t / 1000))
-}
 
 FUNCTION_HOTKEY_DPAD_UP_EVENT=$(press_event "${HOTKEY_VOLUME_UP}")
 FUNCTION_HOTKEY_DPAD_DOWN_EVENT=$(press_event "${HOTKEY_VOLUME_DOWN}")
@@ -574,9 +570,10 @@ watch_inputs | grep --line-buffered "EV_KEY\|EV_SW\|error reading" | while next_
       (${FUNCTION_HOTKEY_SWITCHER_EVENT})
         if [[ "${line}" =~ ${PRESS} ]]; then
           SWITCHER_ARMED=${HOTKEY_SWITCHER_ENABLED}
-          SWITCHER_DOWN=$(now_ms)
-        elif [[ "${line}" =~ ${RELEASE} ]] && ${SWITCHER_ARMED} &&
-             [ $(( $(now_ms) - SWITCHER_DOWN )) -lt "${SWITCHER_TAP}" ]; then
+          now_ms
+          SWITCHER_DOWN=${NOW}
+        elif [[ "${line}" =~ ${RELEASE} ]] && ${SWITCHER_ARMED} && now_ms &&
+             [ $(( NOW - SWITCHER_DOWN )) -lt "${SWITCHER_TAP}" ]; then
           SWITCHER_ARMED=false
           ${DEBUG} && log $0 "${HOTKEY_SWITCHER}: Save and switch"
           systemd-run --no-block --collect --quiet --unit=archr-save-exit \
