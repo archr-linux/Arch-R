@@ -362,28 +362,43 @@ idle_suspend() {
 # the limit may have passed; the state decides which one applies (a game runs
 # while runemu.sh does, as archr-fake-suspend sees it). Past it, suspend once
 # and count again. No limit: a plain blocking read.
-IDLE_SINCE=${SECONDS}
-IDLE_WAKE=$(( SECONDS + IDLE_STEP ))
+# The game runner, as archr-fake-suspend looks for it (the host test gives
+# its own name, so another copy of the test cannot pass for a game).
+: "${RUNEMU:=/usr/bin/runemu.sh}"
+
+# Milliseconds: $SECONDS counts whole seconds from an unknown fraction, so
+# a limit measured with it could pass up to a second early.
+# now_ms sets NOW (no subshell: it runs on every event).
+now_ms() {
+  local US=${EPOCHREALTIME/[.,]/}
+  NOW=$(( US / 1000 ))
+}
+now_ms
+IDLE_SINCE=${NOW}
+IDLE_WAKE=$(( IDLE_SINCE + IDLE_STEP * 1000 ))
 next_event() {
-  local LIMIT RC
+  local LIMIT RC NOW WAIT
   while [ "${IDLE_STEP}" -gt 0 ]; do
-    read -t "$(( IDLE_WAKE > SECONDS ? IDLE_WAKE - SECONDS : 1 ))" line
+    now_ms
+    WAIT=$(( IDLE_WAKE > NOW ? IDLE_WAKE - NOW : 1 ))
+    read -t "$(printf '%d.%03d' $(( WAIT / 1000 )) $(( WAIT % 1000 )))" line
     RC=$?
+    now_ms
     if [ ${RC} -le 128 ]; then
-      IDLE_SINCE=${SECONDS}
-      IDLE_WAKE=$(( SECONDS + IDLE_STEP ))
+      IDLE_SINCE=${NOW}
+      IDLE_WAKE=$(( NOW + IDLE_STEP * 1000 ))
       return ${RC}
     fi
     LIMIT=${IDLE_MENU}
-    pgrep -f /usr/bin/runemu.sh >/dev/null 2>&1 && LIMIT=${IDLE_GAME}
-    if [ "${LIMIT}" -gt 0 ] && [ $(( SECONDS - IDLE_SINCE )) -ge "${LIMIT}" ]; then
+    pgrep -f "${RUNEMU}" >/dev/null 2>&1 && LIMIT=${IDLE_GAME}
+    if [ "${LIMIT}" -gt 0 ] && [ $(( NOW - IDLE_SINCE )) -ge $(( LIMIT * 1000 )) ]; then
       idle_suspend
-      IDLE_SINCE=${SECONDS}
+      IDLE_SINCE=${NOW}
     fi
     if [ "${LIMIT}" -gt 0 ]; then
-      IDLE_WAKE=$(( IDLE_SINCE + LIMIT ))
+      IDLE_WAKE=$(( IDLE_SINCE + LIMIT * 1000 ))
     else
-      IDLE_WAKE=$(( SECONDS + IDLE_STEP ))
+      IDLE_WAKE=$(( NOW + IDLE_STEP * 1000 ))
     fi
   done
   read line

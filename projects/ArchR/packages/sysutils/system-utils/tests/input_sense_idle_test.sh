@@ -28,6 +28,7 @@ log() { :; }
 FAKE_SUSPEND="${TMP}/bin/suspend"
 FAKE_SUSPEND_FLAG="${TMP}/suspended.flag"
 IDLE_UNIT=1
+RUNEMU="${TMP}/runemu.sh"
 PATH="${TMP}/bin:\${PATH}"
 PROFILE
 export INPUT_SENSE_PROFILE="${TMP}/profile"
@@ -101,7 +102,7 @@ touch "${TMP}/suspended.flag"
 check "already suspended: no second suspend" "$(run 3 "idle.timeout=1")" ""
 rm -f "${TMP}/suspended.flag"
 
-bash -c 'exec -a /usr/bin/runemu.sh sleep 60' &
+bash -c "exec -a '${TMP}/runemu.sh' sleep 60" &
 GAME=$!
 sleep 0.2
 check "a game uses its own limit, never" "$(run 3 "idle.timeout=1")" ""
