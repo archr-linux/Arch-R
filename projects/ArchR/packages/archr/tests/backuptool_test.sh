@@ -375,7 +375,7 @@ rm "${GBA}" "${TMP}/swapped" "${TMP}/bin/mv"
 /usr/bin/mv "${GBA}-original" "${GBA}"
 # The attack strands a hidden temporary inside /storage and the journal;
 # the next run cleans both up.
-check test -f "${ROOT}/storage/.cache/backuptool.journal"
+check test -f "${ROOT}/storage/.cache/backuptool/journal"
 run backup >"${TMP}/after-toctou.log" 2>&1
 check grep -q 'Recovered an interrupted restore' "${TMP}/after-toctou.log"
 check test "$(find "${GBA}" -name '.*.restore-*' | wc -l)" = 0
@@ -421,7 +421,7 @@ reset_device() {
   rm -f "${TMP}/bin/mv" "${TMP}/bin/unzip" "${TMP}/bin/pidof"
   find "${ROOT}/storage" \( -name '*.backup-*' -o -name '.*.restore-*' -o -name '.*.undo-*' \
     -o -name '*.pre-restore-*' \) -delete
-  rm -rf "${ROOT}"/storage/.cache/backuptool-restore.* "${ROOT}/storage/.cache/backuptool.journal" \
+  rm -rf "${ROOT}"/storage/.cache/backuptool-restore.* "${ROOT}/storage/.cache/backuptool/journal" \
     "${ROOT}"/storage/roms/backup/ArchR_RESTORE-*.log
   printf 'current\n' >"${SAVE}"
   touch -d '2001-01-01' "${SAVE}"
@@ -500,7 +500,7 @@ run backup >"${TMP}/after-kill.log" 2>&1
 check grep -q 'Recovered an interrupted restore' "${TMP}/after-kill.log"
 check test "$(cat "${SAVE}")" = current
 check test "$(cat "${CFG}")" = 'changed setting'
-check test ! -e "${ROOT}/storage/.cache/backuptool.journal"
+check test ! -e "${ROOT}/storage/.cache/backuptool/journal"
 cp "${GOOD}" "${ZIP}"
 untouched
 leftovers
@@ -552,6 +552,102 @@ run backup >"${TMP}/after-swap.log" 2>&1
 cp "${GOOD}" "${ZIP}"
 untouched
 leftovers
+
+# A forged journal cannot make recovery delete or move anything it did not
+# create. Records aim outside /storage, climb with "..", and name temporary
+# and undo files that are someone else's.
+reset_device
+STATE="${ROOT}/storage/.cache/backuptool"
+mkdir -p "${TMP}/victim-dir"
+printf 'victim\n' >"${TMP}/victim-dir/v"
+printf 'victim 2\n' >"${ROOT}/storage/roms/victim2.sav"
+snapshot "${TMP}/before"
+sha() { sha256sum "$1" | cut -d' ' -f1; }
+forge() {
+  printf '1\t%s\t%s\t.v.restore-1\n' "$(sha "${TMP}/victim-dir/v")" "${TMP}/victim-dir/v"
+  printf '0\t%s\t%s\t../../.config/retroarch/retroarch.cfg\n' "$(sha "${CFG}")" "${SAVE}"
+  printf '0\t%s\t%s\t.absent.sav.restore-1\t../victim2.sav\n' "$(sha "${CFG}")" "${ROOT}/storage/roms/gb/absent.sav"
+  printf '1\t%s\t%s\t.v.restore-1\n' "$(sha "${TMP}/victim-dir/v")" "${ROOT}/storage/roms/../../../victim-dir/v"
+  printf '1\tnot-a-sha\t%s\t.Game.sav.restore-1\n' "${SAVE}"
+  printf '2\t%s\t%s\t.Game.sav.restore-1\n' "$(sha "${SAVE}")" "${SAVE}"
+}
+intact() {
+  check test "$(cat "${TMP}/victim-dir/v")" = victim
+  check test "$(cat "${ROOT}/storage/roms/victim2.sav")" = 'victim 2'
+  check test "$(cat "${CFG}")" = 'changed setting'
+  check test "$(cat "${SAVE}")" = current
+  check test ! -e "${ROOT}/storage/roms/gb/absent.sav"
+}
+# In the shared .cache, where it used to live, it is not even read.
+forge >"${ROOT}/storage/.cache/backuptool.journal"
+run backup >"${TMP}/forged-shared.log" 2>&1
+intact
+rm "${ROOT}/storage/.cache/backuptool.journal"
+untouched
+# In the private folder, every invalid record is ignored and logged.
+check test "$(stat -c %a "${STATE}")" = 700
+forge >"${STATE}/journal"
+run backup >"${TMP}/forged-private.log" 2>&1
+check test "$(grep -c 'Ignored an invalid journal record' "${TMP}/forged-private.log")" = 6
+check test ! -e "${STATE}/journal"
+intact
+untouched
+# The private folder must be a real folder of the running user, mode 0700.
+chmod 0755 "${STATE}"
+run backup >"${TMP}/state-mode.log" 2>&1
+check test "$(stat -c %a "${STATE}")" = 700
+/usr/bin/mv "${STATE}" "${TMP}/state.real"
+mkdir -p "${TMP}/fakestate"
+forge >"${TMP}/fakestate/journal"
+ln -s "${TMP}/fakestate" "${STATE}"
+fails backup >"${TMP}/state-link.log" 2>&1
+check grep -q 'only root' "${TMP}/state-link.log"
+check test -e "${TMP}/fakestate/journal"
+rm "${STATE}"
+/usr/bin/mv "${TMP}/state.real" "${STATE}"
+intact
+untouched
+rm -r "${TMP}/victim-dir" "${TMP}/fakestate" "${ROOT}/storage/roms/victim2.sav"
+cp "${GOOD}" "${ZIP}"
+
+# Recovery that cannot be carried out keeps the journal and stops the run.
+# SIGKILL between moving the save aside and promoting the new one, then a
+# run while the card is read-only (every rename fails with EROFS), then a
+# run after it is writable again.
+reset_device
+cat >"${TMP}/bin/mv" <<'EOF'
+#!/bin/bash
+/usr/bin/mv "$@" || exit
+case "$*" in
+  *" Game.sav .Game.sav.undo-"*|*"/Game.sav "*"/.Game.sav.undo-"*) kill -9 "$PPID" ;;
+esac
+EOF
+chmod +x "${TMP}/bin/mv"
+EXTRA="${TMP}/bin" fails restore >"${TMP}/erofs-kill.log" 2>&1
+check test ! -e "${SAVE}"
+cat >"${TMP}/bin/mv" <<'EOF'
+#!/bin/sh
+echo "mv: cannot move '$3' to '$4': Read-only file system" >&2
+exit 1
+EOF
+EXTRA="${TMP}/bin" fails backup >"${TMP}/erofs.log" 2>&1
+check grep -q 'could not be recovered' "${TMP}/erofs.log"
+check test -f "${ROOT}/storage/.cache/backuptool/journal"
+check test ! -e "${SAVE}"
+check cmp "${ZIP}" "${GOOD}"
+EXTRA="${TMP}/bin" fails restore >"${TMP}/erofs-restore.log" 2>&1
+check grep -q 'could not be recovered' "${TMP}/erofs-restore.log"
+check test ! -e "${SAVE}"
+rm "${TMP}/bin/mv"
+run backup >"${TMP}/erofs-rw.log" 2>&1
+check grep -q 'Recovered an interrupted restore' "${TMP}/erofs-rw.log"
+check test "$(cat "${SAVE}")" = current
+check test "$(cat "${CFG}")" = 'changed setting'
+check test ! -e "${ROOT}/storage/.cache/backuptool/journal"
+cp "${GOOD}" "${ZIP}"
+untouched
+leftovers
+snapshot "${TMP}/before"
 # Free space is checked before anything is unpacked.
 cat >"${TMP}/bin/df" <<'EOF'
 #!/bin/sh

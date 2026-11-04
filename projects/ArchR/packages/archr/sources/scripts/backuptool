@@ -481,11 +481,21 @@ make_dirs() {
 # The journal lists every planned rename, "new sha dest temp undo" with tabs,
 # so that the run after a crash or SIGKILL can undo an unfinished restore.
 # A last line "COMMITTED" means the restore finished: only cleanup is left.
+# It lives in a folder only root can enter: /storage is the only persistent
+# place, and Samba, syncthing and the HTTP server write to parts of it.
 CACHE="/storage/.cache"
-JOURNAL="backuptool.journal"
+STATEDIR="${CACHE}/backuptool"
+JOURNAL="journal"
+enter_state() {
+    enter "${CACHE}" || return 1
+    [ -e backuptool ] || [ -L backuptool ] || mkdir -m 0700 backuptool || return 1
+    enter "${STATEDIR}" || return 1
+    [ "$(stat -c %u .)" = "${EUID}" ] || return 1
+    [ "$(stat -c %a .)" = 700 ] || chmod 0700 . || return 1
+}
 write_journal() {
     local index
-    enter "${CACHE}" || return 1
+    enter_state || return 1
     for index in "${!P_DEST[@]}"; do
         printf '%s\t%s\t%s\t%s\t%s\n' "${P_NEW[index]}" "${P_SHA[index]}" \
             "${P_DEST[index]}" "${P_TEMP[index]}" "${P_UNDO[index]}"
@@ -495,48 +505,104 @@ write_journal() {
     mv -fT -- "${JOURNAL}.new" "${JOURNAL}"
 }
 drop_journal() {
-    enter "${CACHE}" && rm -f -- "${JOURNAL}" "${JOURNAL}.new"
+    enter_state && rm -f -- "${JOURNAL}" "${JOURNAL}.new"
+}
+
+# A journal record names only what restore itself creates: a path under
+# /storage made of plain components, and the temporary and undo names this
+# script derives from its last component.
+valid_record() {
+    local new="$1" sha="$2" dest="$3" temp="$4" undo="$5" base part number
+    local -a parts
+    [[ "${new}" == [01] && "${sha}" =~ ^[0-9a-f]{64}$ ]] || return 1
+    [[ "${dest}" == "${STORAGE}/"* ]] || return 1
+    [[ "${dest}" != *[[:cntrl:]]* ]] || return 1
+    IFS=/ read -r -a parts <<<"${dest#"${STORAGE}"/}"
+    [ "${#parts[@]}" -gt 0 ] || return 1
+    [[ "${dest}" != */ ]] || return 1
+    for part in "${parts[@]}"; do
+        case "${part}" in '' | . | ..) return 1 ;; esac
+    done
+    base="${dest##*/}"
+    [[ "${base}" != */* ]] || return 1
+    number="${temp#".${base}.restore-"}"
+    [[ "${number}" != "${temp}" && "${number}" =~ ^[0-9]+$ ]] || return 1
+    [ -n "${undo}" ] || return 0
+    number="${undo#".${base}.undo-"}"
+    [[ "${number}" != "${undo}" && "${number}" =~ ^[0-9]+$ ]]
 }
 
 # First thing of every run: finish what a killed restore left. Unfinished,
 # it is undone; a file the user changed since keeps its new content and the
-# file it replaced is kept beside it. Orphan staging folders go.
+# file it replaced is kept beside it. Orphan staging folders go. If any
+# record cannot be carried out (a read-only card, a moved folder), the
+# journal stays for the next run and this run stops.
 recover() {
-    local new sha dest temp undo base keep committed=false
+    local new sha dest temp undo base keep committed=false failed=false
     local -a notes=()
     if ! { mkdir -p "${CACHE}" && enter "${CACHE}"; }; then
         echo "Error: ${CACHE} is not a real folder." >&2
+        return 1
+    fi
+    if ! enter_state; then
+        echo "Error: ${STATEDIR} is not a folder that only root can use." >&2
         return 1
     fi
     if [ -f "${JOURNAL}" ]; then
         grep -qx COMMITTED "${JOURNAL}" && committed=true
         while IFS=$'\t' read -r new sha dest temp undo; do
             [ "${new}" != COMMITTED ] || continue
+            if ! valid_record "${new}" "${sha}" "${dest}" "${temp}" "${undo}"; then
+                notes+=("Ignored an invalid journal record:$(printf ' %q' "${new}" "${sha}" "${dest}" "${temp}" "${undo}")")
+                continue
+            fi
             if ! enter "${dest%/*}"; then
-                notes+=("Could not recover ${dest}: its folder changed.")
+                notes+=("Could not recover ${dest}: its folder is missing or changed.")
+                failed=true
                 continue
             fi
             base="${dest##*/}"
-            rm -f -- "${temp}"
+            rm -f -- "${temp}" || { notes+=("Could not remove ${dest%/*}/${temp}"); failed=true; }
             if "${committed}"; then
-                rm -f -- "${undo}"
+                [ -z "${undo}" ] || rm -f -- "${undo}" ||
+                    { notes+=("Could not remove ${dest%/*}/${undo}"); failed=true; }
             elif [ -n "${undo}" ] && [ -e "${undo}" ]; then
                 if [ ! -e "${base}" ] || [ "$(sha_of "${base}")" = "${sha}" ]; then
-                    mv -fT -- "${undo}" "${base}" && notes+=("Put back ${dest}")
+                    if mv -fT -- "${undo}" "${base}"; then
+                        notes+=("Put back ${dest}")
+                    else
+                        notes+=("Could not put back ${dest}"); failed=true
+                    fi
                 else
                     keep="${base}.pre-restore-${STAMP}"
-                    mv -fT -- "${undo}" "${keep}" && notes+=("Kept ${dest}; the file it replaced is ${dest%/*}/${keep}")
+                    if mv -fT -- "${undo}" "${keep}"; then
+                        notes+=("Kept ${dest}; the file it replaced is ${dest%/*}/${keep}")
+                    else
+                        notes+=("Could not keep ${dest%/*}/${undo} as ${keep}"); failed=true
+                    fi
                 fi
             elif [ "${new}" = 1 ] && [ -f "${base}" ] && [ "$(sha_of "${base}")" = "${sha}" ]; then
-                rm -f -- "${base}" && notes+=("Removed ${dest}")
+                if rm -f -- "${base}"; then
+                    notes+=("Removed ${dest}")
+                else
+                    notes+=("Could not remove ${dest}"); failed=true
+                fi
             fi
         done < <(tac "${JOURNAL}")
+        if "${failed}"; then
+            echo 'Error: an interrupted restore could not be recovered; its journal is kept for the next run.' >&2
+            printf '%s\n' "${notes[@]}" >&2
+            printf '%s\n' 'Recovery of an interrupted restore failed.' "${notes[@]}" | logger -t backuptool 2>/dev/null
+            cd / || :
+            return 1
+        fi
         echo 'Recovered an interrupted restore.'
         [ "${#notes[@]}" -eq 0 ] || printf '%s\n' "${notes[@]}"
-        logger -t backuptool 'Recovered an interrupted restore.' 2>/dev/null
-        enter "${CACHE}" || return 1
+        printf '%s\n' 'Recovered an interrupted restore.' "${notes[@]}" | logger -t backuptool 2>/dev/null
+        enter_state || return 1
     fi
     rm -f -- "${JOURNAL}" "${JOURNAL}.new"
+    enter "${CACHE}" || return 1
     rm -rf -- backuptool-restore.*
     cd / || return 1
 }
