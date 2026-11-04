@@ -65,9 +65,12 @@ struct level {
 	char key[24];
 	int screen; /* 0: volume, else the backlight's number */
 	int value, saved;
+	int writing; /* the value the running writer saves, -1: none */
+	int listed;  /* in system.cfg before the conversion */
 };
 static struct level levels[1 + SCREENS];
-static int savers; /* writes to system.cfg still running */
+static pid_t writer;  /* the system.cfg write running, 0: none */
+static int unmarked; /* converted levels not written yet (see migrate) */
 
 static struct {
 	struct level *level;
@@ -146,7 +149,7 @@ static struct level *find(const char *kind)
 		else
 			strcpy(l->key, "display.brightness2");
 		l->value = l->saved = read_saved(l);
-	} else if (l->value == l->saved && hold.level != l && !savers) {
+	} else if (l->value == l->saved && hold.level != l && !writer && !unmarked) {
 		/* Settled: the file is the truth (a reset or a restore may have changed it). */
 		l->value = l->saved = read_saved(l);
 	}
@@ -308,52 +311,112 @@ static void osd(const struct level *l)
 	}
 }
 
-static int store(const char *key, int number, int wait)
+/* Writes key/value pairs into system.cfg in one atomic replacement, under
+ * the same lock as set_setting. Returns the writer's pid, or -1. */
+static const char WRITER[] =
+	". \"${ARCHR_LEVELS_FUNCTIONS:-/etc/profile.d/001-functions}\" || exit 1\n"
+	"if [ ! -e \"${J_CONF}\" ]; then\n"
+	"  mkdir -p \"${J_CONF%/*}\" && cp -f /usr/config/system/configs/system.cfg \"${J_CONF}\" || exit 1\n"
+	"fi\n"
+	"pairs=() keys=\n"
+	"while [ $# -ge 2 ]; do pairs+=(\"$1=$2\"); keys=\"${keys}|${1//./\\\\.}\"; shift 2; done\n"
+	"levels_cfg() {\n"
+	"  grep -v -E \"^(${keys#|})=\" \"${J_CONF}\"\n"
+	"  [ $? -le 1 ] || return 1\n"
+	"  printf '%s\\n' \"${pairs[@]}\"\n"
+	"}\n"
+	"rewrite_config levels_cfg\n";
+
+static pid_t store(char **pairs, int count)
 {
-	char value[8];
-	snprintf(value, sizeof value, "%d", number);
-	const char *saver = getenv("ARCHR_LEVELS_SAVER");
-	char *custom[] = { (char *)saver, (char *)key, value, NULL };
-	char *system[] = { "/bin/bash", "-c", ". /etc/profile.d/001-functions && set_setting \"$1\" \"$2\"",
-			   "archr-levels", (char *)key, value, NULL };
-	char **argv = saver ? custom : system;
+	char *argv[4 + 2 * (2 + SCREENS) + 1] = { "/bin/bash", "-c", (char *)WRITER, "archr-levels" };
+	int n = 4;
+	for (int i = 0; i < count && i < 2 * (2 + SCREENS); i++)
+		argv[n++] = pairs[i];
+	argv[n] = NULL;
 	pid_t pid;
-	if (posix_spawn(&pid, argv[0], NULL, NULL, argv, environ) != 0)
-		return 0;
-	if (wait)
-		waitpid(pid, NULL, 0);
-	else
-		savers++;
-	return 1;
+	return posix_spawn(&pid, argv[0], NULL, NULL, argv, environ) ? -1 : pid;
 }
 
-static void save(struct level *l, int wait)
+/* Saves every level that changed, in one write. Before the conversion is
+ * written (unmarked) that is every level the file had, plus the mark, so
+ * the old levels are never saved alone and converted twice. A level counts
+ * as saved only once the writer succeeds; a failed write is tried again at
+ * the next settle. */
+static void flush(void)
 {
-	if (l->key[0] && l->value != l->saved && store(l->key, l->value, wait))
-		l->saved = l->value;
+	char *pairs[2 * (2 + SCREENS)], values[1 + SCREENS][8];
+	int n = 0;
+	if (writer)
+		return;
+	for (int i = 0; i <= SCREENS; i++) {
+		struct level *l = &levels[i];
+		l->writing = -1;
+		if (!l->key[0] || (unmarked ? !l->listed : l->value == l->saved))
+			continue;
+		l->writing = l->value;
+		snprintf(values[i], sizeof values[i], "%d", l->value);
+		pairs[n++] = l->key;
+		pairs[n++] = values[i];
+	}
+	if (unmarked) {
+		pairs[n++] = "levels.perceptual";
+		pairs[n++] = "1";
+	}
+	if (n && (writer = store(pairs, n)) < 0)
+		writer = 0;
+}
+
+/* The writer ended (status from waitpid): returns 1 on success. */
+static int written(int status)
+{
+	int ok = WIFEXITED(status) && !WEXITSTATUS(status);
+	for (int i = 0; i <= SCREENS; i++) {
+		if (ok && levels[i].writing >= 0)
+			levels[i].saved = levels[i].writing;
+		levels[i].writing = -1;
+	}
+	if (ok)
+		unmarked = 0;
+	writer = 0;
+	return ok;
+}
+
+/* Waits for the running write, if any. */
+static int finish(void)
+{
+	int status;
+	if (!writer)
+		return 1;
+	return waitpid(writer, &status, 0) == writer ? written(status) : (writer = 0);
 }
 
 /* Levels saved before these curves (a linear backlight, PulseAudio's cubic
- * volume percent) are converted once, so screen and sound stay as they were. */
+ * volume percent) are converted once, so screen and sound stay as they were.
+ * The converted levels and the levels.perceptual mark go out in one atomic
+ * write: an interrupted conversion leaves the old file whole. Until it is
+ * written the levels live in memory only and every settle tries again. */
 static void migrate(void)
 {
+	static const char *const kinds[] = { "volume", "brightness", "brightness2" };
 	long old;
-	if (!cfg_get("levels.perceptual", &old)) {
-		static const char *kinds[] = { "volume", "brightness", "brightness2" };
-		for (size_t i = 0; i < sizeof kinds / sizeof *kinds; i++) {
-			struct level *l = find(kinds[i]);
-			if (!cfg_get(l->key, &old))
-				continue;
-			double f = old / 100.0;
-			if (l->screen)
-				old = lround(5 + 95 * pow(f > 0.05 ? (f - 0.05) / 0.95 : 0, 1 / GAMMA));
-			else
-				old = old <= 0 ? 0 : fmax(1, lround(100 + 100 * 60 * log10(f) / VOLUME_RANGE_DB));
-			l->value = clamp(l, old);
-			save(l, 1);
-		}
-		store("levels.perceptual", 1, 1);
+	if (cfg_get("levels.perceptual", &old))
+		return;
+	for (size_t i = 0; i < sizeof kinds / sizeof *kinds; i++) {
+		struct level *l = find(kinds[i]);
+		if (!(l->listed = cfg_get(l->key, &old)))
+			continue;
+		double f = old / 100.0;
+		if (l->screen)
+			old = lround(5 + 95 * pow(f > 0.05 ? (f - 0.05) / 0.95 : 0, 1 / GAMMA));
+		else
+			old = old <= 0 ? 0 : fmax(1, lround(100 + 100 * 60 * log10(f) / VOLUME_RANGE_DB));
+		l->value = clamp(l, old);
 	}
+	unmarked = 1;
+	flush();
+	if (!finish())
+		fprintf(stderr, "archr-levels: could not save the converted levels; retrying\n");
 }
 
 /* ---- commands ---- */
@@ -495,17 +558,20 @@ static int serve(void)
 	struct sigaction sa = { .sa_handler = stop };
 	sigaction(SIGTERM, &sa, NULL);
 	sigaction(SIGINT, &sa, NULL);
-	long settle = 0;
+	long settle = unmarked ? now_ms() + SETTLE_MS : 0;
 	while (!stopping) {
 		long now = now_ms(), wake = -1;
 		if (hold.level)
 			wake = hold.next;
 		if (settle && (wake < 0 || settle < wake))
 			wake = settle;
+		if (writer && (wake < 0 || now + 100 < wake))
+			wake = now + 100; /* to collect the writer */
 		struct pollfd p = { .fd = fd, .events = POLLIN };
 		int ready = poll(&p, 1, wake < 0 ? -1 : wake > now ? (int)(wake - now) : 0);
-		while (savers && waitpid(-1, NULL, WNOHANG) > 0)
-			savers--;
+		int status;
+		if (writer && waitpid(writer, &status, WNOHANG) == writer && !written(status))
+			settle = now_ms() + SETTLE_MS;
 		now = now_ms();
 		if (ready > 0) {
 			char text[128];
@@ -528,13 +594,14 @@ static int serve(void)
 			settle = now + SETTLE_MS;
 		}
 		if (settle && now >= settle && !hold.level) {
-			for (int i = 0; i <= SCREENS; i++)
-				save(&levels[i], 0);
-			settle = 0;
+			/* A write still running: look again once it ends. */
+			settle = writer ? now + SETTLE_MS : 0;
+			flush();
 		}
 	}
-	for (int i = 0; i <= SCREENS; i++)
-		save(&levels[i], 1);
+	finish();
+	flush();
+	finish();
 	unlink(a.sun_path);
 	return 0;
 }

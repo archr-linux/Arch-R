@@ -32,21 +32,22 @@ mkdir -p "${TMP}/backlight/panel" "${TMP}/run"
 echo 255 >"${TMP}/backlight/panel/max_brightness"
 echo 0 >"${TMP}/backlight/panel/brightness"
 printf 'audio.volume=40\ndisplay.brightness=50\n' >"${TMP}/system.cfg"
-# The saver writes system.cfg as set_setting does (locked), and logs each call.
-cat >"${TMP}/save" <<STUB
-#!/bin/sh
-exec 9>"${TMP}/save.lock"
-flock 9
-grep -v "^\$1=" "${TMP}/system.cfg" >"${TMP}/cfg.new"
-echo "\$1=\$2" >>"${TMP}/cfg.new"
-mv "${TMP}/cfg.new" "${TMP}/system.cfg"
-echo "\$1=\$2" >>"${TMP}/saves"
-STUB
-chmod +x "${TMP}/save"
+# The real writer (001-functions' rewrite_config) on a temporary system.cfg;
+# each successful write is logged, and "${TMP}/fail" makes writes fail.
+cat >"${TMP}/functions" <<PROFILE
+. "${HERE}/../../../archr/profile.d/001-functions"
+J_CONF="${TMP}/system.cfg"
+J_CONF_LOCK="${TMP}/system.cfg.lock"
+eval "real_\$(declare -f rewrite_config)"
+rewrite_config() {
+  [ -e "${TMP}/fail" ] && return 1
+  real_rewrite_config "\$@" && printf '%s\n' "\${pairs[@]}" >>"${TMP}/saves"
+}
+PROFILE
 export ARCHR_LEVELS_SOCKET="${TMP}/run/archr-levels.sock"
 export ARCHR_LEVELS_CFG="${TMP}/system.cfg"
 export ARCHR_LEVELS_BACKLIGHT="${TMP}/backlight"
-export ARCHR_LEVELS_SAVER="${TMP}/save"
+export ARCHR_LEVELS_FUNCTIONS="${TMP}/functions"
 export XDG_RUNTIME_DIR="${TMP}/run"
 export PULSE_SERVER="unix:${TMP}/no-pulse"
 L="${TMP}/archr-levels"
@@ -100,6 +101,25 @@ stop
 start
 check "converted once" "$(${L} brightness)" 73
 stop
+check "marked once" "$(grep -c '^levels.perceptual=' "${TMP}/system.cfg")" 1
+
+# An interrupted conversion: the write fails (or the daemon dies first).
+# The file stays whole and old, and the next start converts it once.
+rm -f "${TMP}/saves"
+printf 'audio.volume=40\ndisplay.brightness=50\nother=1\n' >"${TMP}/system.cfg"
+touch "${TMP}/fail"
+start 2>/dev/null
+check "unwritten conversion is used" "$(${L} brightness)" 73
+check "old file intact" "$(cat "${TMP}/system.cfg")" "$(printf 'audio.volume=40\ndisplay.brightness=50\nother=1')"
+kill -9 "${DAEMON}"
+wait "${DAEMON}" 2>/dev/null
+rm -f "${ARCHR_LEVELS_SOCKET}"
+start
+check "not converted twice" "$(${L} brightness) $(${L} volume)" "73 52"
+rm -f "${TMP}/fail"
+sleep 2
+check "written by a later settle" "$(sort "${TMP}/system.cfg")" "$(printf 'audio.volume=52\ndisplay.brightness=73\nlevels.perceptual=1\nother=1')"
+stop
 rm -f "${TMP}/saves"
 printf 'audio.volume=40\ndisplay.brightness=50\nlevels.perceptual=1\n' >"${TMP}/system.cfg"
 start
@@ -118,6 +138,20 @@ check "applied at once" "$(raw)" 202
 check "not saved per step" "$(saves)" ""
 sleep 2
 check "saved when settled" "$(saves)" "$(printf 'audio.volume=0\ndisplay.brightness=90')"
+
+# A level counts as saved only once the write succeeds: a failed one is
+# tried again at the next settle.
+rm -f "${TMP}/saves"
+touch "${TMP}/fail"
+${L} brightness 80 >/dev/null
+sleep 2
+check "failed write: nothing saved" "$(saves)" ""
+rm -f "${TMP}/fail"
+sleep 2
+check "failed write: retried" "$(saves)" "display.brightness=80"
+check "failed write: file" "$(grep '^display.brightness=' "${TMP}/system.cfg")" "display.brightness=80"
+${L} brightness 90 >/dev/null
+sleep 2
 
 # A hold: one tap, then 25 %/s, faster after 950 ms; release stops it.
 rm -f "${TMP}/saves"
