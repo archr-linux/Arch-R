@@ -236,7 +236,9 @@ take_lock() {
     exec 9>>"${UPDATE_LOCK}" || fail busy "Cannot open ${UPDATE_LOCK}"
     flock -n 9 || fail busy "Another archr-update is running."
     if [ -e "${PACMAN_DB}/db.lck" ]; then
-        pgrep -x pacman >/dev/null 2>&1 && fail busy "pacman is running."
+        # pidof matches the basename: BusyBox pgrep -x compares the whole
+        # argv[0] and would miss a pacman started as /usr/bin/pacman.
+        pidof pacman >/dev/null 2>&1 && fail busy "pacman is running."
         # Left by a pacman that was killed: nothing holds it any more.
         logf "removing a stale ${PACMAN_DB}/db.lck"
         rm -f "${PACMAN_DB}/db.lck"

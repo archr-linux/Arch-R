@@ -116,8 +116,11 @@ legacy_iwd_name() {
 }
 
 # Do not wait for a stopped daemon; bound every client call, even if it stalls.
+# pidof, not "pgrep -x": iwd runs as /usr/lib/iwd and BusyBox pgrep -x
+# compares the whole argv[0], so it never matched and every call here
+# failed without running (connect then timed out as a false failure).
 iwctl() {
-  pgrep -x iwd >/dev/null || return 1
+  pidof iwd >/dev/null || return 1
   timeout -k 1 "${IWCTL_TIMEOUT:-5}" iwctl "$@"
 }
 

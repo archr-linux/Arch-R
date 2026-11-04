@@ -5,7 +5,9 @@
 . /etc/profile
 # Only while the launcher is on screen: during a game it is not running,
 # and the session starts it again (at the new output) when the game ends.
-if ! pgrep -x archr-launcher > /dev/null; then
+# pidof, not "pgrep -x": the launcher runs as /usr/bin/archr-launcher and
+# BusyBox pgrep -x compares the whole argv[0], so it never matched.
+if ! pidof archr-launcher > /dev/null; then
   exit 0
 fi
 
