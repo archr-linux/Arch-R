@@ -1,0 +1,122 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2025-present ArchR (https://github.com/archr-linux/Arch-R)
+#
+# Measures one game for the launcher's modules (archr-launcher
+# docs/modulos.md, API 3), without MangoHud and for every emulator: once a
+# second, how busy the emulator's busiest thread was. An emulator ahead of
+# the game's pace waits for vsync or audio; one that cannot keep up stays
+# busy. runemu.sh --measure starts it with the game and stops it with
+# SIGTERM; it then publishes a short summary:
+#   {"started": s, "cpu_max_khz": k, "seconds": n, "busy_p95": %,
+#    "limit_seconds": n, "current_ma": mA or null}
+# The first WARMUP seconds (loading, menus) do not count; the emulator is the
+# process that used the most CPU in them.
+
+OUT=${ARCHR_PERF_OUT:-/run/archr/perf-last.json}
+PROC=${ARCHR_PROC:-/proc}
+CPUFREQ=${CPUFREQ:-/sys/devices/system/cpu/cpufreq}
+BATTERY=${ARCHR_BATTERY:-/sys/class/power_supply/battery}
+WARMUP=${ARCHR_PERF_WARMUP:-30}
+# A thread this busy (%) for a second could not keep the pace.
+LIMIT=92
+HZ=$(getconf CLK_TCK 2>/dev/null || echo 100)
+
+STARTED=$(date +%s)
+read -r CAP 2>/dev/null <"${CPUFREQ}/policy0/scaling_max_freq"
+SAMPLES=()
+MA_SUM=0
+MA_COUNT=0
+
+# CPU ticks (user + system) of one /proc stat file; the name may hold spaces
+# and parentheses, the fields after its last ") " never do.
+ticks() {
+  local line
+  read -r line 2>/dev/null <"$1" || return 1
+  # shellcheck disable=SC2086
+  set -- ${line##*) }
+  echo $((${12} + ${13}))
+}
+# Every process's ticks, as "pid ticks" lines.
+processes() {
+  local stat
+  for stat in "${PROC}"/[0-9]*/stat; do
+    local pid=${stat%/stat}
+    pid=${pid##*/}
+    [ "${pid}" = $$ ] && continue
+    echo "${pid} $(ticks "${stat}" || echo 0)"
+  done
+}
+
+publish() {
+  local p95=0 limited=0 seconds=${#SAMPLES[@]} current=null
+  if [ "${seconds}" -gt 0 ]; then
+    local sorted
+    mapfile -t sorted < <(printf '%s\n' "${SAMPLES[@]}" | sort -n)
+    p95=${sorted[$(((seconds * 95 + 99) / 100 - 1))]}
+    for busy in "${SAMPLES[@]}"; do
+      [ "${busy}" -ge "${LIMIT}" ] && limited=$((limited + 1))
+    done
+  fi
+  [ "${MA_COUNT}" -gt 0 ] && current=$((MA_SUM / MA_COUNT))
+  mkdir -p "${OUT%/*}"
+  printf '{"started":%s,"cpu_max_khz":%s,"seconds":%s,"busy_p95":%s,"limit_seconds":%s,"current_ma":%s}\n' \
+    "${STARTED}" "${CAP:-0}" "${seconds}" "${p95}" "${limited}" "${current}" >"${OUT}.tmp" &&
+    mv -f "${OUT}.tmp" "${OUT}"
+  exit 0
+}
+trap publish TERM INT
+
+# A sleep the TERM trap interrupts at once.
+pause() {
+  sleep "$1" &
+  wait $!
+}
+
+declare -A before
+while read -r pid count; do before[${pid}]=${count}; done < <(processes)
+pause "${WARMUP}"
+EMULATOR="" MOST=-1
+while read -r pid count; do
+  used=$((count - ${before[${pid}]:-0}))
+  if [ "${used}" -gt "${MOST}" ]; then
+    MOST=${used}
+    EMULATOR=${pid}
+  fi
+done < <(processes)
+unset before
+
+declare -A last
+LAST_US=""
+while :; do
+  now_us=${EPOCHREALTIME//[.,]/}
+  busiest=0
+  declare -A seen=()
+  for stat in "${PROC}/${EMULATOR}"/task/[0-9]*/stat; do
+    tid=${stat%/stat}
+    tid=${tid##*/}
+    count=$(ticks "${stat}") || continue
+    seen[${tid}]=${count}
+    if [ -n "${LAST_US}" ] && [ -n "${last[${tid}]}" ]; then
+      busy=$(((count - last[${tid}]) * 100000000 / (HZ * (now_us - LAST_US))))
+      [ "${busy}" -gt "${busiest}" ] && busiest=${busy}
+    fi
+  done
+  if [ -n "${LAST_US}" ] && [ "${#seen[@]}" -gt 0 ]; then
+    [ "${busiest}" -gt 100 ] && busiest=100
+    SAMPLES+=("${busiest}")
+    status="" current=""
+    read -r status 2>/dev/null <"${BATTERY}/status"
+    read -r current 2>/dev/null <"${BATTERY}/current_avg" ||
+      read -r current 2>/dev/null <"${BATTERY}/current_now"
+    if [ "${status}" = Discharging ] && [[ "${current}" =~ ^-?[0-9]+$ ]]; then
+      MA_SUM=$((MA_SUM + ${current#-} / 1000))
+      MA_COUNT=$((MA_COUNT + 1))
+    fi
+  fi
+  last=()
+  for tid in "${!seen[@]}"; do last[${tid}]=${seen[${tid}]}; done
+  unset seen
+  LAST_US=${now_us}
+  pause 1
+done

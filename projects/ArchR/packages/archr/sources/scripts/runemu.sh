@@ -27,6 +27,7 @@ performance
 #   -P<platform> --core=<core> --emulator=<emulator> --controllers=<string>
 #   --governor=<performance|ondemand|schedutil|powersave> (this launch only)
 #   --cpu-max=<kHz>  CPU ceiling of this launch only, one of the CPU's own
+#   --measure        archr-perf-probe measures the run for launcher modules
 #   --entryslot=<0..999|auto>  RetroArch: start from this save state slot
 #   --entrystate=<file>        standalone emulators: start from this state
 #   -state_slot N  -autosave N  -state_file FILE (ignored)
@@ -50,6 +51,7 @@ NETPLAY_SESSION_NICK=""
 NETPLAY_SESSION_SPECTATE=0
 GOVERNOR_OVERRIDE=""
 CPU_MAX_OVERRIDE=""
+MEASURE=0
 ENTRYSLOT=""
 ENTRYSTATE=""
 NETPLAY_SESSION_MITM=""
@@ -63,6 +65,7 @@ for ((i = 1; i < ${#ARGV[@]}; i++)); do
     --controllers=*) CONTROLLERCONFIG="${ARG#*=}" ;;
     --governor=*) GOVERNOR_OVERRIDE="${ARG#*=}" ;;
     --cpu-max=*) CPU_MAX_OVERRIDE="${ARG#*=}" ;;
+    --measure) MEASURE=1 ;;
     --entryslot=*) ENTRYSLOT="${ARG#*=}" ;;
     --entrystate=*) ENTRYSTATE="${ARG#*=}" ;;
     --connect=*) NETPLAY_SESSION_MODE="client"; NETPLAY_SESSION_HOST="${ARG#*=}" ;;
@@ -643,12 +646,23 @@ if [[ "${ROMNAME}" == *".sh" ]] && [ ! "${PLATFORM}" = "ports" ] && [ ! "${PLATF
         ret_error=$?
 else
         ${VERBOSE} && log $0 "Executing $(eval echo ${RUNTHIS})"
+        # A launcher module learns from this run: measured under its ceiling.
+        PERF_PROBE=""
+        if [ "${MEASURE}" = 1 ]; then
+          archr-perf-probe &
+          # shellcheck disable=SC2128 # $! is the probe's pid
+          PERF_PROBE=$!
+        fi
         # Launch the emulator at high priority: with the full-preempt
         # kernel this keeps frame pacing stable when background work
         # (udev, journald, wifi) wakes up mid-frame. Same value dArkOS
         # uses for its emulators.
         eval nice -n -19 ${RUNTHIS} &>>${OUTPUT_LOG}
         ret_error=$?
+        if [ -n "${PERF_PROBE}" ]; then
+          kill -TERM "${PERF_PROBE}" 2>/dev/null
+          wait "${PERF_PROBE}" 2>/dev/null
+        fi
 fi
 
 ### Switch back to performance mode to clean up
