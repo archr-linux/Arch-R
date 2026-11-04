@@ -152,7 +152,7 @@ STAMP=$(date +%Y-%m-%d_%H-%M-%S) || exit 1
 # exFAT ROMs card, and is released by the kernel even after a crash.
 take_lock() {
     local error
-    if ! { mkdir -p /storage/.cache && exec 9>/storage/.cache/backuptool.lock; }
+    if ! { mkdir -p /storage/.cache && enter /storage/.cache && exec 9>backuptool.lock; }
     then
         echo 'Error: cannot open the backup lock.' >&2
         exit 1
@@ -166,6 +166,7 @@ take_lock() {
         fi
         exit 1
     fi
+    cd / || exit 1
 }
 
 # Emit regular files only. No traversal through system-managed symlinks and no
@@ -441,11 +442,23 @@ resume_services() {
     [ "${#PAUSED[@]}" -eq 0 ] || systemctl start "${PAUSED[@]}"
 }
 
+# USB file transfer (MTP) lets a PC write to /storage. Its daemon belongs to
+# the usbgadget mode the user chose, so restore asks instead of stopping it.
+mtp_active() {
+    pidof umtprd >/dev/null 2>&1 || [ -d /dev/ffs-umtp ]
+}
+
 # Enter directory $1 and require it to be exactly that path, reached with
 # no symlink. Relative names then resolve inside this directory even if a
 # component of its path is swapped later, so writes stay on its filesystem.
 enter() {
     cd -P -- "$1" 2>/dev/null && [ "$(pwd -P)" = "$1" ]
+}
+
+sha_of() {
+    local sum
+    sum=$(sha256sum -- "$1") || return 1
+    echo "${sum%% *}"
 }
 
 # Create the missing directories of $1 one level at a time, each inside its
@@ -465,33 +478,117 @@ make_dirs() {
     done
 }
 
+# The journal lists every planned rename, "new sha dest temp undo" with tabs,
+# so that the run after a crash or SIGKILL can undo an unfinished restore.
+# A last line "COMMITTED" means the restore finished: only cleanup is left.
+CACHE="/storage/.cache"
+JOURNAL="backuptool.journal"
+write_journal() {
+    local index
+    enter "${CACHE}" || return 1
+    for index in "${!P_DEST[@]}"; do
+        printf '%s\t%s\t%s\t%s\t%s\n' "${P_NEW[index]}" "${P_SHA[index]}" \
+            "${P_DEST[index]}" "${P_TEMP[index]}" "${P_UNDO[index]}"
+    done >"${JOURNAL}.new" || return 1
+    [ -z "$1" ] || echo "$1" >>"${JOURNAL}.new" || return 1
+    sync -- "${JOURNAL}.new" 2>/dev/null
+    mv -fT -- "${JOURNAL}.new" "${JOURNAL}"
+}
+drop_journal() {
+    enter "${CACHE}" && rm -f -- "${JOURNAL}" "${JOURNAL}.new"
+}
+
+# First thing of every run: finish what a killed restore left. Unfinished,
+# it is undone; a file the user changed since keeps its new content and the
+# file it replaced is kept beside it. Orphan staging folders go.
+recover() {
+    local new sha dest temp undo base keep committed=false
+    local -a notes=()
+    if ! { mkdir -p "${CACHE}" && enter "${CACHE}"; }; then
+        echo "Error: ${CACHE} is not a real folder." >&2
+        return 1
+    fi
+    if [ -f "${JOURNAL}" ]; then
+        grep -qx COMMITTED "${JOURNAL}" && committed=true
+        while IFS=$'\t' read -r new sha dest temp undo; do
+            [ "${new}" != COMMITTED ] || continue
+            if ! enter "${dest%/*}"; then
+                notes+=("Could not recover ${dest}: its folder changed.")
+                continue
+            fi
+            base="${dest##*/}"
+            rm -f -- "${temp}"
+            if "${committed}"; then
+                rm -f -- "${undo}"
+            elif [ -n "${undo}" ] && [ -e "${undo}" ]; then
+                if [ ! -e "${base}" ] || [ "$(sha_of "${base}")" = "${sha}" ]; then
+                    mv -fT -- "${undo}" "${base}" && notes+=("Put back ${dest}")
+                else
+                    keep="${base}.pre-restore-${STAMP}"
+                    mv -fT -- "${undo}" "${keep}" && notes+=("Kept ${dest}; the file it replaced is ${dest%/*}/${keep}")
+                fi
+            elif [ "${new}" = 1 ] && [ -f "${base}" ] && [ "$(sha_of "${base}")" = "${sha}" ]; then
+                rm -f -- "${base}" && notes+=("Removed ${dest}")
+            fi
+        done < <(tac "${JOURNAL}")
+        echo 'Recovered an interrupted restore.'
+        [ "${#notes[@]}" -eq 0 ] || printf '%s\n' "${notes[@]}"
+        logger -t backuptool 'Recovered an interrupted restore.' 2>/dev/null
+        enter "${CACHE}" || return 1
+    fi
+    rm -f -- "${JOURNAL}" "${JOURNAL}.new"
+    rm -rf -- backuptool-restore.*
+    cd / || return 1
+}
+
 # Each planned file: staged source, final path, backed-up mtime ("" if
-# unknown), whether the path is new, and how far the transaction got.
-P_SRC=() P_DEST=() P_MTIME=() P_NEW=() P_STATE=() CREATED=()
+# unknown), whether the path is new, the sha256 of the new content, the
+# temporary and undo names, the device file's sha256 and mtime when it was
+# planned, and how far the transaction got.
+P_SRC=() P_DEST=() P_MTIME=() P_NEW=() P_SHA=() P_TEMP=() P_UNDO=()
+P_DSHA=() P_DMTIME=() P_BESIDE=() P_STATE=() CREATED=()
 COMMITTED=false
 plan() {
-    P_SRC+=("$1") P_DEST+=("$2") P_MTIME+=("$3") P_NEW+=("$4")
+    local index="${#P_DEST[@]}" base="${2##*/}"
+    P_SRC+=("$1") P_DEST+=("$2") P_MTIME+=("$3") P_NEW+=("$4") P_BESIDE+=("${5:-0}")
+    P_SHA+=("$(sha_of "$1")") || return 1
+    P_TEMP+=(".${base}.restore-$$")
+    P_UNDO+=("")
+    P_DSHA+=("") P_DMTIME+=("")
+    if [ "$4" = 0 ]; then
+        P_UNDO[index]=".${base}.undo-$$"
+        P_DSHA[index]=$(sha_of "$2") || return 1
+        P_DMTIME[index]=$(stat -c %Y -- "$2") || return 1
+    fi
 }
-temp_of() { local base="${P_DEST[$1]##*/}"; echo ".${base}.restore-$$"; }
-undo_of() { local base="${P_DEST[$1]##*/}"; echo ".${base}.undo-$$"; }
+
+# The device file $1 (relative) is still what was planned for item $2.
+unchanged() {
+    [ -f "$1" ] && [ ! -L "$1" ] &&
+        [ "$(stat -c %Y -- "$1")" = "${P_DMTIME[$2]}" ] &&
+        [ "$(sha_of "$1")" = "${P_DSHA[$2]}" ]
+}
 
 # Undo every step taken, newest first, from what is on disk: a file moved
-# aside comes back, a new file goes, temporaries go.
+# aside comes back, a new file placed goes, temporaries go.
+ROLLBACK_FAILED=false
 rollback() {
-    local index base temp undo
+    local index base
     for ((index = ${#P_STATE[@]} - 1; index >= 0; index--)); do
         [ -n "${P_STATE[index]}" ] || continue
-        base="${P_DEST[index]##*/}" temp=$(temp_of "${index}") undo=$(undo_of "${index}")
+        base="${P_DEST[index]##*/}"
         if ! enter "${P_DEST[index]%/*}"; then
             echo "Cannot roll back ${P_DEST[index]}: its folder changed." >&2
+            ROLLBACK_FAILED=true
             continue
         fi
-        if [ -e "${undo}" ]; then
-            mv -fT -- "${undo}" "${base}"
-        elif [ "${P_STATE[index]}" = committing ] && [ "${P_NEW[index]}" = 1 ] && [ ! -e "${temp}" ]; then
-            rm -f -- "${base}"
+        if [ -n "${P_UNDO[index]}" ] && [ -e "${P_UNDO[index]}" ]; then
+            mv -fT -- "${P_UNDO[index]}" "${base}" || ROLLBACK_FAILED=true
+        elif [ "${P_NEW[index]}" = 1 ] && [ ! -e "${P_TEMP[index]}" ] &&
+             { [ "${P_STATE[index]}" = committing ] || [ "${P_STATE[index]}" = placed ]; }; then
+            rm -f -- "${base}" || ROLLBACK_FAILED=true
         fi
-        rm -f -- "${temp}"
+        rm -f -- "${P_TEMP[index]}"
     done
     for ((index = ${#CREATED[@]} - 1; index >= 0; index--)); do
         rmdir -- "${CREATED[index]}" 2>/dev/null
@@ -500,8 +597,33 @@ rollback() {
 
 abort() {
     echo "$1" >&2
-    echo 'Restore failed; nothing was changed.' >&2
     exit 1
+}
+
+# Runs on every exit of a restore: an unfinished restore is rolled back,
+# the staging folder goes, the services come back.
+STAGE="" STAGENAME="" STAGEFD=""
+finish_restore() {
+    trap '' HUP INT TERM
+    if ! "${COMMITTED}" && [ "${#P_STATE[@]}" -gt 0 ]; then
+        rollback
+        if "${ROLLBACK_FAILED}"; then
+            echo 'Restore failed; some changes could not be rolled back (see above).' >&2
+        else
+            echo 'Restore failed; every change was rolled back.' >&2
+        fi
+    fi
+    "${ROLLBACK_FAILED}" || drop_journal
+    if [ -n "${STAGENAME}" ]; then
+        if enter "${CACHE}"; then
+            rm -rf -- "${STAGENAME}"
+        else
+            find "${STAGE}/" -mindepth 1 -delete
+        fi
+        exec {STAGEFD}<&-
+    fi
+    cd / || :
+    resume_services
 }
 
 # Free space for the files that must be copied to another filesystem; a
@@ -529,22 +651,42 @@ check_space() {
     done
 }
 
+# A device file that changed after planning keeps its place: item $1 is
+# placed beside it instead, as a new file.
+divert() {
+    local keep="${P_DEST[$1]}.backup-${STAMP}"
+    [ ! -e "${keep}" ] || keep="${keep}-$$"
+    NOTES+=("Kept ${P_DEST[$1]}, changed during the restore; the backup's copy is ${keep}")
+    if [ "${P_BESIDE[$1]}" != 1 ]; then
+        KEPT=$((KEPT + 1)) RESTORED=$((RESTORED - 1))
+    fi
+    P_DEST[$1]="${keep}" P_NEW[$1]=1 P_UNDO[$1]="" P_BESIDE[$1]=1
+}
+
 restore() {
-    local member src dest mtime index keep base temp restored=0 kept=0 report
-    local -a real=() bad=() notes=() dests=() members=()
+    local member src dest mtime index base keep report
+    local -a real=() bad=() dests=() members=()
     take_lock
+    recover || exit 1
     [ -f "${BACKUPFILE}" ] || { echo "No backup at ${BACKUPFILE}." >&2; exit 1; }
-    STAGE=""
-    trap 'trap "" HUP INT TERM
-        "${COMMITTED}" || rollback
-        cd /
-        [ -z "${STAGE}" ] || rm -rf "${STAGE}"
-        resume_services' EXIT
+    if mtp_active; then
+        echo 'USB file transfer (MTP) is on. Turn it off, then restore the backup.' >&2
+        logger -t backuptool 'Restore refused: MTP is on.' 2>/dev/null
+        exit 1
+    fi
+    RESTORED=0 KEPT=0 NOTES=()
+    trap finish_restore EXIT
     trap 'exit 1' HUP INT TERM
     pause_services || exit 1
     # Stage on /storage itself, so most promotions are renames on one disk.
-    STAGE=$(mktemp -d /storage/.cache/backuptool-restore.XXXXXX) || exit 1
-    enter "${STAGE}" || abort "Unsafe staging folder ${STAGE}."
+    # The folder is created inside a checked .cache and then used through
+    # an open descriptor: swapping .cache for a symlink cannot move it.
+    enter "${CACHE}" || abort "${CACHE} is not a real folder."
+    STAGENAME=$(mktemp -d backuptool-restore.XXXXXX) || exit 1
+    exec {STAGEFD}<"${STAGENAME}" || exit 1
+    STAGE="/proc/$$/fd/${STAGEFD}"
+    [ "$(readlink "${STAGE}")" = "${CACHE}/${STAGENAME}" ] || abort 'Unsafe staging folder.'
+    cd / || exit 1
     verify_archive "${BACKUPFILE}" "${STAGE}" "" || exit 1
 
     while IFS= read -r member; do
@@ -568,7 +710,7 @@ restore() {
     done
     if [ "${#bad[@]}" -gt 0 ]; then
         printf 'Unsafe destination (symlink or not a file): %s\n' "${bad[@]}" >&2
-        abort 'Refusing backup.'
+        abort 'Refusing backup: nothing was restored.'
     fi
     # Current Wi-Fi credentials stay unless the user restores Wi-Fi as well.
     if [ "${2}" != "--with-wifi" ] && [ -f "${STAGE}/root/${SYSTEM_CFG}" ]; then
@@ -586,70 +728,87 @@ restore() {
         member="${members[index]}" dest="${dests[index]}"
         src="${STAGE}/root/${member}" mtime="${MTIMES[${member}]}"
         if [ ! -e "${dest}" ]; then
-            plan "${src}" "${dest}" "${mtime}" 1
-            restored=$((restored + 1))
+            plan "${src}" "${dest}" "${mtime}" 1 || exit 1
+            RESTORED=$((RESTORED + 1))
             continue
         fi
         cmp -s -- "${dest}" "${src}" && continue
         if is_save "${dest}"; then
             if [ -n "${mtime}" ] && [ "$(stat -c %Y -- "${dest}")" -lt "${mtime}" ]; then
-                plan "${src}" "${dest}" "${mtime}" 0
-                restored=$((restored + 1))
+                plan "${src}" "${dest}" "${mtime}" 0 || exit 1
+                RESTORED=$((RESTORED + 1))
                 continue
             fi
         elif "${VERIFIED}"; then
-            plan "${src}" "${dest}" "${mtime}" 0
-            restored=$((restored + 1))
+            plan "${src}" "${dest}" "${mtime}" 0 || exit 1
+            RESTORED=$((RESTORED + 1))
             continue
         fi
         keep="${dest}.backup-${STAMP}"
         [ ! -e "${keep}" ] || keep="${keep}-$$"
-        plan "${src}" "${keep}" "${mtime}" 1
-        kept=$((kept + 1))
-        notes+=("Kept ${dest}; the backup's copy is ${keep}")
+        plan "${src}" "${keep}" "${mtime}" 1 1 || exit 1
+        KEPT=$((KEPT + 1))
+        NOTES+=("Kept ${dest}; the backup's copy is ${keep}")
     done
-    check_space || abort 'Refusing to start the restore.'
+    check_space || abort 'Refusing to start the restore: nothing was changed.'
+    write_journal || abort 'Cannot write the restore journal.'
 
     # Phase 1: every file waits as a temporary next to its destination, on
     # the destination's filesystem. A failure here leaves nothing changed.
     for index in "${!P_DEST[@]}"; do
-        dest="${P_DEST[index]}" temp=$(temp_of "${index}")
+        dest="${P_DEST[index]}"
         { make_dirs "${dest%/*}" && enter "${dest%/*}"; } || abort "Unsafe folder for ${dest}."
         P_STATE[index]=staging
-        mv -fT -- "${P_SRC[index]}" "${temp}" || abort "Cannot write ${dest}."
+        mv -fT -- "${P_SRC[index]}" "${P_TEMP[index]}" || abort "Cannot write ${dest}."
         if [ -n "${P_MTIME[index]}" ]; then
-            touch -m -d "@${P_MTIME[index]}" -- "${temp}" || abort "Cannot write ${dest}."
+            touch -m -d "@${P_MTIME[index]}" -- "${P_TEMP[index]}" || abort "Cannot write ${dest}."
         fi
         P_STATE[index]=staged
     done
-    # Phase 2: renames only. The old file moves aside first so that a
-    # failure or a signal can put it back.
+    # Phase 2: renames only. Right before each one the device file must
+    # still be what was planned; if a game or a user wrote it meanwhile it
+    # stays, and the backup's copy goes beside it. The old file moves aside
+    # first, so that a failure or a signal can put it back.
     for index in "${!P_DEST[@]}"; do
-        dest="${P_DEST[index]}" base="${P_DEST[index]##*/}" temp=$(temp_of "${index}")
+        dest="${P_DEST[index]}" base="${P_DEST[index]##*/}"
         enter "${dest%/*}" || abort "Unsafe folder for ${dest}."
+        if [ "${P_NEW[index]}" = 0 ] && ! unchanged "${base}" "${index}"; then
+            divert "${index}"
+            dest="${P_DEST[index]}" base="${P_DEST[index]##*/}"
+        fi
         if [ "${P_NEW[index]}" = 1 ]; then
-            { [ ! -e "${base}" ] && [ ! -L "${base}" ]; } || abort "${dest} appeared during the restore."
+            if [ -e "${base}" ] || [ -L "${base}" ]; then
+                divert "${index}"
+                dest="${P_DEST[index]}" base="${P_DEST[index]##*/}"
+            fi
             P_STATE[index]=committing
         else
-            { [ -f "${base}" ] && [ ! -L "${base}" ]; } || abort "${dest} changed during the restore."
             P_STATE[index]=committing
-            mv -fT -- "${base}" "$(undo_of "${index}")" || abort "Cannot replace ${dest}."
+            mv -fT -- "${base}" "${P_UNDO[index]}" || abort "Cannot replace ${dest}."
+            # Written between the check and the rename: put it back.
+            if ! unchanged "${P_UNDO[index]}" "${index}"; then
+                mv -fT -- "${P_UNDO[index]}" "${base}" || abort "Cannot replace ${dest}."
+                divert "${index}"
+                dest="${P_DEST[index]}" base="${P_DEST[index]##*/}"
+            fi
         fi
-        mv -fT -- "${temp}" "${base}" || abort "Cannot replace ${dest}."
+        mv -fT -- "${P_TEMP[index]}" "${base}" || abort "Cannot replace ${dest}."
         P_STATE[index]=placed
     done
     COMMITTED=true
+    write_journal COMMITTED || :
     for index in "${!P_DEST[@]}"; do
-        [ "${P_NEW[index]}" = 1 ] || { enter "${P_DEST[index]%/*}" && rm -f -- "$(undo_of "${index}")"; }
+        [ -z "${P_UNDO[index]}" ] || { enter "${P_DEST[index]%/*}" && rm -f -- "${P_UNDO[index]}"; }
     done
+    drop_journal
     cd / || exit 1
 
-    echo "Restored ${restored} files; kept ${kept} device files that differ, with the backup's copy beside them."
-    if [ "${#notes[@]}" -gt 0 ]; then
+    echo "Restored ${RESTORED} files; kept ${KEPT} device files that differ, with the backup's copy beside them."
+    if [ "${#NOTES[@]}" -gt 0 ]; then
         report="${BACKUPFOLDER}/${OS_NAME}_RESTORE-${STAMP}.log"
         [ ! -e "${report}" ] || report="${BACKUPFOLDER}/${OS_NAME}_RESTORE-${STAMP}-$$.log"
-        printf '%s\n' "${notes[@]}" | tee "${report}"
-        printf '%s\n' "${notes[@]}" | logger -t backuptool 2>/dev/null
+        printf '%s\n' "${NOTES[@]}" | tee "${report}"
+        printf '%s\n' "${NOTES[@]}" | logger -t backuptool 2>/dev/null
     fi
     return 0
 }
@@ -657,6 +816,7 @@ restore() {
 backup() {
     local bytes names cfgsize required available
     take_lock
+    recover || exit 1
     WORKDIR="" ARCHIVEFILENAME=""
     trap '[ -z "${WORKDIR}" ] || rm -rf "${WORKDIR}"
         if [ -n "${ARCHIVEFILENAME}" ] && [ ! -f "${BACKUPFILE}" ]; then

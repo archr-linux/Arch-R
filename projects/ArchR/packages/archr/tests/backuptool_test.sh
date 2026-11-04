@@ -373,8 +373,13 @@ check test "$(find "${TMP}/outside" -mindepth 1 | wc -l)" = 0
 check test "$(cat "${GBA}-original/Game.sav")" = current
 rm "${GBA}" "${TMP}/swapped" "${TMP}/bin/mv"
 /usr/bin/mv "${GBA}-original" "${GBA}"
-# What the attack strands is a hidden temporary inside /storage.
-find "${GBA}" -name '.*.restore-*' -delete
+# The attack strands a hidden temporary inside /storage and the journal;
+# the next run cleans both up.
+check test -f "${ROOT}/storage/.cache/backuptool.journal"
+run backup >"${TMP}/after-toctou.log" 2>&1
+check grep -q 'Recovered an interrupted restore' "${TMP}/after-toctou.log"
+check test "$(find "${GBA}" -name '.*.restore-*' | wc -l)" = 0
+cp "${GOOD}" "${ZIP}"
 untouched
 
 # Restore runs in two phases and rolls back. Phase 1 failing (ENOSPC on the
@@ -392,7 +397,7 @@ exec /usr/bin/mv "$@"
 EOF
 chmod +x "${TMP}/bin/mv"
 EXTRA="${TMP}/bin" fails restore >"${TMP}/enospc.log" 2>&1
-check grep -q 'nothing was changed' "${TMP}/enospc.log"
+check grep -q 'every change was rolled back' "${TMP}/enospc.log"
 untouched
 leftovers
 # SIGTERM between two renames of phase 2: the first file is put back.
@@ -410,6 +415,143 @@ check test "$(cat "${SAVE}")" = current
 check test "$(cat "${CFG}")" = 'changed setting'
 check grep -qx 'start smbd syncthing' <(tail -n 1 "${TMP}/sys/log")
 rm "${TMP}/bin/mv"
+# Each case below starts from the same device: an old save, a changed
+# setting, the good backup, and nothing left from earlier runs.
+reset_device() {
+  rm -f "${TMP}/bin/mv" "${TMP}/bin/unzip" "${TMP}/bin/pidof"
+  find "${ROOT}/storage" \( -name '*.backup-*' -o -name '.*.restore-*' -o -name '.*.undo-*' \
+    -o -name '*.pre-restore-*' \) -delete
+  rm -rf "${ROOT}"/storage/.cache/backuptool-restore.* "${ROOT}/storage/.cache/backuptool.journal" \
+    "${ROOT}"/storage/roms/backup/ArchR_RESTORE-*.log
+  printf 'current\n' >"${SAVE}"
+  touch -d '2001-01-01' "${SAVE}"
+  printf 'changed setting\n' >"${CFG}"
+  cp "${GOOD}" "${ZIP}"
+  snapshot "${TMP}/before"
+}
+# A file new on the device, already placed, goes away when a later rename
+# fails or a signal arrives. Here the setting is new and the save is next.
+reset_device
+CFGSAVED="${TMP}/cfg.saved"
+/usr/bin/mv "${CFG}" "${CFGSAVED}"
+snapshot "${TMP}/before"
+cat >"${TMP}/bin/mv" <<'EOF'
+#!/bin/bash
+case "$*" in
+  *" .Game.sav.restore-"*" Game.sav"|*"/.Game.sav.restore-"*" "*/Game.sav) echo 'simulated EIO in phase 2' >&2; exit 1 ;;
+esac
+exec /usr/bin/mv "$@"
+EOF
+chmod +x "${TMP}/bin/mv"
+EXTRA="${TMP}/bin" fails restore >"${TMP}/rollback-new.log" 2>&1
+check test ! -e "${CFG}"
+untouched
+leftovers
+cat >"${TMP}/bin/mv" <<'EOF'
+#!/bin/bash
+/usr/bin/mv "$@" || exit
+case "$*" in
+  *" .retroarch.cfg.restore-"*" retroarch.cfg"|*"/.retroarch.cfg.restore-"*" "*/retroarch.cfg) kill -TERM "$PPID" ;;
+esac
+EOF
+chmod +x "${TMP}/bin/mv"
+EXTRA="${TMP}/bin" fails restore >"${TMP}/term-new.log" 2>&1
+check test ! -e "${CFG}"
+untouched
+leftovers
+/usr/bin/mv "${CFGSAVED}" "${CFG}"
+
+# A save written by a game between planning and its rename stays; the
+# backup's copy goes beside it.
+reset_device
+cat >"${TMP}/bin/mv" <<EOF
+#!/bin/bash
+case "\$*" in
+  *roms/gba/Game.sav*)
+    [ -e "${TMP}/wrote" ] || { touch "${TMP}/wrote"; printf 'saved during the restore\n' >"${SAVE}"; } ;;
+esac
+exec /usr/bin/mv "\$@"
+EOF
+chmod +x "${TMP}/bin/mv"
+EXTRA="${TMP}/bin" run restore >"${TMP}/concurrent.log" 2>&1
+check test -e "${TMP}/wrote"
+check test "$(cat "${SAVE}")" = 'saved during the restore'
+check test "$(cat "${SAVE}".backup-*)" = storage/roms/gba/Game.sav
+check grep -q 'changed during the restore' "${TMP}/concurrent.log"
+leftovers
+rm -f "${TMP}/wrote"
+
+# SIGKILL between moving the old save aside and putting the new one in
+# place: no trap runs, so the next run starts by recovering from the journal.
+reset_device
+cat >"${TMP}/bin/mv" <<'EOF'
+#!/bin/bash
+/usr/bin/mv "$@" || exit
+case "$*" in
+  *" Game.sav .Game.sav.undo-"*|*"/Game.sav "*"/.Game.sav.undo-"*) kill -9 "$PPID" ;;
+esac
+EOF
+chmod +x "${TMP}/bin/mv"
+EXTRA="${TMP}/bin" fails restore >"${TMP}/sigkill.log" 2>&1
+check test ! -e "${SAVE}"
+check test "$(find "${ROOT}/storage/.cache" -maxdepth 1 -name 'backuptool-restore.*' | wc -l)" = 1
+rm "${TMP}/bin/mv"
+run backup >"${TMP}/after-kill.log" 2>&1
+check grep -q 'Recovered an interrupted restore' "${TMP}/after-kill.log"
+check test "$(cat "${SAVE}")" = current
+check test "$(cat "${CFG}")" = 'changed setting'
+check test ! -e "${ROOT}/storage/.cache/backuptool.journal"
+cp "${GOOD}" "${ZIP}"
+untouched
+leftovers
+
+# USB file transfer (MTP) lets a PC write to /storage: restore refuses.
+reset_device
+cat >"${TMP}/bin/pidof" <<'EOF'
+#!/bin/sh
+[ "$1" = umtprd ] && echo 4242
+EOF
+chmod +x "${TMP}/bin/pidof"
+EXTRA="${TMP}/bin" fails restore >"${TMP}/mtp.log" 2>&1
+check grep -q 'MTP' "${TMP}/mtp.log"
+untouched
+rm "${TMP}/bin/pidof"
+
+# .cache swapped for a symlink while the archive is unpacked: the staging
+# folder is held open, so nothing is written outside /storage.
+reset_device
+UNDER=/usr/bin/unzip
+[ "${MODE}" = infozip ] || UNDER="${BUSYBOX} unzip"
+CACHEDIR="${ROOT}/storage/.cache"
+mkdir -p "${TMP}/outside2"
+cat >"${TMP}/bin/unzip" <<EOF
+#!/bin/bash
+for arg; do
+  if [ "\$prev" = -d ] && [ ! -e "${TMP}/cache-swapped" ]; then
+    touch "${TMP}/cache-swapped"
+    case "\$arg" in */backuptool-restore.*) mkdir -p "${TMP}/outside2/\${arg#*/.cache/}" ;; esac
+    /usr/bin/mv "${CACHEDIR}" "${CACHEDIR}-original"
+    ln -s "${TMP}/outside2" "${CACHEDIR}"
+  fi
+  prev=\$arg
+done
+${UNDER} "\$@"
+rc=\$?
+# The cleanup could delete them afterwards: record what landed outside.
+find "${TMP}/outside2" -type f >>"${TMP}/outside2.seen"
+exit \$rc
+EOF
+chmod +x "${TMP}/bin/unzip"
+EXTRA="${TMP}/bin" fails restore >"${TMP}/staging-swap.log" 2>&1
+check test -e "${TMP}/cache-swapped"
+check test "$(find "${TMP}/outside2" -type f | wc -l)" = 0
+check test ! -s "${TMP}/outside2.seen"
+rm "${CACHEDIR}" "${TMP}/bin/unzip" "${TMP}/cache-swapped"
+/usr/bin/mv "${CACHEDIR}-original" "${CACHEDIR}"
+run backup >"${TMP}/after-swap.log" 2>&1
+cp "${GOOD}" "${ZIP}"
+untouched
+leftovers
 # Free space is checked before anything is unpacked.
 cat >"${TMP}/bin/df" <<'EOF'
 #!/bin/sh
