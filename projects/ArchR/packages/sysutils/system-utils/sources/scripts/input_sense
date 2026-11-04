@@ -39,7 +39,7 @@ set -o pipefail
 #   hotkey.switcher.enabled=1           0.6 s (FN on the R36S: not in the SDL
 #                                       pad mapping; mupen64plus only uses it
 #                                       as a modifier with another button,
-#                                       DraStic opens its menu): save the game
+#                                       DraStic has its menu on L3): save the game
 #                                       and open the launcher's switcher
 #                                       (archr-game-save-exit switch); another
 #                                       button pressed while it is held, or a

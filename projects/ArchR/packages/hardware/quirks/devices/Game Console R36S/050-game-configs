@@ -28,6 +28,14 @@ if [ -f "/storage/.config/drastic/config/drastic.cfg.r36s" ]; then
   rm /storage/.config/drastic/config/drastic.cfg
   mv /storage/.config/drastic/config/drastic.cfg.r36s /storage/.config/drastic/config/drastic.cfg
 fi
+#Configs from older images had the DraStic menu on FN (button 10), whose tap
+#is ArchR's save and exit: move it to L3 (button 11), as dArkOS, ArkOS and
+#AmberELEC do, unless L3 already holds something else
+DRASTIC_CFG=/storage/.config/drastic/config/drastic.cfg
+if grep -q '^controls_a\[CONTROL_INDEX_MENU\] = 1034$' "${DRASTIC_CFG}" 2>/dev/null &&
+   ! grep -q '= 1035$' "${DRASTIC_CFG}"; then
+  sed -i 's/^controls_a\[CONTROL_INDEX_MENU\] = 1034$/controls_a[CONTROL_INDEX_MENU] = 1035/' "${DRASTIC_CFG}"
+fi
 
 #Map ppsspp controls
 if  grep R36S -q "/storage/.config/ppsspp/PSP/SYSTEM/controls.ini"
