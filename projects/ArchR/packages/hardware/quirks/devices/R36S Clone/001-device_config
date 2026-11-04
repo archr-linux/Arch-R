@@ -6,20 +6,51 @@
 # Information (archr-info) and the launcher show CPU/GPU temps. The
 # quirks loader matches the folder name against /proc/device-tree/model
 # exactly, so this folder name MUST equal the DTS `model` string.
-cat <<CONF >/storage/.config/profile.d/001-device_config
+# The playback mux position that reaches the speaker depends on which
+# card the overlay enabled. rk817-sound-amplified feeds the external amp
+# from HPOL/HPOR, so the speaker is on "HP" too (the codec has no
+# use-ext-amplifier here, so "SPK" goes to the unconnected class-D) and
+# the amp is gated by the card's "Internal Speakers" pin. The other
+# cards drive the speaker from the class-D, on "SPK" (Arch-R#35).
+DT="${ARCHR_DT:-/proc/device-tree}"
+# A card is on when its node is a real card (has compatible) and its
+# status is absent, "okay" or "ok", as the kernel reads it.
+card_on() {
+  [ -e "${DT}/${1}/compatible" ] || return 1
+  [ -e "${DT}/${1}/status" ] || return 0
+  case "$(tr -d '\0' <"${DT}/${1}/status")" in okay|ok) return 0 ;; esac
+  return 1
+}
+# Only one should be on; if more are, the first of this list wins (the
+# order the overlay generator prefers) and the boot log says so.
+CARDS=""
+for c in rk817-sound-amplified rk817-sound-simple rk817-sound; do
+  card_on "${c}" && CARDS="${CARDS} ${c}"
+done
+set -- ${CARDS}
+CARD="${1:-}"
+if [ $# -gt 1 ]; then
+  echo "R36S Clone audio: sound cards on:${CARDS}; using ${CARD}" >&2
+elif [ $# -eq 0 ]; then
+  echo "R36S Clone audio: no rk817 sound card on; speaker path left at SPK" >&2
+fi
+case "${CARD}" in
+  rk817-sound-amplified) SPK_PATH="HP" ;;
+  *) SPK_PATH="SPK" ;;
+esac
+JACK_DEV="/dev/input/by-path/platform-${CARD:-rk817-sound}-event"
+
+cat <<CONF >"${ARCHR_PROFILE_DIR:-/storage/.config/profile.d}/001-device_config"
 # LED nodes use color+function (no label), so sysfs is blue:power.
 # Surfaces the DISABLE POWER LED switch in ES (the var is already in
 # the 999-export allowlist; no quirk ever set it, so the item was
 # invisible on every device).
 DEVICE_PWR_LED_CONTROL="true"
 DEVICE_POWER_LED="blue:power"
-# V20-era clone boards route the speaker through the external amp like
-# the Soysauce (the eeclone DTS ships the rk817-sound-amplified card),
-# so the playback mux and the jack input device must be wired up or the
-# speaker stays silent (Arch-R#35, config validated by reporters).
-DEVICE_PLAYBACK_PATH_SPK="SPK"
+# Playback mux and jack input of the active card (see above).
+DEVICE_PLAYBACK_PATH_SPK="${SPK_PATH}"
 DEVICE_PLAYBACK_PATH_HP="HP"
-DEVICE_HEADPHONE_DEV="/dev/input/by-path/platform-rk817-sound-amplified-event"
+DEVICE_HEADPHONE_DEV="${JACK_DEV}"
 DEVICE_TEMP_SENSOR="/sys/devices/virtual/thermal/thermal_zone0/temp"
 DEVICE_GPU_TEMP_SENSOR="/sys/devices/virtual/thermal/thermal_zone1/temp"
 CONF

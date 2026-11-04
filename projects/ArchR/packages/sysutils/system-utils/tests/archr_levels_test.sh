@@ -14,11 +14,14 @@ SOURCE="$(dirname "${HERE}")/sources/levels/archr-levels.c"
 TMP=$(mktemp -d)
 DAEMON=
 OSD=
+AUDIO=
 cleanup() {
   [ -n "${DAEMON}" ] && kill "${DAEMON}" 2>/dev/null
+  [ -n "${AUDIO}" ] && kill ${AUDIO} 2>/dev/null
   [ -n "${OSD}" ] && kill -CONT "${OSD}" 2>/dev/null
   [ -n "${OSD}" ] && kill "${OSD}" 2>/dev/null
   wait 2>/dev/null
+  [ -n "${PW:-}" ] && [ -d "${PW}" ] && rm -r "${PW}"
   rm -rf "${TMP}"
 }
 trap cleanup EXIT
@@ -79,6 +82,25 @@ stop() {
   wait "${DAEMON}" 2>/dev/null
   DAEMON=
 }
+
+# Without its wakeup fd (here: no file descriptor left after the socket)
+# the daemon fails before telling systemd it is ready, and leaves no socket.
+NOTIFY="${TMP}/notify"
+python3 -I -c '
+import socket, sys
+s = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+s.bind(sys.argv[1]); s.settimeout(3)
+try: print(s.recv(64).decode())
+except OSError: pass
+' "${NOTIFY}" >"${TMP}/notified" &
+LISTENER=$!
+for _ in $(seq 50); do [ -S "${NOTIFY}" ] && break; sleep 0.1; done
+( ulimit -n 4; NOTIFY_SOCKET="${NOTIFY}" exec timeout 5 "${L}" ) 2>"${TMP}/eventfd.err"
+check "no eventfd: fails" "$?" 1
+grep -q "eventfd" "${TMP}/eventfd.err" || { echo "FAIL: no eventfd error: $(cat "${TMP}/eventfd.err")"; FAILED=1; }
+wait "${LISTENER}"
+check "no eventfd: never ready" "$(cat "${TMP}/notified")" ""
+[ -S "${ARCHR_LEVELS_SOCKET}" ] && { echo "FAIL: socket left after the eventfd failure"; FAILED=1; }
 
 # Commands need the daemon: without it they fail clearly, touching nothing.
 ERR=$(${L} brightness +2 2>&1 >/dev/null)
@@ -298,6 +320,113 @@ ${L} brightness +1 osd >/dev/null || { echo "FAIL: absent listeners blocked a co
 
 stop
 [ -S "${ARCHR_LEVELS_SOCKET}" ] && { echo "FAIL: socket left behind"; FAILED=1; }
+
+# The volume reaches the default sink whenever there is one (#39): the
+# daemon starts before the audio server, the card's sink appears after the
+# boot's restore, the server restarts, the default sink changes. A private
+# PipeWire stands for the console's, with no session manager (no hardware
+# touched): the test sets the default sink through the "default" metadata,
+# as WirePlumber does. No command is sent after the first level: the
+# daemon has to follow on its own.
+if ! command -v pipewire >/dev/null || ! command -v pipewire-pulse >/dev/null ||
+  ! command -v pactl >/dev/null || ! command -v pw-metadata >/dev/null; then
+  if [ "${ARCHR_LEVELS_NO_PIPEWIRE:-}" = 1 ]; then
+    echo "SKIP (ARCHR_LEVELS_NO_PIPEWIRE=1): sink tests"
+  else
+    echo "FAIL: sink tests need pipewire, pipewire-pulse, pactl and pw-metadata (ARCHR_LEVELS_NO_PIPEWIRE=1 skips them)"
+    FAILED=1
+  fi
+else
+  # Socket paths are short (sun_path): a directory of its own under /tmp.
+  PW=$(mktemp -d /tmp/alv.XXXXXX)
+  mkdir -p "${PW}/cfg/pipewire/pipewire.conf.d"
+  printf 'context.objects = [ { factory = metadata args = { metadata.name = default } } ]\n' \
+    >"${PW}/cfg/pipewire/pipewire.conf.d/archr-levels-test.conf"
+  pw() { env -u DBUS_SESSION_BUS_ADDRESS XDG_RUNTIME_DIR="${PW}" PIPEWIRE_RUNTIME_DIR="${PW}" \
+    PULSE_RUNTIME_PATH="${PW}/pulse" XDG_CONFIG_HOME="${PW}/cfg" "$@"; }
+  PIPEWIRE=
+  PULSE=
+  start_pulse() {
+    pw pipewire-pulse >>"${PW}/pipewire-pulse.log" 2>&1 &
+    PULSE=$!
+    AUDIO="${PIPEWIRE} ${PULSE}"
+    for _ in $(seq 50); do pactl info >/dev/null 2>&1 && break; sleep 0.1; done
+  }
+  stop_pulse() {
+    kill "${PULSE}"
+    wait "${PULSE}" 2>/dev/null
+    AUDIO="${PIPEWIRE}"
+  }
+  # A sink at the server's own 100 %, made the default.
+  new_sink() {
+    pactl load-module module-null-sink sink_name="${1}" >/dev/null
+    for _ in $(seq 30); do pactl get-sink-volume "${1}" >/dev/null 2>&1 && break; sleep 0.1; done
+    pw timeout 5 pw-metadata -n default 0 default.audio.sink "{ \"name\": \"${1}\" }" >/dev/null
+  }
+  # Both channels: "-35.00 dB -35.00 dB".
+  sink_db() { LC_ALL=C pactl get-sink-volume "${1}" 2>/dev/null | head -n1 | grep -o -- '-*[0-9.]* dB' | tr '\n' ' ' | sed 's/ $//'; }
+  sink_is() {
+    for _ in $(seq 50); do [ "$(sink_db "${2}")" = "${3}" ] && break; sleep 0.1; done
+    check "${1}" "$(sink_db "${2}")" "${3}"
+  }
+  export PULSE_SERVER="unix:${PW}/pulse/native"
+
+  # The daemon is up before the audio server, as at boot.
+  start
+  check "level with no audio server" "$(${L} volume 30)" 30
+  pw pipewire >"${PW}/pipewire.log" 2>&1 &
+  PIPEWIRE=$!
+  AUDIO="${PIPEWIRE}"
+  for _ in $(seq 50); do [ -S "${PW}/pipewire-0" ] && break; sleep 0.1; done
+  start_pulse
+  new_sink card
+  sink_is "the server comes up later: the level reaches the sink" card "-35.00 dB -35.00 dB"
+  ${L} volume 81 >/dev/null
+  sink_is "steps reach it" card "-9.50 dB -9.50 dB"
+
+  # The audio server restarts: its sinks come back at 100 %.
+  stop_pulse
+  start_pulse
+  new_sink card
+  sink_is "the server restarts: the level comes back" card "-9.50 dB -9.50 dB"
+
+  # Another sink becomes the default (headset, HDMI).
+  new_sink other
+  sink_is "a new default sink gets the level" other "-9.50 dB -9.50 dB"
+
+  # A sink goes and comes back (a profile switch, a card probed again).
+  pactl unload-module module-null-sink
+  new_sink card
+  sink_is "a sink that comes back gets the level" card "-9.50 dB -9.50 dB"
+  stop
+
+  # Only the session's server: on the consoles libpulse's own discovery
+  # reached a socket systemd holds with nobody answering (/run/pulse/native)
+  # whenever the session's was briefly missing, and hung for 30 s. Here
+  # PULSE_RUNTIME_PATH points libpulse at such a socket; the daemon has no
+  # PULSE_SERVER, only XDG_RUNTIME_DIR, and must still reach the server.
+  STUCK=$(mktemp -d /tmp/alv.XXXXXX)
+  python3 -I -c '
+import socket, sys, time
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.bind(sys.argv[1]); s.listen(8); time.sleep(60)
+' "${STUCK}/native" &
+  STUCKER=$!
+  for _ in $(seq 50); do [ -S "${STUCK}/native" ] && break; sleep 0.1; done
+  env -u PULSE_SERVER XDG_RUNTIME_DIR="${PW}" PULSE_RUNTIME_PATH="${STUCK}" "${L}" &
+  DAEMON=$!
+  for _ in $(seq 50); do [ -S "${ARCHR_LEVELS_SOCKET}" ] && break; sleep 0.1; done
+  ${L} volume 30 >/dev/null
+  sink_is "the session's server, not a silent fallback" card "-35.00 dB -35.00 dB"
+  stop
+  kill "${STUCKER}" 2>/dev/null
+  wait "${STUCKER}" 2>/dev/null
+  rm -r "${STUCK}"
+  kill ${AUDIO} 2>/dev/null
+  wait ${AUDIO} 2>/dev/null
+  AUDIO=
+  rm -r "${PW}"
+fi
 
 [ ${FAILED} -eq 0 ] && echo "archr_levels_test: OK"
 exit ${FAILED}
