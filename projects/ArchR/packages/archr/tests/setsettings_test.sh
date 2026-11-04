@@ -18,7 +18,8 @@ trap 'rm -rf "${TMP}"' EXIT
 FAILED=0
 
 export SETSETTINGS_PROFILE="${TMP}/profile" SETSETTINGS_RETROARCH="${TMP}/ra" \
-  SETSETTINGS_ROMS="${TMP}/roms" SETSETTINGS_APPEND="${TMP}/append.cfg" \
+  SETSETTINGS_ROMS="${TMP}/roms" SETSETTINGS_APPEND="${TMP}/append.cfg" SETSETTINGS_REMAPS="${TMP}/remaps" \
+  SETSETTINGS_RUN_REMAPS="${TMP}/run-remaps" \
   ARCHR_JOYPADS="${TMP}/joypads" ARCHR_INPUT_DEVICES="${TMP}/devices"
 cat >"${SETSETTINGS_PROFILE}" <<PROFILE
 . "${PKG}/profile.d/001-functions"
@@ -102,6 +103,77 @@ check "shader none" "has 'video_shader_enable = \"false\"' '${A}' && ! grep -q -
 check "overlay none blanks it" "has 'input_overlay = \"\"' '${A}' && has 'input_overlay_enable = \"false\"' '${A}'"
 check "only the whole key leaves retroarch.cfg" "has 'input_overlay_opacity = \"0.5\"' '${TMP}/ra/retroarch.cfg'"
 check "no sed scripts left behind" "! ls '${TMP}'/append.cfg.sed* >/dev/null 2>&1"
+
+# PlayStation: the cores start as a digital pad and RetroArch reads the
+# device type only from a remap, so a core remap plugs in a DualShock (the
+# id differs per core), once; the stick stays a stick, not a d-pad.
+RM="${SETSETTINGS_REMAPS}"
+psx() {
+  printf '%s\n' "${USER_RA}" >"${TMP}/ra/retroarch.cfg"
+  : >"${TMP}/system.cfg"
+  bash "${SCRIPTS}/setsettings.sh" psx "/roms/psx/Ape Escape (USA).chd" "$1" \
+    --controllers=" -p1index 0 -p1guid abc " --autosave="" --snapshot="" >"${TMP}/stdout"
+}
+P="${RM}/PCSX-ReARMed/PCSX-ReARMed.rmp"
+for core in pcsx_rearmed32 pcsx_rearmed; do
+  rm -rf "${RM}"
+  psx "${core}"
+  check "${core}: DualShock on port 1 to 5" \
+    "[ \$(grep -c '^input_libretro_device_p[1-5] = \"517\"$' '${P}') = 5 ]"
+  check "${core}: stick is not a d-pad" "has 'input_player1_analog_dpad_mode = \"0\"' '${A}'"
+  check "${core}: nothing dead in the append config" "! grep -q '^input_libretro_device_p' '${A}'"
+done
+check "no temporary file left" "[ ! -e '${P}.tmp' ]"
+rm -rf "${RM}"; mkdir -p "${P%/*}"; echo 'input_libretro_device_p1 = "5' >"${P}.tmp"
+psx pcsx_rearmed32
+check "a stale partial write is replaced" \
+  "[ \$(grep -c '^input_libretro_device_p[1-5] = \"517\"$' '${P}') = 5 ] && [ ! -e '${P}.tmp' ]"
+printf '%s\n' 'input_libretro_device_p1 = "1"' 'input_player1_btn_b = "8"' >"${P}"
+psx pcsx_rearmed32
+check "a remap the user saved stays" "has 'input_player1_btn_b = \"8\"' '${P}' && has 'input_libretro_device_p1 = \"1\"' '${P}'"
+psx swanstation
+check "swanstation: its own DualShock id" \
+  "[ \$(grep -c '^input_libretro_device_p[1-5] = \"261\"$' '${RM}/SwanStation/SwanStation.rmp') = 5 ]"
+rm -rf "${RM}"
+run
+check "other systems get no remap" "[ ! -e '${RM}' ]"
+
+# The same remap path for the other devices the append config used to set.
+game() { # PLATFORM CORE [system.cfg lines...]
+  local platform="$1" core="$2"
+  shift 2
+  printf '%s\n' "${USER_RA}" >"${TMP}/ra/retroarch.cfg"
+  printf '%s\n' "$@" >"${TMP}/system.cfg"
+  bash "${SCRIPTS}/setsettings.sh" "${platform}" "/roms/${platform}/Game.bin" "${core}" \
+    --controllers=" -p1index 0 -p1guid abc " --autosave="" --snapshot="" >"${TMP}/stdout" 2>/dev/null # atari800 options live under /storage
+}
+# Atari800 also runs 800/XL games: a 5200 game must not leave a core remap
+# behind (the core picks the 5200 joystick itself).
+for core in atari800 a5200; do
+  rm -rf "${RM}"
+  game atari5200 "${core}"
+  check "atari5200 on ${core}: no core remap" "[ ! -e '${RM}/Atari800/Atari800.rmp' ] && [ ! -e '${RM}' ]"
+  check "atari5200 on ${core}: nothing dead in the append config" "! grep -q '^input_libretro_device_p' '${A}'"
+done
+
+# Netplay host only: a multitap for this run, from a copy of the user's
+# remaps in a run folder; the user's folder is left as it was.
+RR="${SETSETTINGS_RUN_REMAPS}"
+rm -rf "${RM}" "${RR}"
+mkdir -p "${RM}/Snes9x"
+echo 'input_player1_btn_b = "8"' >"${RM}/Snes9x/Game.rmp"
+game snes snes9x
+check "snes9x without netplay: no run remaps" "[ ! -e '${RR}' ] && ! grep -q '^input_remapping_directory' '${A}'"
+game snes snes9x global.netplay=1 global.netplay.mode=host
+check "snes9x host: multitap on port 2 for this run" \
+  "has 'input_libretro_device_p2 = \"257\"' '${RR}/Snes9x/Snes9x.rmp'"
+check "snes9x host: RetroArch reads the run folder" "has 'input_remapping_directory = \"${RR}\"' '${A}'"
+check "snes9x host: the user's game remap is in the run folder" "has 'input_player1_btn_b = \"8\"' '${RR}/Snes9x/Game.rmp'"
+check "snes9x host: nothing written to the user's remaps" "[ ! -e '${RM}/Snes9x/Snes9x.rmp' ]"
+game megadrive genesis_plus_gx global.netplay=1 global.netplay.mode=host
+check "genesis_plus_gx host: 4-Way Play on port 2" \
+  "has 'input_libretro_device_p2 = \"1025\"' '${RR}/Genesis Plus GX/Genesis Plus GX.rmp'"
+check "genesis_plus_gx host: an older run folder is not reused" "[ ! -e '${RR}/Snes9x/Snes9x.rmp' ]"
 
 # Hotkeys: once, then RetroArch's own changes stay; --force rewrites.
 HK="${SCRIPTS}/archr-retroarch-hotkeys"

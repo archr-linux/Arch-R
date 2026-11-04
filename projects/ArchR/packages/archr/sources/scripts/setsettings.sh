@@ -14,6 +14,8 @@ RETROARCH_PATH="${SETSETTINGS_RETROARCH:-/storage/.config/retroarch}"
 RETROARCH_CONFIG="${RETROARCH_PATH}/retroarch.cfg"
 
 ROMS_DIR="${SETSETTINGS_ROMS:-/storage/roms}"
+REMAPS_DIR="${SETSETTINGS_REMAPS:-/storage/remappings}"
+RUN_REMAPS_DIR="${SETSETTINGS_RUN_REMAPS:-/tmp/.archr-remaps}"
 SNAPSHOTS="${ROMS_DIR}/savestates"
 BEZEL_DIR="${ROMS_DIR}/bezels"
 
@@ -487,13 +489,15 @@ EOF
                     ;;
                     genesis_plus_gx)
                         log "Configure genesis_plus_gx 4 way play."
-                        add_setting "none" "input_libretro_device_p2" "1025"
+                        # Genesis Plus GX: SUBCLASS(JOYPAD, 3) 3-button 4-Way Play
+                        run_remap_devices "Genesis Plus GX" 2=1025
                         echo -n " --host"
                     ;;
 
                     snes9x)
                         log "Configure snes9x multitap."
-                        add_setting "none" "input_libretro_device_p2" "257"
+                        # Snes9x: RETRO_DEVICE_JOYPAD_MULTITAP
+                        run_remap_devices "Snes9x" 2=257
                         echo -n " --host"
                     ;;
                     *)
@@ -859,6 +863,55 @@ function set_analogsupport() {
     esac
 }
 
+# RetroArch takes a port's device type (input_libretro_device_pN) only from
+# a remap file (input_remapping_load_file), never from retroarch.cfg or the
+# append config, so a device is set through the core remap,
+# <remap dir>/<library_name>/<library_name>.rmp. A remap that already exists
+# (the user's own, or one written before) is never touched, and the file is
+# written whole or not at all: RetroArch would keep a partial one for good.
+# core_remap_devices LIBRARY_NAME DIR PORT=ID...
+function core_remap_devices() {
+    local NAME="${1}" DIR="${2}" PAIR
+    shift 2
+    local RMP="${DIR}/${NAME}/${NAME}.rmp"
+    [ -e "${RMP}" ] && return
+    mkdir -p "${RMP%/*}" || return
+    for PAIR in "$@"
+    do
+        echo "input_libretro_device_p${PAIR%=*} = \"${PAIR#*=}\""
+    done >"${RMP}.tmp" && mv -f "${RMP}.tmp" "${RMP}"
+    log "Device remap written: ${RMP} ($*)"
+}
+
+# A device needed for one run only (netplay): RetroArch reads the remaps
+# from a copy of the user's folder in /tmp for this run, so the user's own
+# remaps still apply and nothing stays behind for the next game.
+function run_remap_devices() {
+    rm -rf "${RUN_REMAPS_DIR}"
+    mkdir -p "${RUN_REMAPS_DIR}"
+    [ -d "${REMAPS_DIR}" ] && cp -a "${REMAPS_DIR}/." "${RUN_REMAPS_DIR}/"
+    add_setting "none" "input_remapping_directory" "${RUN_REMAPS_DIR}"
+    core_remap_devices "${1}" "${RUN_REMAPS_DIR}" "${@:2}"
+}
+
+# Devices a system always needs, by core (library_name and ids checked in
+# the core sources):
+# - psx: the cores start every port as a digital pad, which never reads the
+#   sticks (Ape Escape stops at "DUALSHOCK not plugged"). A DualShock on
+#   ports 1 to 5; the d-pad works as before and the game turns analog mode
+#   on, or L1+R1+Select on PCSX ReARMed.
+# A core remap applies to every game of that core: a device only one of
+# the core's systems needs does not belong here (Atari800 runs both 800/XL
+# and 5200, and switches to the 5200 joystick itself for the 5200).
+function set_core_devices() {
+    case "${PLATFORM}:${CORE}" in
+        psx:pcsx_rearmed*) # PCSX-ReARMed: SUBCLASS(ANALOG, 1) dualshock
+            core_remap_devices "PCSX-ReARMed" "${REMAPS_DIR}" 1=517 2=517 3=517 4=517 5=517 ;;
+        psx:swanstation)   # SwanStation: SUBCLASS(ANALOG, 0) dualshock
+            core_remap_devices "SwanStation" "${REMAPS_DIR}" 1=261 2=261 3=261 4=261 5=261 ;;
+    esac
+}
+
 function set_tatemode() {
     log "Setup tate mode..."
     if [ "${CORE}" = "mame2003_plus" ]
@@ -1112,11 +1165,6 @@ function setup_controllers() {
             PINDEX="${PINDEX%% -p${i}guid*}"
             log "Set up controller ($i) (${PINDEX})"
             add_setting "none" "input_player${i}_joypad_index" "${PINDEX}"
-            case ${PLATFORM} in
-                atari5200)
-                    add_setting "none" "input_libretro_device_p${i}" "513"
-                ;;
-            esac
         fi
     done
     flush_settings
@@ -1286,6 +1334,7 @@ set_runahead &
 set_frame_delay &
 set_audiolatency &
 set_analogsupport &
+set_core_devices &
 set_tatemode &
 set_n64opts &
 set_saturnopts &
