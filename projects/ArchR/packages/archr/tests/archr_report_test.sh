@@ -70,6 +70,21 @@ GET https://retroachievements.org/dorequest.php?r=login&u=SECRET-rauser&t=SECRET
 Authorization: Bearer SECRET-bearer
 iwctl --passphrase SECRET-passphrase station wlan0 connect MinhaCasa
 EOF
+cat >>"${R}/var/log/archr-launcher-session.log" <<'EOF'
+GET https://bob:SECRET-urlpass@example.org/x and ftp://u:SECRET-ftp@h/
+curl -u admin:SECRET-curl http://h
+cmd -p SECRET-shortp --verbose
+{"password": "a\"SECRET-escaped quote"}
+x pass='it\'s SECRET-single' end
+{"token":"t","pw":"SECRET-pw","pwd":"SECRET-pwd"}
+GET http://h/api?pw=SECRET-urlpw&game=Zelda2
+x=1 next passwd=a SECRET-midline words
+{"auth": {
+  "user": "SECRET-nesteduser",
+  "list": ["SECRET-nested1", "SECRET-nested2"]
+},
+"after_nested": 1}
+EOF
 # NUL bytes and a Latin-1 SSID: no longer "text", still filtered.
 printf 'bin\000ary\nretroarch: password=SECRET-binary\nconnected to Caf\351 wifi.key=SECRET-latin1\n' >>"${R}/var/log/exec.log"
 echo "Kernel panic - not syncing: secret_key=SECRET-pstore" >"${R}/sys/fs/pstore/dmesg-ramoops-0"
@@ -99,8 +114,8 @@ check "no secret leaks" "$(grep -rl SECRET "${TMP}/x" | sed "s#${TMP}/x/##")" ""
 check "iwd file never copied" "$(grep -rl Passphrase "${TMP}/x")" ""
 for want in MinhaCasa pcsx_rearmed_libretro.so archr-broken.service duckstation-sa \
   "R36S" "video_driver" "previous boot" "Kernel panic" "Running: retroarch" \
-  'input_enable_hotkey = "nul"' 'keyboard_layout = "us"' "romnom=Zelda" "r=login" \
-  "station wlan0 connect" "Caf"; do
+  'input_enable_hotkey = "nul"' 'keyboard_layout = "us"' "r=login" \
+  "station wlan0 connect" "Caf" "example.org/x" "game=Zelda2" "after_nested" "cmd -p"; do
   if grep -rqF -- "${want}" "${TMP}/x"; then echo "ok   keeps ${want}"; else echo "FAIL lost ${want}"; FAILED=1; fi
 done
 check "names kept, values removed" \
@@ -114,6 +129,20 @@ check "compressed pstore left out" "$(find "${TMP}/x" -name '*.enc.z' | wc -l)" 
 check "quoted value removed whole" \
   "$(grep -h '^cheevos_password' "${TMP}"/x/*/configs/retroarch.cfg)" 'cheevos_password = <removed>'
 check "no temporary files left" "$(find "${R}/storage/roms/relatorios" -name '*.part' | wc -l)" "0"
+
+check "URL user and password" \
+  "$(grep -h '^GET https://' "${TMP}"/x/*/logs/launcher.log | grep -o '//[^ ]*example.org')" "//<removed>@example.org"
+check "curl -u" "$(grep -h '^curl -u' "${TMP}"/x/*/logs/launcher.log)" "curl -u <removed> http://h"
+
+# Nothing left to zip (every file failed the filter): exit 1, no report.
+mkdir -p "${TMP}/broken"
+printf '#!/bin/sh\nexit 1\n' >"${TMP}/broken/awk"
+chmod +x "${TMP}/broken/awk"
+before=$(find "${R}/storage/roms/relatorios" -name '*.zip' | wc -l)
+OUT=$(PATH="${TMP}/broken:${TMP}/bin:${PATH}" ARCHR_REPORT_ROOT="${R}" bash "${SCRIPT}" 2>"${TMP}/err")
+check "empty report fails" "$?:${OUT}" "1:"
+check "says why" "$(grep -c 'no report written' "${TMP}/err")" "1"
+check "no zip added" "$(find "${R}/storage/roms/relatorios" -name '*.zip' | wc -l)" "${before}"
 
 # A folder that cannot be written: exit 1, nothing printed.
 chmod 500 "${R}/storage/roms/relatorios"
