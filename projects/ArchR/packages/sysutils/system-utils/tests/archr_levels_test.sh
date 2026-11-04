@@ -14,8 +14,10 @@ SOURCE="$(dirname "${HERE}")/sources/levels/archr-levels.c"
 TMP=$(mktemp -d)
 DAEMON=
 OSD=
+AUDIO=
 cleanup() {
   [ -n "${DAEMON}" ] && kill "${DAEMON}" 2>/dev/null
+  [ -n "${AUDIO}" ] && kill ${AUDIO} 2>/dev/null
   [ -n "${OSD}" ] && kill -CONT "${OSD}" 2>/dev/null
   [ -n "${OSD}" ] && kill "${OSD}" 2>/dev/null
   wait 2>/dev/null
@@ -298,6 +300,52 @@ ${L} brightness +1 osd >/dev/null || { echo "FAIL: absent listeners blocked a co
 
 stop
 [ -S "${ARCHR_LEVELS_SOCKET}" ] && { echo "FAIL: socket left behind"; FAILED=1; }
+
+# A level asked for before its sink exists reaches the sink once it appears
+# (#39): at boot the restore can come before the card's sink, which then
+# starts at the session's remembered or default volume. A private PipeWire
+# (no session manager, so no hardware is touched) stands for the console's;
+# the sink is named because without a session manager there is no default.
+if ! command -v pipewire >/dev/null || ! command -v pipewire-pulse >/dev/null ||
+  ! command -v pactl >/dev/null; then
+  if [ "${ARCHR_LEVELS_NO_PIPEWIRE:-}" = 1 ]; then
+    echo "SKIP (ARCHR_LEVELS_NO_PIPEWIRE=1): sink tests"
+  else
+    echo "FAIL: sink tests need pipewire, pipewire-pulse and pactl (ARCHR_LEVELS_NO_PIPEWIRE=1 skips them)"
+    FAILED=1
+  fi
+else
+  PW="${TMP}/pw"
+  mkdir -p "${PW}"
+  pw() { env -u DBUS_SESSION_BUS_ADDRESS XDG_RUNTIME_DIR="${PW}" PIPEWIRE_RUNTIME_DIR="${PW}" \
+    PULSE_RUNTIME_PATH="${PW}/pulse" "$@"; }
+  pw pipewire >"${PW}/pipewire.log" 2>&1 &
+  AUDIO=$!
+  for _ in $(seq 50); do [ -S "${PW}/pipewire-0" ] && break; sleep 0.1; done
+  pw pipewire-pulse >"${PW}/pipewire-pulse.log" 2>&1 &
+  AUDIO="${AUDIO} $!"
+  export PULSE_SERVER="unix:${PW}/pulse/native"
+  for _ in $(seq 50); do pactl info >/dev/null 2>&1 && break; sleep 0.1; done
+  export ARCHR_LEVELS_SINK=archr-test
+  sink_db() { LC_ALL=C pactl get-sink-volume archr-test 2>/dev/null | grep -o -m1 -- '-*[0-9.]* dB' | head -n1; }
+  sink_is() { for _ in $(seq 30); do [ "$(sink_db)" = "${2}" ] && break; sleep 0.1; done; check "${1}" "$(sink_db)" "${2}"; }
+  new_sink() { pactl load-module module-null-sink sink_name=archr-test >/dev/null; }
+
+  start
+  check "level before the sink" "$(${L} volume 30)" 30
+  new_sink
+  sink_is "the sink gets the level once it appears" "-35.00 dB"
+  ${L} volume 81 >/dev/null
+  sink_is "steps reach it" "-9.50 dB"
+  # A sink can go and come back (a profile switch, a card probed again).
+  pactl unload-module module-null-sink
+  new_sink
+  sink_is "a sink that comes back gets the level" "-9.50 dB"
+  stop
+  kill ${AUDIO} 2>/dev/null
+  wait ${AUDIO} 2>/dev/null
+  AUDIO=
+fi
 
 [ ${FAILED} -eq 0 ] && echo "archr_levels_test: OK"
 exit ${FAILED}

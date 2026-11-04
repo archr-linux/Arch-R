@@ -23,6 +23,9 @@
 // backlight a 2.2 gamma above a legible minimum, so every step feels the
 // same size. The daemon keeps one PulseAudio connection (a step costs one
 // round trip, not a process) and writes system.cfg once a level settles.
+// A sink that appears later (the card at boot, a profile switch) or a new
+// default sink gets the level too. ARCHR_LEVELS_SINK names the sink for the
+// host test, where no session manager picks a default.
 // Commands only talk to the daemon (systemd restarts it): without it they
 // fail with a clear message instead of racing it for system.cfg.
 //
@@ -183,7 +186,8 @@ static struct level *find(const char *kind)
 	X(pa_threaded_mainloop_new) X(pa_threaded_mainloop_start) X(pa_threaded_mainloop_lock)          \
 	X(pa_threaded_mainloop_unlock) X(pa_threaded_mainloop_get_api) X(pa_context_new)                \
 	X(pa_context_set_state_callback) X(pa_context_connect) X(pa_context_get_state) X(pa_context_unref) \
-	X(pa_context_set_sink_volume_by_name) X(pa_operation_unref) X(pa_sw_volume_from_dB) X(pa_cvolume_set)
+	X(pa_context_set_sink_volume_by_name) X(pa_operation_unref) X(pa_sw_volume_from_dB) X(pa_cvolume_set) \
+	X(pa_context_set_subscribe_callback) X(pa_context_subscribe)
 #define DECLARE(f) static __typeof__(f) *dl_##f;
 PULSE(DECLARE)
 
@@ -206,6 +210,11 @@ static pa_context *ctx;
 static pa_volume_t target;
 static int queued, busy; /* a level waits for the connection; requests in flight */
 
+static const char *sink(void)
+{
+	return env_or("ARCHR_LEVELS_SINK", "@DEFAULT_SINK@");
+}
+
 static void push_volume(void);
 
 /* One change in flight: the newest level goes out when the last is done. */
@@ -221,7 +230,7 @@ static void push_volume(void)
 {
 	pa_cvolume cv;
 	dl_pa_cvolume_set(&cv, 1, target);
-	pa_operation *op = dl_pa_context_set_sink_volume_by_name(ctx, "@DEFAULT_SINK@", &cv, sink_set, NULL);
+	pa_operation *op = dl_pa_context_set_sink_volume_by_name(ctx, sink(), &cv, sink_set, NULL);
 	queued = 0;
 	if (op) {
 		busy++;
@@ -229,13 +238,33 @@ static void push_volume(void)
 	}
 }
 
+/* A sink that appears, or a new default, starts at the session's remembered
+ * or default volume, not at the level: the card's sink can show up after the
+ * boot's restore, and a profile switch makes a new one. Give it the level. */
+static void sink_event(pa_context *c, pa_subscription_event_type_t t, uint32_t index, void *u)
+{
+	(void)c, (void)index, (void)u;
+	int facility = t & PA_SUBSCRIPTION_EVENT_FACILITY_MASK, type = t & PA_SUBSCRIPTION_EVENT_TYPE_MASK;
+	if ((facility == PA_SUBSCRIPTION_EVENT_SINK && type == PA_SUBSCRIPTION_EVENT_NEW) ||
+	    (facility == PA_SUBSCRIPTION_EVENT_SERVER && type == PA_SUBSCRIPTION_EVENT_CHANGE)) {
+		queued = 1;
+		if (!busy)
+			push_volume();
+	}
+}
+
 static void state_changed(pa_context *c, void *u)
 {
 	(void)u;
 	pa_context_state_t s = dl_pa_context_get_state(c);
-	if (s == PA_CONTEXT_READY && queued)
-		push_volume();
-	else if (!PA_CONTEXT_IS_GOOD(s))
+	if (s == PA_CONTEXT_READY) {
+		dl_pa_context_set_subscribe_callback(c, sink_event, NULL);
+		pa_operation *op = dl_pa_context_subscribe(c, PA_SUBSCRIPTION_MASK_SINK | PA_SUBSCRIPTION_MASK_SERVER, NULL, NULL);
+		if (op)
+			dl_pa_operation_unref(op);
+		if (queued)
+			push_volume();
+	} else if (!PA_CONTEXT_IS_GOOD(s))
 		busy = 0;
 }
 
