@@ -58,12 +58,12 @@ OUT="${T}/usr/share/archr/usb-advisor.tsv"
 PATH="${T}/bin:${PATH}" bash "${SCRIPT}" gen "${LIB}" "${CHIPS}" "${OUT}" 2026-10-30
 check "gen dates the table" 'head -n1 "${OUT}" | grep -qx "date	2026-10-30"'
 check "two drivers for one ID, one enough" \
-  'grep -qx "dev	0bda:0179	8188eu,rtl8xxxu	ok	Realtek RTL8188ETV	wifi	2.4" "${OUT}" ||
-   grep -qx "dev	0bda:0179	rtl8xxxu,8188eu	ok	Realtek RTL8188ETV	wifi	2.4" "${OUT}"'
+  'grep -qx "dev	0bda:0179	Realtek RTL8188ETV	wifi	2.4	8188eu,rtl8xxxu	ok" "${OUT}" ||
+   grep -qx "dev	0bda:0179	Realtek RTL8188ETV	wifi	2.4	rtl8xxxu,8188eu	ok" "${OUT}"'
 check "missing firmware is named" \
-  'grep -qx "dev	0e8d:7663	mt7663u	mediatek/mt7663pr2h.bin,mediatek/mt7663_n9_v3.bin	MediaTek MT7663U	wifi	2.4+5" "${OUT}"'
+  'grep -qx "dev	0e8d:7663	MediaTek MT7663U	wifi	2.4+5	mt7663u	mediatek/mt7663pr2h.bin,mediatek/mt7663_n9_v3.bin" "${OUT}"'
 check "a named ID without a driver" \
-  'grep -qx "dev	0bda:b733	-	-	Realtek RTL8733BU	wifi+bt	2.4+5" "${OUT}"'
+  'grep -qx "dev	0bda:b733	Realtek RTL8733BU	wifi+bt	2.4+5	-	-" "${OUT}"'
 check "class matches and other buses are skipped" '! grep -q "btusb\|notusb\|1234" "${OUT}"'
 check "chips that work, from the files present" \
   '[ "$(grep "^chip" "${OUT}" | cut -f2 | paste -sd/)" = "RTL8821CU/RTL8188FTV / 8188EUS/MT7601U/RTL8761B" ]'
@@ -102,14 +102,19 @@ device 1-2 0bda b733 "802.11ac WLAN Adapter" ff ""
 device 1-3 0e8d 7663 "Wireless" ff mt7663u
 device 1-4 045e 028e "Controller" ff xpad
 device 1-5 1234 5678 "Mass Storage" 08 ""
+device 1-6 0a12 9999 "x" e0 ""
+printf 'Odd\tBT\001\n' >"${R}/sys/devices/usb1/1-6/product"
 bash "${SCRIPT}" scan 0bda:b733
 check "no driver for the chip" \
   'grep -qx "dev	0bda:b733	Realtek RTL8733BU	wifi+bt	2.4+5	-	-	-	-	no_driver" "${A}" && grep -qx "added	0bda:b733" "${A}"'
 check "bound but its firmware failed to load" \
   'grep -q "^dev	0e8d:7663	MediaTek MT7663U	wifi	2.4+5	mt7663u	mt7663u	-	mediatek/mt7663pr2h.bin	firmware$" "${A}"'
-check "pads and storage are not adapters" '[ "$(grep -c "^dev" "${A}")" = 3 ]'
+check "pads and storage are not adapters" '[ "$(grep -c "^dev" "${A}")" = 4 ]'
+check "a device name loses its control characters" \
+  'grep -qx "dev	0a12:9999	OddBT	bt	bt	-	-	-	-	no_driver" "${A}"'
 S="${R}/storage/.config/archr/usb-seen"
-check "seen list, newest scan first" '[ "$(cut -f2 "${S}" | paste -sd" ")" = "0bda:0179 0bda:b733 0e8d:7663" ]'
+check "seen list, newest scan first" \
+  '[ "$(cut -f2 "${S}" | paste -sd" ")" = "0bda:0179 0bda:b733 0e8d:7663 0a12:9999" ]'
 
 rm "${R}/sys/bus/usb/devices/1-2"
 bash "${SCRIPT}" scan
@@ -117,6 +122,7 @@ check "unplugged: gone from now, kept in seen" \
   '! grep -q "0bda:b733" "${A}" && grep -q "0bda:b733" "${S}" && ! grep -q "^added" "${A}"'
 bash "${SCRIPT}" forget 0bda:b733
 check "forget drops one adapter" '! grep -q "0bda:b733" "${S}" && grep -q "0bda:0179" "${S}"'
+check "the scan holds the lock file" '[ -e "${R}/run/archr/usb-advisor.lock" ]'
 check "forget refuses anything but an ID" '! bash "${SCRIPT}" forget "../x" 2>/dev/null'
 
 exit "${FAILED}"

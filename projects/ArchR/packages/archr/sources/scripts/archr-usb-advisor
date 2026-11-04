@@ -21,12 +21,13 @@
 #
 # Line formats (TAB-separated), read by the launcher:
 #   usb-advisor.tsv  date <yyyy-mm-dd>
-#                    dev  <id> <modules|-> <ok|missing files,..> <name> <kind> <bands>
+#                    dev  <id> <name> <kind> <bands> <modules|-> <ok|missing files,..>
 #                    chip <name> <kind> <bands>
 #   usb-advice       seq <n>, added <id>, then one dev line per adapter:
 #                    dev <id> <name> <kind> <bands> <modules|-> <bound|-> <iface|->
 #                        <missing firmware|-> <verdict>
 #   verdict: works, no_driver, firmware, not_bound
+#   Both dev lines share their first columns: id, name, kind, bands, modules.
 #
 # ARCHR_USB_ROOT prefixes every runtime path (host tests); ARCHR_USB_DMESG
 # replaces the kernel log command and ARCHR_USB_TABLE the build table.
@@ -136,8 +137,8 @@ gen() {
         name="${mod_name[${first}]}" kind="${mod_kind[${first}]}" bands="${mod_bands[${first}]}"
       fi
       [ "${modules}" = "-" ] && missing="-"
-      printf 'dev\t%s\t%s\t%s\t%s\t%s\t%s\n' "${id}" "${modules}" "${missing:-ok}" \
-        "${name}" "${kind}" "${bands}"
+      printf 'dev\t%s\t%s\t%s\t%s\t%s\t%s\n' "${id}" "${name}" "${kind}" "${bands}" \
+        "${modules}" "${missing:-ok}"
     done
     # Chips that work: a module that is there, with its firmware.
     local files ok
@@ -185,9 +186,10 @@ adapters() {
       fi
     done
     line=$(table_line "${id}")
-    name=$(cat "${dev}/product" 2>/dev/null)
+    # The device names itself: no tabs, newlines or other controls.
+    name=$(tr -d '\000-\037' <"${dev}/product" 2>/dev/null)
     if [ -n "${line}" ]; then
-      IFS="${TAB}" read -r _ _ modules fw name kind bands <<<"${line}"
+      IFS="${TAB}" read -r _ _ name kind bands modules fw <<<"${line}"
     else
       # Not in the table: an adapter only by its class (E0 wireless
       # controller), or by an unclaimed vendor interface whose product
@@ -278,9 +280,18 @@ forget() {
   awk -F'\t' -v id="${id}" '$2 != id' "${SEEN}" | publish "${SEEN}"
 }
 
+# scan and forget both rewrite usb-seen: one at a time.
+locked() {
+  local lock="${ROOT}/run/archr/usb-advisor.lock"
+  mkdir -p "${lock%/*}" || exit 1
+  exec 9>"${lock}"
+  flock -w 30 9 || die "busy"
+  "$@"
+}
+
 case "${1:-}" in
   gen) [ $# -ge 4 ] || die "gen <lib dir> <chips.tsv> <out.tsv> [date]"; gen "$2" "$3" "$4" "${5:-}" ;;
-  scan) scan "${2:-}" ;;
-  forget) [ $# -eq 2 ] || die "forget <vid:pid>"; forget "$2" ;;
+  scan) locked scan "${2:-}" ;;
+  forget) [ $# -eq 2 ] || die "forget <vid:pid>"; locked forget "$2" ;;
   *) die "usage: gen | scan [vid:pid] | forget <vid:pid>" ;;
 esac
