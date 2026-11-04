@@ -42,15 +42,35 @@ else
   unset EMUPERF
 fi
 
-  #Auto Frame Skip — default ON when no explicit setting. RK3326 cannot
-  #sustain 60fps in heavier PSP titles; without auto-skip the user sees
-  #15fps stutter instead of a smooth 25-30. Users that prefer no skipping
-  #can flip the per-platform / per-game setting to "0".
+  #Frame skipping. Default: auto frame skip, up to 3 frames in a row.
+  #Auto frame skip only skips while FrameSkip (the most frames skipped in
+  #a row) is above 0, and a FrameSkip = 0 left in the file had silently
+  #turned it off (an --appendconfig run saves its values into the file):
+  #God of War ran at 24% speed, 80% with the cap back. So FrameSkip is
+  #always written. Lighter games (Tekken 6, Burnout Legends, Death Jr.)
+  #keep 100% and every frame either way.
+  #PPSSPP turns buffer effects back on while auto frame skip is on, so
+  #skip_buffer_effects=1 implies a fixed skip of one frame in two, as
+  #dArkOSRE-R36 ships for the R36S (southoz/dArkOSRE-R36@77ef6d941b,
+  #files/ROOTFS/opt/ppsspp/backupforromsfolder/ppsspp/PSP/SYSTEM/ppsspp.ini):
+  #God of War at 100% speed (30 fps shown), losing its glow; light games
+  #drop to half their frames, hence per game only. frame_skip=N sets the
+  #cap (auto) or the fixed skip; auto_frame_skip=0 alone skips nothing.
+	if [ -z "${ASKIP}" ]; then
+		[ "${SKIPB}" = "1" ] && ASKIP=0 || ASKIP=1
+	fi
+	FSKIP=$(get_setting frame_skip "${PLATFORM}" "${GAME}")
+	case "${FSKIP}" in
+		[0-8]) ;;
+		*) if [ "${ASKIP}" = "1" ]; then FSKIP=3; elif [ "${SKIPB}" = "1" ]; then FSKIP=1; else FSKIP=0; fi ;;
+	esac
 	if [ "${ASKIP}" = "0" ]; then
 		sed -i '/^AutoFrameSkip =/c\AutoFrameSkip = False' ${CONF_DIR}/${PPSSPP_INI}
 	else
-		sed -i '/AutoFrameSkip =/c\AutoFrameSkip = True' ${CONF_DIR}/${PPSSPP_INI}
-        fi
+		sed -i '/^AutoFrameSkip =/c\AutoFrameSkip = True' ${CONF_DIR}/${PPSSPP_INI}
+		[ "${FSKIP}" = "0" ] && FSKIP=3
+	fi
+	sed -i "/^FrameSkip =/c\FrameSkip = ${FSKIP}" ${CONF_DIR}/${PPSSPP_INI}
 
   #Graphics Backend
         if [ "${GRENDERER}" = "opengl" ]; then
@@ -86,11 +106,16 @@ fi
 		sed -i '/^SkipBufferEffects =/c\SkipBufferEffects = False' ${CONF_DIR}/${PPSSPP_INI}
 	fi
 
-  #VSYNC
-	if [ "${VSYNC}" = "1" ]; then
-		sed -i '/^VSyncInterval =/c\VSyncInterval = True' ${CONF_DIR}/${PPSSPP_INI}
-	else
-		sed -i '/^VSyncInterval =/c\VSyncInterval = False' ${CONF_DIR}/${PPSSPP_INI}
+  #VSYNC: PPSSPP's key is VerticalSync (VSyncInterval is not read, the
+  #setting did nothing). Unset leaves the file's value, on by default.
+  #Configs from older packages only have VSyncInterval: add the key.
+	if [ "${VSYNC}" = "1" ] || [ "${VSYNC}" = "0" ]; then
+		[ "${VSYNC}" = "1" ] && VSYNC_VALUE=True || VSYNC_VALUE=False
+		if grep -q '^VerticalSync =' ${CONF_DIR}/${PPSSPP_INI}; then
+			sed -i "/^VerticalSync =/c\\VerticalSync = ${VSYNC_VALUE}" ${CONF_DIR}/${PPSSPP_INI}
+		else
+			sed -i "/^\[Graphics\]/a VerticalSync = ${VSYNC_VALUE}" ${CONF_DIR}/${PPSSPP_INI}
+		fi
 	fi
 
   #Clock Speed
@@ -101,6 +126,24 @@ fi
 	else
 		sed -i '/^CPUSpeed =/c\CPUSpeed = 0' ${CONF_DIR}/${PPSSPP_INI}
 	fi
+
+#Select+Start quits, as in RetroArch and mupen64plus. PPSSPP has no such
+#default: without an "Exit App" mapping the pair did nothing. Built from the
+#pad's own Select and Start (first gamepad entry, device 10 or above), so it
+#follows each device's controls.ini; a mapping the user set is kept.
+#Same mapping as dArkOSRE-R36 (southoz/dArkOSRE-R36@a17bddecc6,
+#files/ROOTFS/opt/ppsspp/backupforromsfolder/ppsspp/PSP/SYSTEM/controls.ini).
+CONTROLS_INI="${CONF_DIR}/PSP/SYSTEM/controls.ini"
+pad_key() {
+  sed -n "s/^${1} = //p" "${CONTROLS_INI}" | tr ',' '\n' | grep -m1 -E '^1[0-9]-[0-9]+$'
+}
+if [ -f "${CONTROLS_INI}" ] && ! grep -q '^Exit App = ' "${CONTROLS_INI}"; then
+  EXIT_SELECT=$(pad_key Select)
+  EXIT_START=$(pad_key Start)
+  if [ -n "${EXIT_SELECT}" ] && [ -n "${EXIT_START}" ]; then
+    sed -i "/\[ControlMapping\]/a Exit App = ${EXIT_SELECT}:${EXIT_START}" "${CONTROLS_INI}"
+  fi
+fi
 
 #Retroachievements
 /usr/bin/cheevos_ppsspp.sh

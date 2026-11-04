@@ -4,7 +4,9 @@
 # Copyright (C) 2024-present ArchR (https://github.com/archr-linux/Arch-R)
 
 . /etc/profile
-set_kill set "-9 AppRun.wrapped"
+# The emulator runs as duckstation-sa under an AppRun parent; there is no
+# AppRun.wrapped process, so the quit hotkey used to kill nothing.
+set_kill set "-9 duckstation-sa"
 
 # Filesystem vars
 IMMUTABLE_CONF_DIR="/usr/config/duckstation"
