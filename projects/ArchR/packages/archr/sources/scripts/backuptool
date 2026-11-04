@@ -556,8 +556,14 @@ recover() {
                 notes+=("Ignored an invalid journal record:$(printf ' %q' "${new}" "${sha}" "${dest}" "${temp}" "${undo}")")
                 continue
             fi
+            # Phase 1 creates missing folders: one that never appeared
+            # holds nothing to recover. One that exists must be entered.
+            if [ ! -e "${dest%/*}" ] && [ ! -L "${dest%/*}" ]; then
+                notes+=("Nothing to recover for ${dest}: its folder was never created.")
+                continue
+            fi
             if ! enter "${dest%/*}"; then
-                notes+=("Could not recover ${dest}: its folder is missing or changed.")
+                notes+=("Could not recover ${dest}: its folder changed.")
                 failed=true
                 continue
             fi

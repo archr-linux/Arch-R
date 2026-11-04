@@ -648,6 +648,38 @@ cp "${GOOD}" "${ZIP}"
 untouched
 leftovers
 snapshot "${TMP}/before"
+
+# Power lost early in phase 1, before the folder of a new file exists: the
+# journal names a folder that was never created. Nothing is left to recover
+# there, so the next run goes on instead of refusing forever.
+reset_device
+/usr/bin/mv "${ROOT}/storage/roms/pce" "${TMP}/pce.aside"
+snapshot "${TMP}/before"
+cat >"${TMP}/bin/mv" <<'EOF'
+#!/bin/bash
+case "$*" in *.restore-*) kill -9 "$PPID"; exit 1 ;; esac
+exec /usr/bin/mv "$@"
+EOF
+chmod +x "${TMP}/bin/mv"
+EXTRA="${TMP}/bin" fails restore >"${TMP}/phase1-kill.log" 2>&1
+rm "${TMP}/bin/mv"
+check grep -Fq "${ROOT}/storage/roms/pce/" "${ROOT}/storage/.cache/backuptool/journal"
+check test ! -e "${ROOT}/storage/roms/pce"
+run backup >"${TMP}/after-phase1-kill.log" 2>&1
+check grep -q 'Recovered an interrupted restore' "${TMP}/after-phase1-kill.log"
+check grep -q 'folder was never created' "${TMP}/after-phase1-kill.log"
+check test ! -e "${ROOT}/storage/.cache/backuptool/journal"
+check test "$(cat "${SAVE}")" = current
+check test "$(cat "${CFG}")" = 'changed setting'
+cp "${GOOD}" "${ZIP}"
+untouched
+leftovers
+# A restore after that works and creates the folder.
+run restore >"${TMP}/after-phase1-restore.log" 2>&1
+check test "$(cat "${ROOT}/storage/roms/pce/Game.mg0")" = storage/roms/pce/Game.mg0
+rm -r "${ROOT}/storage/roms/pce"
+/usr/bin/mv "${TMP}/pce.aside" "${ROOT}/storage/roms/pce"
+reset_device
 # Free space is checked before anything is unpacked.
 cat >"${TMP}/bin/df" <<'EOF'
 #!/bin/sh
