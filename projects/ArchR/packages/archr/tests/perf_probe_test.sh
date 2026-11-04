@@ -87,5 +87,42 @@ check "its sleep is gone" 'sleep 0.2; gone'
 run 1
 check "waiting: every second idle" '[ "$(field idle_seconds)" = "$(field seconds)" ]'
 
+# The emulator ends (its /proc entry goes) before any TERM: the probe
+# publishes on its own and leaves nothing behind; so does a launch with
+# nothing under it.
+# shellcheck disable=SC2034 # ENDED is read by check's eval
+alone() { # runs "$@" while the probe measures, then waits for it to end
+  local probe
+  ARCHR_PROC="${ROOT}/proc" CPUFREQ="${ROOT}/cpufreq" ARCHR_BATTERY="${ROOT}/battery" \
+    ARCHR_PERF_OUT="${ROOT}/run/perf-last.json" ARCHR_PERF_WARMUP=1 bash "${PROBE}" 5 &
+  probe=$!
+  "$@"
+  for _ in $(seq 1 40); do kill -0 "${probe}" 2>/dev/null || break; sleep 0.1; done
+  ENDED=1
+  kill -0 "${probe}" 2>/dev/null && { ENDED=0; kill -TERM "${probe}"; }
+  CHILDREN=$(pgrep -P "${probe}" | tr '\n' ' ')
+  wait "${probe}" 2>/dev/null
+  OUT=$(cat "${ROOT}/run/perf-last.json" 2>/dev/null)
+}
+vanish() {
+  mkdir -p "${ROOT}/proc/5" "${ROOT}/proc/10/task/10"
+  stat "${ROOT}/proc/5" 5 runemu.sh 1 0 0
+  stat "${ROOT}/proc/10" 10 retroarch 5 0 0
+  stat "${ROOT}/proc/10/task/10" 10 retroarch 5 0 0
+  sleep 1.5
+  stat "${ROOT}/proc/10/task/10" 10 retroarch 5 10 0
+  sleep 1
+  rm -rf "${ROOT}/proc/10"
+}
+rm -rf "${ROOT}/proc" "${ROOT}/run"
+alone vanish
+check "the emulator gone: published on its own" '[ "${ENDED}" = 1 ] && [ -n "${OUT}" ]'
+check "nothing left behind" '[ -z "${CHILDREN}" ]'
+rm -rf "${ROOT}/proc" "${ROOT}/run"
+mkdir -p "${ROOT}/proc/5"
+stat "${ROOT}/proc/5" 5 runemu.sh 1 0 0
+alone true
+check "nothing under the launch: published, no long sleep" '[ "${ENDED}" = 1 ] && [ "$(field seconds)" = 0 ]'
+
 bash -n "${PROBE}" && echo "ok   the probe parses" || { echo "FAIL probe syntax"; FAILED=1; }
 exit ${FAILED}

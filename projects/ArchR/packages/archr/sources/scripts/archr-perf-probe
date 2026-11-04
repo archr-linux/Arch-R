@@ -44,14 +44,16 @@ fields() {
 }
 # "pid ticks" of every process under ROOT, this probe and its sleep aside.
 processes() {
-  local stat pid parent
+  local stat pid parent read
   declare -A parents=()
   declare -A tick=()
   for stat in "${PROC}"/[0-9]*/stat; do
     pid=${stat%/stat}
     pid=${pid##*/}
-    # shellcheck disable=SC2046
-    set -- $(fields "${stat}") || continue
+    # A process may end between the listing and the read: skip it.
+    read=$(fields "${stat}") || continue
+    # shellcheck disable=SC2086
+    set -- ${read}
     parents[${pid}]=$2
     tick[${pid}]=$((${12} + ${13}))
   done
@@ -117,8 +119,9 @@ while [ -n "${EMULATOR}" ]; do
   for stat in "${PROC}/${EMULATOR}"/task/[0-9]*/stat; do
     tid=${stat%/stat}
     tid=${tid##*/}
-    # shellcheck disable=SC2046
-    set -- $(fields "${stat}") || continue
+    read=$(fields "${stat}") || continue
+    # shellcheck disable=SC2086
+    set -- ${read}
     count=$((${12} + ${13}))
     seen[${tid}]=${count}
     if [ -n "${LAST_US}" ] && [ -n "${last[${tid}]}" ]; then
@@ -126,7 +129,9 @@ while [ -n "${EMULATOR}" ]; do
       [ "${busy}" -gt "${busiest}" ] && busiest=${busy}
     fi
   done
-  if [ -n "${LAST_US}" ] && [ "${#seen[@]}" -gt 0 ]; then
+  # The emulator is gone (the game ended before the TERM): publish now.
+  [ "${#seen[@]}" -gt 0 ] || publish
+  if [ -n "${LAST_US}" ]; then
     [ "${busiest}" -gt 100 ] && busiest=100
     SAMPLES+=("${busiest}")
     status="" current=""
@@ -144,5 +149,5 @@ while [ -n "${EMULATOR}" ]; do
   LAST_US=${now_us}
   pause 1
 done
-# Nothing under ROOT ran: wait for the TERM.
-while :; do pause 3600; done
+# Nothing under ROOT ran: nothing to measure.
+publish
