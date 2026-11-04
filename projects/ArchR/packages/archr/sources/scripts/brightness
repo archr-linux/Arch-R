@@ -5,7 +5,7 @@
 
 # Backlight levels belong to archr-levels (2.2 gamma above a legible
 # minimum, saved once they settle). Screen N is display.brightnessN.
-#   brightness [screen]                     raw value of a screen (1)
+#   brightness [screen]                     raw value of a screen (1 or 2)
 #   brightness up|down [screen|all]         a 2 % step, prints the raw value
 #   brightness set [screen|all] <percent>
 

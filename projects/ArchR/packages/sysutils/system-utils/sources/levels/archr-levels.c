@@ -16,7 +16,7 @@
 // input_sense restarts): after HOLD_CAP_MS, or RENEW_MS after the last
 // "renew" (key repeats renew it, so a held key can go on).
 //
-// KIND is volume, brightness (first backlight) or brightnessN (the Nth).
+// KIND is volume, brightness (first backlight) or brightness2 (the second).
 // A level is what the user sees: volume follows a decibel scale and the
 // backlight a 2.2 gamma above a legible minimum, so every step feels the
 // same size. The daemon keeps one PulseAudio connection (a step costs one
@@ -54,7 +54,7 @@ enum {
 	HOLD_CAP_MS = 2000,
 	RENEW_MS = 400,
 	SETTLE_MS = 1500,
-	SCREENS = 9,
+	SCREENS = 2, /* the handhelds have one panel, a few two */
 	BRIGHTNESS_MIN = 5,
 };
 static const double VOLUME_RANGE_DB = 50.0, GAMMA = 2.2;
@@ -132,8 +132,8 @@ static struct level *find(const char *kind)
 		screen = 0;
 	else if (!strcmp(kind, "brightness"))
 		screen = 1;
-	else if (!strncmp(kind, "brightness", 10) && kind[10] >= '2' && kind[10] <= '9' && !kind[11])
-		screen = kind[10] - '0';
+	else if (!strcmp(kind, "brightness2"))
+		screen = 2;
 	else
 		return NULL;
 	struct level *l = &levels[screen];
@@ -144,7 +144,7 @@ static struct level *find(const char *kind)
 		else if (screen == 1)
 			strcpy(l->key, "display.brightness");
 		else
-			snprintf(l->key, sizeof l->key, "display.brightness%d", screen);
+			strcpy(l->key, "display.brightness2");
 		l->value = l->saved = read_saved(l);
 	} else if (l->value == l->saved && hold.level != l && !savers) {
 		/* Settled: the file is the truth (a reset or a restore may have changed it). */
@@ -339,8 +339,7 @@ static void migrate(void)
 {
 	long old;
 	if (!cfg_get("levels.perceptual", &old)) {
-		static const char *kinds[] = { "volume", "brightness", "brightness2", "brightness3", "brightness4",
-					       "brightness5", "brightness6", "brightness7", "brightness8", "brightness9" };
+		static const char *kinds[] = { "volume", "brightness", "brightness2" };
 		for (size_t i = 0; i < sizeof kinds / sizeof *kinds; i++) {
 			struct level *l = find(kinds[i]);
 			if (!cfg_get(l->key, &old))
