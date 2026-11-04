@@ -685,7 +685,15 @@ static int serve(void)
 		perror(a.sun_path);
 		return 1;
 	}
+	/* Without it a lost audio server is never retried: fail before READY=1
+	 * so systemd restarts the service instead. */
 	wake_fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+	if (wake_fd < 0) {
+		perror("archr-levels: eventfd");
+		close(fd);
+		unlink(a.sun_path);
+		return 1;
+	}
 	migrate();
 	ready_for_systemd();
 	struct sigaction sa = { .sa_handler = stop };
@@ -704,8 +712,8 @@ static int serve(void)
 		if (retry >= 0 && (wake < 0 || retry < wake))
 			wake = retry;
 		struct pollfd p[2] = { { .fd = fd, .events = POLLIN }, { .fd = wake_fd, .events = POLLIN } };
-		int ready = poll(p, wake_fd >= 0 ? 2 : 1, wake < 0 ? -1 : wake > now ? (int)(wake - now) : 0);
-		if (wake_fd >= 0 && (p[1].revents & POLLIN)) {
+		int ready = poll(p, 2, wake < 0 ? -1 : wake > now ? (int)(wake - now) : 0);
+		if (p[1].revents & POLLIN) {
 			uint64_t count;
 			if (read(wake_fd, &count, sizeof count) < 0) {
 				/* nothing to drain */

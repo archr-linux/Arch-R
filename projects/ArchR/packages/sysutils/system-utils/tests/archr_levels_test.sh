@@ -83,6 +83,25 @@ stop() {
   DAEMON=
 }
 
+# Without its wakeup fd (here: no file descriptor left after the socket)
+# the daemon fails before telling systemd it is ready, and leaves no socket.
+NOTIFY="${TMP}/notify"
+python3 -I -c '
+import socket, sys
+s = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+s.bind(sys.argv[1]); s.settimeout(3)
+try: print(s.recv(64).decode())
+except OSError: pass
+' "${NOTIFY}" >"${TMP}/notified" &
+LISTENER=$!
+for _ in $(seq 50); do [ -S "${NOTIFY}" ] && break; sleep 0.1; done
+( ulimit -n 4; NOTIFY_SOCKET="${NOTIFY}" exec timeout 5 "${L}" ) 2>"${TMP}/eventfd.err"
+check "no eventfd: fails" "$?" 1
+grep -q "eventfd" "${TMP}/eventfd.err" || { echo "FAIL: no eventfd error: $(cat "${TMP}/eventfd.err")"; FAILED=1; }
+wait "${LISTENER}"
+check "no eventfd: never ready" "$(cat "${TMP}/notified")" ""
+[ -S "${ARCHR_LEVELS_SOCKET}" ] && { echo "FAIL: socket left after the eventfd failure"; FAILED=1; }
+
 # Commands need the daemon: without it they fail clearly, touching nothing.
 ERR=$(${L} brightness +2 2>&1 >/dev/null)
 check "no daemon: refused" "$?" 1
