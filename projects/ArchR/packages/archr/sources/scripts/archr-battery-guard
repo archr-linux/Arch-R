@@ -9,8 +9,10 @@
 #                              is saved and closed (archr-game-save-exit
 #                              battery) and the device powers off; 0 off
 # Two readings in a row must be at or under the critical level (the fuel
-# gauge wavers near the end). A charger cancels the countdown, and with a
-# charger nothing happens at all.
+# gauge wavers near the end). A charger cancels the countdown, and so does a
+# level that rose during it; with a charger nothing happens at all. The
+# kernel says "Not charging" with a charger in and a full battery: anything
+# but "Discharging" is a charger.
 
 # shellcheck source=/dev/null
 . "${BATTERY_GUARD_PROFILE:-/etc/profile.d/001-functions}"
@@ -19,6 +21,7 @@
 : "${CURRENT_GAME:=/run/archr/current-game}"
 : "${SAVE_EXIT:=/usr/bin/archr-game-save-exit}"
 : "${POWEROFF:=systemctl poweroff}"
+: "${GRIM:=grim}"
 : "${OSD:=archr-osd}"
 : "${INTERVAL:=10}"
 : "${COUNTDOWN:=8}"
@@ -32,10 +35,11 @@ percent() {
 }
 
 charging() {
-  case "$(cat "${BATTERY}/status" 2>/dev/null)" in
-    Charging|Full) return 0 ;;
-  esac
-  return 1
+  [ "$(cat "${BATTERY}/status" 2>/dev/null)" != Discharging ]
+}
+
+level() {
+  cat "${BATTERY}/capacity" 2>/dev/null
 }
 
 game_running() {
@@ -45,22 +49,25 @@ game_running() {
 }
 
 # The countdown on screen, a message a second; 0 when it ran out, 1 when a
-# charger came.
+# charger came or the level rose above the one it started at.
 countdown() {
-  local level="$1" game="$2" left
+  local level="$1" game="$2" left now
   for ((left = COUNTDOWN; left > 0; left--)); do
+    now=$(level)
     charging && return 1
+    [[ "${now}" =~ ^[0-9]+$ ]] && [ "${now}" -gt "${level}" ] && return 1
     ${OSD} send battery "${level}" "${left}" "${COUNTDOWN}" "${game}" 2>/dev/null
     sleep 1
   done
-  ! charging
+  now=$(level)
+  ! charging && ! { [[ "${now}" =~ ^[0-9]+$ ]] && [ "${now}" -gt "${level}" ]; }
 }
 
 WARNED=0
 BELOW=0
 ROUND=0
 while :; do
-  LEVEL=$(cat "${BATTERY}/capacity" 2>/dev/null)
+  LEVEL=$(level)
   if [[ "${LEVEL}" =~ ^[0-9]+$ ]] && ! charging; then
     LOW=$(percent power.battery.low 10)
     CRITICAL=$(percent power.battery.critical 3)
@@ -69,19 +76,30 @@ while :; do
       WARNED=1
     fi
     if [ "${CRITICAL}" -gt 0 ] && [ "${LEVEL}" -le "${CRITICAL}" ]; then
+      # The first reading under the limit: a later rise above it cancels.
+      [ "${BELOW}" -eq 0 ] && FIRST=${LEVEL}
       BELOW=$((BELOW + 1))
     else
       BELOW=0
     fi
     if [ "${BELOW}" -ge 2 ]; then
       GAME=menu
-      game_running && GAME=game
-      if countdown "${LEVEL}" "${GAME}"; then
+      SHOT=""
+      if game_running; then
+        GAME=game
+        # The game as it is, before the card covers it.
+        SHOT=$(mktemp "${TMPDIR:-/tmp}/battery-shot.XXXXXX") &&
+          XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/var/run/0-runtime-dir}" WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-1}" \
+            "${GRIM}" -t png "${SHOT}" 2>/dev/null
+      fi
+      if countdown "${FIRST}" "${GAME}"; then
         echo "archr-battery-guard: battery at ${LEVEL}%, powering off"
-        [ "${GAME}" = game ] && "${SAVE_EXIT}" battery
+        [ "${GAME}" = game ] && PICTURE_FROM="${SHOT}" "${SAVE_EXIT}" battery
+        rm -f "${SHOT}"
         ${POWEROFF}
         exit 0
       fi
+      rm -f "${SHOT}"
       BELOW=0
     fi
   else
