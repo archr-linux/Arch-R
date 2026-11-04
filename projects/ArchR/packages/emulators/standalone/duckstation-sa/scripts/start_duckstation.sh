@@ -47,6 +47,12 @@ ln -sfv ${MEMCARDS_DIR} ${CONF_DIR}/memcards
 #Link gamecontrollerdb.txt
 ln -sf /usr/config/SDL-GameControllerDB/gamecontrollerdb.txt "${CONF_DIR}/gamecontrollerdb.txt"
 
+# Port 1 is a DualShock (analog sticks). An older settings.ini has no Type in
+# [Pad1]: write the one this release ships, keep any type the user chose.
+if ! sed -n '/^\[Pad1\]/,/^\[/p' "${CONF_FILE}" | grep -q '^Type *='; then
+  sed -i '/^\[Pad1\]/a Type = AnalogController' "${CONF_FILE}"
+fi
+
 #Emulation Station Features
 GAME=$(echo "${1}"| sed "s#^/.*/##")
 PLATFORM=$(echo "${2}"| sed "s#^/.*/##")
