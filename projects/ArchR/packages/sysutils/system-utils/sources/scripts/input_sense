@@ -318,6 +318,14 @@ archr-levels release >/dev/null 2>&1
 ### down starts the timer, any release stops it. Once it fires, the chord
 ### must be let go before another report. Its own unit, as the switcher's:
 ### a second report while one is written finds the unit running.
+# A pad gone mid-hold sends no release: forget its buttons and the timer.
+report_reset() {
+  REPORT_DOWN=()
+  [ -n "${REPORT_TIMER}" ] || return 0
+  kill "${REPORT_TIMER}" 2>/dev/null
+  wait "${REPORT_TIMER}" 2>/dev/null
+  REPORT_TIMER=""
+}
 report_key() {
   [[ "${line}" =~ \((BTN_[A-Z]+)\),\ value\ ([01]) ]] || return 0
   if [ "${BASH_REMATCH[2]}" = 1 ]; then
@@ -326,16 +334,18 @@ report_key() {
     unset "REPORT_DOWN[${BASH_REMATCH[1]}]"
   fi
   if [ "${#REPORT_DOWN[@]}" -lt 3 ]; then
-    [ -n "${REPORT_TIMER}" ] || return 0
-    kill "${REPORT_TIMER}" 2>/dev/null
-    wait "${REPORT_TIMER}" 2>/dev/null
-    REPORT_TIMER=""
+    if [ -n "${REPORT_TIMER}" ]; then
+      kill "${REPORT_TIMER}" 2>/dev/null
+      wait "${REPORT_TIMER}" 2>/dev/null
+      REPORT_TIMER=""
+    fi
   elif [ -z "${REPORT_TIMER}" ] && ${HOTKEY_REPORT_ENABLED}; then
     (
       sleep "${REPORT_HOLD}"
       ${DEBUG} && log "$0" "${REPORT_KEYS}: diagnostic report"
       exec systemd-run --no-block --collect --quiet --unit=archr-report-shortcut \
         -p Nice=10 -p IOSchedulingClass=idle \
+        -p RuntimeMaxSec=120 -p MemoryMax=128M -p CPUQuota=50% \
         /usr/bin/archr-report --osd >/dev/null 2>&1
     ) &
     REPORT_TIMER=$!
@@ -639,6 +649,7 @@ watch_inputs | grep --line-buffered "EV_KEY\|EV_SW\|error reading" | while next_
     case ${line} in
       (${DEVICE_DISCONNECTED})
         # watch_inputs notices the node going and coming back.
+        report_reset
         ${DEBUG} && log $0 "An input device went away"
       ;;
       (${FUNCTION_MODIFIER_A_EVENT})

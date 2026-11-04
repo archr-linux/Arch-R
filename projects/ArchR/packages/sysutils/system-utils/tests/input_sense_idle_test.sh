@@ -58,7 +58,8 @@ exec sleep 600
 STUB
 printf '#!/bin/sh\necho "$*" >>"%s/calls"\n' "${TMP}" >"${TMP}/bin/suspend"
 printf '#!/bin/sh\nexit 0\n' >"${TMP}/bin/mkcontroller"
-printf '#!/bin/sh\nfor a; do last=$a; done\necho "$last" >>"%s/calls"\n' "${TMP}" >"${TMP}/bin/systemd-run"
+# The whole command line of each systemd-run, for the unit's limits.
+printf '#!/bin/sh\necho "$*" >>"%s/units"\nfor a; do last=$a; done\necho "$last" >>"%s/calls"\n' "${TMP}" "${TMP}" >"${TMP}/bin/systemd-run"
 chmod +x "${TMP}/bin/"*
 
 PRESS="Event: time 1.0, type 1 (EV_KEY), code 304 (BTN_SOUTH), value 1"
@@ -172,7 +173,15 @@ events "${CHORD[@]}" "1.3 $(key BTN_MODE 0)"
 check "the report can be turned off" "$(report 3 "hotkey.report.enabled=0")" ""
 events "0.3 $(key BTN_MODE 1)" "0.1 $(key BTN_TL 1)" "1.3 $(key BTN_TL 0)" "0.1 $(key BTN_MODE 0)"
 check "FN + L1 alone: nothing" "$(report 3)" ""
+events "${CHORD[@]}" "0.3 /dev/input/event3: error reading: No such device" "1.3 $(key BTN_MODE 1)"
+check "the pad gone mid-hold: no report" "$(report 3)" ""
+events "${CHORD[@]}" "0.3 /dev/input/event3: error reading: No such device" \
+  "0.2 $(key BTN_MODE 1)" "0.1 $(key BTN_TL 1)" "0.1 $(key BTN_TR 1)" "1.3 $(key BTN_MODE 0)"
+check "back and held again: the report" "$(report 3.5)" "--osd"
 events "${CHORD[@]}" "1.3 $(key BTN_MODE 0)"
 check "FN as the hotkey modifier: the report still" "$(report 3 "key.hotkey.a=BTN_MODE")" "--osd"
+check "the report's unit is capped" \
+  "$(grep -o 'RuntimeMaxSec=120 -p MemoryMax=128M -p CPUQuota=50%' "${TMP}/units" | sort -u)" \
+  "RuntimeMaxSec=120 -p MemoryMax=128M -p CPUQuota=50%"
 
 exit ${FAILED}
