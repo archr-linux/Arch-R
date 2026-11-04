@@ -4,6 +4,7 @@
 # Copyright (C) 2020-present Shanti Gilbert (https://github.com/shantigilbert)
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
+# shellcheck source=/dev/null
 . /etc/profile
 
 # NOTE: to customize your backups, create a backuptool.conf file in
@@ -29,7 +30,7 @@ fi
 
 BACKUPFOLDER="/storage/roms/backup"
 BACKUPFILE="${BACKUPFOLDER}/${OS_NAME}_BACKUP.zip"
-mkdir -p "${BACKUPFOLDER}"
+mkdir -p "${BACKUPFOLDER}" || exit 1
 
 # Real paths, not the /storage/.emulationstation symlink: that link only
 # exists while EmulationStation is installed. WiFi is iwd, whose saved
@@ -46,6 +47,29 @@ DEFAULT=(
     /storage/.config/moonlight/*
     /storage/.config/game/*
     /storage/.config/archr-launcher/*
+    # Save-only trees: do not include emulator binaries, ROMs or BIOS images.
+    /storage/roms/savestates
+    /storage/roms/openbor/Saves
+    /storage/roms/pico-8/cdata
+    /storage/.lexaloffle/pico-8/cdata
+    /storage/.local/share/pico-8/cdata
+    /storage/.local/share/scummvm/saves
+    /storage/.config/scummvm/saves
+    /storage/.config/drastic/backup
+    /storage/.config/drastic/savestates
+    /storage/.config/duckstation/memcards
+    /storage/.config/duckstation/savestates
+    /storage/.config/flycast/data
+    /storage/.config/amiberry/savestates
+    /storage/.config/amiberry/nvram
+    /storage/.config/amiberry/whdboot/save-data
+    /storage/.config/hatari/auto.sav
+    /storage/.config/hatari/hatari.sav
+    /storage/.config/vice/*.vsf
+    /storage/.vice/*.vsf
+    /storage/.config/touchHLE/touchHLE_sandbox
+    /storage/roms/bios/yabasanshiro/backup.bin
+    /storage/roms/bios/dc/dc_flash.bin
     "${ES_DIR}"/es_*.cfg
     "${ES_DIR}"/scripts/*
     "${ES_DIR}"/themesettings/*
@@ -55,10 +79,11 @@ do
     DEFAULT+=("${THEME}")
 done < <(find "${ES_DIR}/themes" -mindepth 1 -maxdepth 1 -type d -not -name es-theme-art-book-next -not -name system-theme -print0 2>/dev/null)
 
+USE_DEFAULT=true
 if [ -e "/storage/.config/backuptool.conf" ]
 then
-    source /storage/.config/backuptool.conf
-    if [ ! $? = 0 ]
+    # shellcheck source=/dev/null
+    if ! source /storage/.config/backuptool.conf
     then
         WARN="Error loading custom backuptool configs. Using defaults."
         ${DEBUG} && echo "${WARN}"
@@ -66,6 +91,7 @@ then
         COMPRESSLOCATIONS=("${DEFAULT[@]}")
     else
         COMPRESSLOCATIONS=("${LOCATIONS[@]}")
+        USE_DEFAULT=false
     fi
 else
     COMPRESSLOCATIONS=("${DEFAULT[@]}")
@@ -78,11 +104,61 @@ then
     COMPRESSLOCATIONS+=(/storage/.cache/iwd/*)
     EXCLUDES=()
 fi
+PRUNE=(-path "${BACKUPFOLDER}" -o -path "${BACKUPFOLDER}/*")
+if [ "${2}" != "--with-wifi" ]; then
+    PRUNE+=(-o -path '/storage/.cache/iwd' -o -path '/storage/.cache/iwd/*'
+        -o -path '/var/lib/iwd' -o -path '/var/lib/iwd/*')
+fi
+# Never restore an embedded backup over the archive being read, either.
+EXCLUDES+=('storage/roms/backup' 'storage/roms/backup/*')
 # System-managed symlinks are recreated by the OS, and BusyBox unzip stops
 # at any entry whose destination is a symlink.
 mapfile -t LINKS < <(find "${COMPRESSLOCATIONS[@]}" -type l 2>/dev/null | sed 's|^/||')
 EXCLUDES+=("${LINKS[@]}")
 [ "${#EXCLUDES[@]}" -eq 0 ] || EXCLUDES=(-x "${EXCLUDES[@]}")
+
+# Emit regular files only. No traversal through system-managed symlinks and no
+# recursion into the output directory, even with LOCATIONS=(/storage/roms).
+collect_tree() {
+    local location
+    for location in "$@"; do
+        [ -e "${location}" ] && [ ! -L "${location}" ] || continue
+        find "${location}" \
+            \( "${PRUNE[@]}" \) -prune -o \
+            -type f -print0 || return 1
+    done
+}
+
+collect_rom_saves() {
+    [ -d /storage/roms ] || return 0
+    # Do not use *.st*: .st and .stx are Atari ST disk images, not N64 states.
+    # Large arbitrary trees (ROMs, ports, BIOS) are never added wholesale.
+    find /storage/roms -path "${BACKUPFOLDER}" -prune -o -type f \( \
+        -iname '*.srm' -o -iname '*.rtc' -o -iname '*.sav' -o -iname '*.dsv' -o \
+        -iname '*.eep' -o -iname '*.sra' -o -iname '*.fla' -o -iname '*.mpk' -o \
+        -iname '*.mcd' -o -iname '*.mcr' -o -iname '*.bkr' -o -iname '*.bcr' -o \
+        -iname '*.flash' -o -iname '*.smpc' -o -iname '*.seep' -o -iname '*.fxb' -o \
+        -iname '*.mg[0-9]' -o -iname '*.mednafen.fds' -o -iname '*.mednafen.type' -o \
+        -iname '*.fs' -o -iname '*.hi' -o -iname '*.memcard' -o -iname '*.nvram' -o \
+        -iname '*.brm' -o -iname '*.bup' -o -iname '*.sram' -o -iname '*.nv' -o \
+        -iname '*.nvmem' -o -iname '*.eeprom' -o -iname 'vmu_save*.bin' -o \
+        -iname '*.vmu' -o -iname '*.vms' -o -iname '*.vmi' -o -iname '*.p8d' -o \
+        -iname '*.ram' -o -iname '*.zds' -o -iname '*.vsf' -o -iname '*.uss' -o \
+        -iname '*.st[0-9]*' -o -iname '*.state' -o -iname '*.state[0-9]*' -o \
+        -iname '*.state.auto*' -o -iname '*.sav.[0-9]*' -o -iname '*.mcr.[0-9]*' \
+    \) -print0 || return 1
+    # PPSSPP's patched SAVEDATA path is roms/psp/<game ID>, not PSP/SAVEDATA.
+    # Save containers may hold .BIN, .SFO, images and game-specific filenames.
+    local directory
+    for directory in /storage/roms/psp/[A-Za-z][A-Za-z][A-Za-z][A-Za-z][0-9][0-9][0-9][0-9][0-9]*; do
+        # An ID-named ROM folder is not necessarily a save. PPSSPP saves have
+        # PARAM.SFO at the root; an extracted disc has it under PSP_GAME.
+        [ -f "${directory}/PARAM.SFO" ] || continue
+        collect_tree "${directory}" || return 1
+    done
+    collect_tree /storage/roms/psp/SAVEDATA /storage/roms/psp/PSP/SAVEDATA \
+        /storage/roms/psp/PPSSPP_STATE /storage/roms/psp/PSP/PPSSPP_STATE
+}
 
 SYSTEM_CFG="storage/.config/system/configs/system.cfg"
 case "${1}" in
@@ -101,30 +177,66 @@ case "${1}" in
         exit "${RC}"
     ;;
     "backup")
+        # Build on the destination filesystem, so publication never copies
+        # across mounts. flock lives on ext4, not the possibly exFAT ROMs card,
+        # and releases automatically after a crash even if its file remains.
         mkdir -p /storage/.cache || exit 1
-        WORKDIR=$(mktemp -d "/storage/.cache/backuptool.XXXXXX") || exit 1
-        PUBLISHFILE=""
-        trap 'rm -rf "${WORKDIR}"; rm -f "${PUBLISHFILE}"' EXIT
+        exec 9>/storage/.cache/backuptool.lock || exit 1
+        flock -n 9 || { echo 'A backup is already running.' >&2; exit 1; }
+        WORKDIR="" ARCHIVEFILENAME=""
+        trap '[ -z "${WORKDIR}" ] || rm -rf "${WORKDIR}"
+            if [ -n "${ARCHIVEFILENAME}" ] && [ ! -f "${BACKUPFILE}" ]; then
+                mv "${BACKUPFOLDER}/${ARCHIVEFILENAME}" "${BACKUPFILE}"
+            fi' EXIT
         trap 'exit 1' HUP INT TERM
-        if [ -f "${BACKUPFILE}" ]
-        then
-            TODAY=`date +%y-%m-%d_%H_%M_%S`
-            ARCHIVEFILENAME="ARCHIVED_${OS_NAME}_BACKUP-${TODAY}.zip"
-            mv "${BACKUPFILE}" "${BACKUPFOLDER}/${ARCHIVEFILENAME}"
+        WORKDIR=$(mktemp -d "${BACKUPFOLDER}/.backuptool.XXXXXX") || exit 1
+        collect_tree "${COMPRESSLOCATIONS[@]}" >"${WORKDIR}/files.raw" || exit 1
+        if "${USE_DEFAULT}"; then
+            collect_rom_saves >>"${WORKDIR}/files.raw" || exit 1
         fi
-        zip -9 -r "${WORKDIR}/backup.zip" \
-        "${COMPRESSLOCATIONS[@]}" "${EXCLUDES[@]}" || exit $?
+        sort -zu "${WORKDIR}/files.raw" >"${WORKDIR}/files" || exit 1
+        [ -s "${WORKDIR}/files" ] || { echo 'No files to back up.' >&2; exit 1; }
+        # Raw file sizes plus deflate expansion, names, ZIP headers and staging
+        # the Wi-Fi-free config. This is a conservative bound, not a ZIP promise.
+        set -o pipefail
+        BYTES=$(xargs -0 -r stat -c '%s' <"${WORKDIR}/files" | \
+            awk '{bytes += $1; files++} END {printf "%.0f", bytes + bytes/1000 + files*256}') || exit 1
+        NAMES=$(wc -c <"${WORKDIR}/files") || exit 1
+        CFGSIZE=0
+        [ ! -f "/${SYSTEM_CFG}" ] || CFGSIZE=$(stat -c '%s' "/${SYSTEM_CFG}") || exit 1
+        # Updating an existing ZIP (config sanitization or another xargs batch)
+        # temporarily holds both copies. Reserve the peak, not just the result.
+        REQUIRED=$(( (BYTES*2 + NAMES*6 + CFGSIZE*3 + 1048576 + 1023) / 1024 ))
+        AVAILABLE=$(df -Pk "${BACKUPFOLDER}" | awk 'END {print $4}') || exit 1
+        [[ "${AVAILABLE}" =~ ^[0-9]+$ ]] || { echo 'Cannot check free space.' >&2; exit 1; }
+        echo "Backup: up to ${REQUIRED} KiB required; ${AVAILABLE} KiB free."
+        if [ "${AVAILABLE}" -lt "${REQUIRED}" ]; then
+            echo 'Not enough free space for the backup.' >&2
+            exit 1
+        fi
+        # NUL-delimited file list handles spaces and large libraries;
+        # only explicitly collected files reach zip, never recursive directories.
+        xargs -0 -r zip -MM -9 "${WORKDIR}/backup.zip" -- <"${WORKDIR}/files" || exit $?
         if [ "${2}" != "--with-wifi" ] && \
-           unzip -l "${WORKDIR}/backup.zip" | grep -q " ${SYSTEM_CFG}$"
+           unzip -l "${WORKDIR}/backup.zip" | grep " ${SYSTEM_CFG}$" >/dev/null
         then
             mkdir -p "${WORKDIR}/${SYSTEM_CFG%/*}" || exit 1
-            grep -v '^wifi\.\(ssid\|key\)=' "/${SYSTEM_CFG}" > "${WORKDIR}/${SYSTEM_CFG}"
+            grep -v '^wifi\.\(ssid\|key\)=' "/${SYSTEM_CFG}" >"${WORKDIR}/${SYSTEM_CFG}"
             [ "$?" -le 1 ] || exit 1
             (cd "${WORKDIR}" && zip -9 backup.zip "${SYSTEM_CFG}") || exit $?
         fi
-        PUBLISHFILE=$(mktemp "${BACKUPFOLDER}/.backup.XXXXXX") || exit 1
-        mv "${WORKDIR}/backup.zip" "${PUBLISHFILE}" || exit 1
-        mv "${PUBLISHFILE}" "${BACKUPFILE}"
+        # Stream entries to check CRC without relying on unzip's -t option.
+        unzip -p "${WORKDIR}/backup.zip" >/dev/null || exit 1
+        # Keep the last good backup at its usual path until the new ZIP is ready.
+        if [ -f "${BACKUPFILE}" ]; then
+            TODAY=$(date +%y-%m-%d_%H_%M_%S)
+            ARCHIVEFILENAME="ARCHIVED_${OS_NAME}_BACKUP-${TODAY}-$$.zip"
+            mv "${BACKUPFILE}" "${BACKUPFOLDER}/${ARCHIVEFILENAME}" || exit 1
+        fi
+        if ! mv "${WORKDIR}/backup.zip" "${BACKUPFILE}"; then
+            [ -z "${ARCHIVEFILENAME}" ] || mv "${BACKUPFOLDER}/${ARCHIVEFILENAME}" "${BACKUPFILE}"
+            exit 1
+        fi
     ;;
     *)
         usage >&2
