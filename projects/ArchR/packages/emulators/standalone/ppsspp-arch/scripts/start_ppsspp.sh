@@ -108,10 +108,14 @@ fi
 
   #VSYNC: PPSSPP's key is VerticalSync (VSyncInterval is not read, the
   #setting did nothing). Unset leaves the file's value, on by default.
-	if [ "${VSYNC}" = "1" ]; then
-		sed -i '/^VerticalSync =/c\VerticalSync = True' ${CONF_DIR}/${PPSSPP_INI}
-	elif [ "${VSYNC}" = "0" ]; then
-		sed -i '/^VerticalSync =/c\VerticalSync = False' ${CONF_DIR}/${PPSSPP_INI}
+  #Configs from older packages only have VSyncInterval: add the key.
+	if [ "${VSYNC}" = "1" ] || [ "${VSYNC}" = "0" ]; then
+		[ "${VSYNC}" = "1" ] && VSYNC_VALUE=True || VSYNC_VALUE=False
+		if grep -q '^VerticalSync =' ${CONF_DIR}/${PPSSPP_INI}; then
+			sed -i "/^VerticalSync =/c\\VerticalSync = ${VSYNC_VALUE}" ${CONF_DIR}/${PPSSPP_INI}
+		else
+			sed -i "/^\[Graphics\]/a VerticalSync = ${VSYNC_VALUE}" ${CONF_DIR}/${PPSSPP_INI}
+		fi
 	fi
 
   #Clock Speed
