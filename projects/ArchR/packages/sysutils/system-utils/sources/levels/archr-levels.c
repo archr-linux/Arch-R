@@ -481,6 +481,8 @@ static int command(char *text)
 	long v = strtol(word[1], &end, 10);
 	if (end == word[1] || *end || errno)
 		return -1;
+	/* Far beyond any level: a huge step cannot overflow the sum. */
+	v = v < -1000 ? -1000 : v > 1000 ? 1000 : v;
 	if (word[1][0] == '+' || word[1][0] == '-')
 		v += l->value;
 	if (hold.level == l)

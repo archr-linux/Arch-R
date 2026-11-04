@@ -130,6 +130,9 @@ check "gamma curve" "$(raw)" 64
 check "legible minimum" "$(${L} brightness 0; raw)" "$(printf '5\n13')"
 check "full" "$(${L} brightness 100; raw)" "$(printf '100\n255')"
 check "volume floor" "$(${L} volume -500)" 0
+check "huge level" "$(${L} volume 9223372036854775807)" 100
+check "huge step" "$(${L} volume +9223372036854775807)" 100
+check "huge negative step" "$(${L} volume -9223372036854775807)" 0
 ${L} brightness up 2>/dev/null && { echo "FAIL: malformed accepted"; FAILED=1; }
 ${L} brightness3 2>/dev/null && { echo "FAIL: a third panel accepted"; FAILED=1; }
 for _ in 1 2 3 4 5; do ${L} brightness -2 >/dev/null; done
