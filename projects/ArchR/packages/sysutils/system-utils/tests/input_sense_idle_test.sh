@@ -29,6 +29,7 @@ log() { :; }
 FAKE_SUSPEND="${TMP}/bin/suspend"
 FAKE_SUSPEND_FLAG="${TMP}/suspended.flag"
 IDLE_UNIT=1
+REPORT_HOLD=1
 RUNEMU="${TMP}/runemu.sh"
 PATH="${TMP}/bin:\${PATH}"
 PROFILE
@@ -152,5 +153,26 @@ events "0.3 $(key BTN_SELECT 1)" "0.1 $(key BTN_TR 1)" "0.1 $(key BTN_TR 0)" "0.
 check "select + R1 (RetroArch's save state) does not switch" "$(switcher 2)" ""
 events "0.3 $(key BTN_THUMBR 1)" "0.2 $(key BTN_THUMBR 0)"
 check "another button can be the shortcut" "$(switcher 2 "hotkey.switcher=BTN_THUMBR")" "switch"
+
+# FN + L1 + R1 held REPORT_HOLD (here 1 s): the report, once per hold, in
+# its own unit; let go earlier, nothing. Never a switcher tap.
+report() { run "$@" | tr ' ' '\n' | grep -x -e --osd -e switch | tr '\n' ' ' | sed 's/ $//'; }
+CHORD=("0.3 $(key BTN_MODE 1)" "0.1 $(key BTN_TL 1)" "0.1 $(key BTN_TR 1)")
+events "${CHORD[@]}" "1.3 $(key BTN_TR 0)" "0.1 $(key BTN_TL 0)" "0.1 $(key BTN_MODE 0)"
+check "FN + L1 + R1 held: the report" "$(report 3)" "--osd"
+events "${CHORD[@]}" "0.5 $(key BTN_TL 0)" "0.1 $(key BTN_TR 0)" "0.1 $(key BTN_MODE 0)"
+check "let go before the hold: nothing" "$(report 3)" ""
+events "${CHORD[@]}" "3.2 $(key BTN_MODE 0)"
+check "a long hold is one report" "$(report 4.5)" "--osd"
+events "${CHORD[@]}" "1.3 $(key BTN_MODE 0)" "0.2 $(key BTN_MODE 1)" "1.3 $(key BTN_MODE 0)"
+check "let go and held again: another" "$(report 4.5)" "--osd --osd"
+events "0.3 $(key BTN_TL 1)" "0.1 $(key BTN_TR 1)" "0.1 $(key BTN_MODE 1)" "0.2 $(key BTN_MODE 0)"
+check "FN tapped while L1 + R1 are held: no tap, no report" "$(report 3)" ""
+events "${CHORD[@]}" "1.3 $(key BTN_MODE 0)"
+check "the report can be turned off" "$(report 3 "hotkey.report.enabled=0")" ""
+events "0.3 $(key BTN_MODE 1)" "0.1 $(key BTN_TL 1)" "1.3 $(key BTN_TL 0)" "0.1 $(key BTN_MODE 0)"
+check "FN + L1 alone: nothing" "$(report 3)" ""
+events "${CHORD[@]}" "1.3 $(key BTN_MODE 0)"
+check "FN as the hotkey modifier: the report still" "$(report 3 "key.hotkey.a=BTN_MODE")" "--osd"
 
 exit ${FAILED}

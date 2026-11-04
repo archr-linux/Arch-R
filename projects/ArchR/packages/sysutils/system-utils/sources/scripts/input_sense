@@ -45,6 +45,15 @@ set -o pipefail
 #                                       button pressed while it is held, or a
 #                                       longer hold, cancels it
 #
+#   hotkey.report.enabled=1             FN + L1 + R1 (BTN_MODE, BTN_TL,
+#                                       BTN_TR) held together 3 s: the
+#                                       diagnostic report (archr-report
+#                                       --osd) in the background, with its
+#                                       card on screen; the game goes on.
+#                                       No emulator binds that chord: their
+#                                       hotkeys all hold Select, and FN is
+#                                       in no pad mapping
+#
 #   idle.timeout=0                      minutes without any key event, then
 #   idle.timeout.game=0                 the power button's fake suspend; the
 #                                       second applies while a game runs.
@@ -206,6 +215,14 @@ SWITCHER_ARMED=false
 SWITCHER_DOWN=0
 : "${SWITCHER_TAP:=600}"
 
+# The report chord: the buttons held down now, and the timer that runs the
+# report once they have all been held REPORT_HOLD seconds.
+HOTKEY_REPORT_ENABLED=$(hotkey_enabled hotkey.report)
+REPORT_KEYS="BTN_MODE BTN_TL BTN_TR"
+declare -A REPORT_DOWN=()
+REPORT_TIMER=""
+: "${REPORT_HOLD:=3}"
+
 FUNCTION_HOTKEY_DPAD_UP_EVENT=$(press_event "${HOTKEY_VOLUME_UP}")
 FUNCTION_HOTKEY_DPAD_DOWN_EVENT=$(press_event "${HOTKEY_VOLUME_DOWN}")
 FUNCTION_HOTKEY_DPAD_RIGHT_EVENT=$(press_event "${HOTKEY_BRIGHTNESS_UP}")
@@ -296,6 +313,34 @@ release_level_hold() {
 
 # A hold left by a previous run, whose release never came, ends now.
 archr-levels release >/dev/null 2>&1
+
+### The report chord. A press or release of one of its buttons: all of them
+### down starts the timer, any release stops it. Once it fires, the chord
+### must be let go before another report. Its own unit, as the switcher's:
+### a second report while one is written finds the unit running.
+report_key() {
+  [[ "${line}" =~ \((BTN_[A-Z]+)\),\ value\ ([01]) ]] || return 0
+  if [ "${BASH_REMATCH[2]}" = 1 ]; then
+    REPORT_DOWN[${BASH_REMATCH[1]}]=1
+  else
+    unset "REPORT_DOWN[${BASH_REMATCH[1]}]"
+  fi
+  if [ "${#REPORT_DOWN[@]}" -lt 3 ]; then
+    [ -n "${REPORT_TIMER}" ] || return 0
+    kill "${REPORT_TIMER}" 2>/dev/null
+    wait "${REPORT_TIMER}" 2>/dev/null
+    REPORT_TIMER=""
+  elif [ -z "${REPORT_TIMER}" ] && ${HOTKEY_REPORT_ENABLED}; then
+    (
+      sleep "${REPORT_HOLD}"
+      ${DEBUG} && log "$0" "${REPORT_KEYS}: diagnostic report"
+      exec systemd-run --no-block --collect --quiet --unit=archr-report-shortcut \
+        -p Nice=10 -p IOSchedulingClass=idle \
+        /usr/bin/archr-report --osd >/dev/null 2>&1
+    ) &
+    REPORT_TIMER=$!
+  fi
+}
 
 ### Simple functions to execute button actions, including global kill.
 execute_kill() {
@@ -567,9 +612,14 @@ watch_inputs | grep --line-buffered "EV_KEY\|EV_SW\|error reading" | while next_
     # tap while it saves finds the unit running.
     # (A case, as below: [[ == ]] would read "*(...)" as an extglob.)
     case ${line} in
+      (*"(BTN_MODE), value "[01]|*"(BTN_TL), value "[01]|*"(BTN_TR), value "[01]) report_key ;;
+    esac
+    case ${line} in
       (${FUNCTION_HOTKEY_SWITCHER_EVENT})
         if [[ "${line}" =~ ${PRESS} ]]; then
           SWITCHER_ARMED=${HOTKEY_SWITCHER_ENABLED}
+          # Pressed while L1 or R1 is held: the report chord, not a tap.
+          [ "${#REPORT_DOWN[@]}" -gt 1 ] && SWITCHER_ARMED=false
           now_ms
           SWITCHER_DOWN=${NOW}
         elif [[ "${line}" =~ ${RELEASE} ]] && ${SWITCHER_ARMED} && now_ms &&
