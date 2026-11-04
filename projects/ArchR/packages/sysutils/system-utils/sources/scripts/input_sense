@@ -204,7 +204,6 @@ else
   DPAD_EVENTS=true
 fi
 
-CONTROLLER_DISCONNECTED="*error reading: No such device"
 DEVICE_DISCONNECTED="*error reading: No such device"
 
 ### Matches if a button was pressed (1), released (0) or held down (2)
@@ -380,7 +379,9 @@ next_event() {
   read line
 }
 
-### Search the system for useful devices to monitor for inputs.
+### Search the system for useful devices to monitor for inputs (the host
+### test points INPUT_DIR elsewhere).
+: "${INPUT_DIR:=/dev/input}"
 INPUT_DEVICES=()
 
 get_devices() {
@@ -394,7 +395,7 @@ get_devices() {
   local RETRY=0
 
   while [ ${KJDEVS} = false ]; do
-    for DEV in /dev/input/ev*
+    for DEV in "${INPUT_DIR}"/ev*
     do
       unset SUPPORTS
       SUPPORTS=$(udevadm info ${DEV} | awk '/ID_INPUT_KEY=|ID_INPUT_JOYSTICK=|ID_INPUT_TOUCHSCREEN=/ {print $2}')
@@ -444,32 +445,59 @@ mkcontroller 2>/dev/null || :
 # ------------------------------------------------------------------
 set +e
 
-### Start multiple evtest loops, each continuously restarted on failure. Take action when a known pattern of keys are pressed together.
-(
-  for INPUT_DEVICE in "${INPUT_DEVICES[@]}"; do
-    (
-      while true
-      do
-        evtest "${INPUT_DEVICE}" 2>&1
-        # If evtest exits, wait briefly and restart
-        echo "evtest for ${INPUT_DEVICE} died; restarting in 1 second..." >&2
-        sleep 1
-      done
-    ) &
+### One evtest per key, joystick or touch device, started as devices come
+### and go: a pad plugged in or removed never restarts this script (a
+### restart dropped held buttons and left the power button deaf a moment).
+### Every HOTPLUG_SCAN seconds the node list is compared (a glob, no
+### process); only a changed list asks udev about new nodes.
+: "${HOTPLUG_SCAN:=2}"
+input_wanted() {
+  udevadm info "${1}" | grep -qE 'ID_INPUT_(KEY|JOYSTICK|TOUCHSCREEN)='
+}
+watch_inputs() {
+  local -A WATCHED=()
+  local DEV SEEN="" NOW NODES
+  for DEV in "${INPUT_DEVICES[@]}"; do
+    evtest "${DEV}" 2>&1 &
+    WATCHED[${DEV}]=$!
   done
+  while true; do
+    NODES=("${INPUT_DIR}"/event[0-9]*)
+    NOW=${NODES[*]}
+    if [ "${NOW}" != "${SEEN}" ]; then
+      [ -n "${SEEN}" ] && { mkcontroller 2>/dev/null || :; }
+      SEEN=${NOW}
+      for DEV in "${INPUT_DIR}"/event[0-9]*; do
+        [ -e "${DEV}" ] || continue
+        [ -n "${WATCHED[${DEV}]:-}" ] && continue
+        input_wanted "${DEV}" || continue
+        ${DEBUG} && log $0 "Watching ${DEV}"
+        evtest "${DEV}" 2>&1 &
+        WATCHED[${DEV}]=$!
+      done
+    fi
+    # An evtest that ended on a node still present (a read error) starts
+    # again; a vanished node is forgotten until it comes back.
+    for DEV in "${!WATCHED[@]}"; do
+      kill -0 "${WATCHED[${DEV}]}" 2>/dev/null && continue
+      unset "WATCHED[${DEV}]"
+      if [ -e "${DEV}" ]; then
+        evtest "${DEV}" 2>&1 &
+        WATCHED[${DEV}]=$!
+      fi
+    done
+    sleep "${HOTPLUG_SCAN}"
+  done
+}
 
-  wait  # Wait for all background loops (they never end unless forcibly stopped)
-) | grep --line-buffered "EV_KEY\|EV_SW\|error reading" | while next_event; do
+### Take action when a known pattern of keys are pressed together.
+watch_inputs | grep --line-buffered "EV_KEY\|EV_SW\|error reading" | while next_event; do
 
     # Parse lines from any evtest instance:
     case ${line} in
-      (${CONTROLLER_DISCONNECTED})
-        ${DEBUG} && log $0 "Reloading due to ${CONTROLLER_DEVICE} reattach..."
-        get_devices
-      ;;
       (${DEVICE_DISCONNECTED})
-        ${DEBUG} && log $0 "Reloading due to ${DEVICE} reattach..."
-        get_devices
+        # watch_inputs notices the node going and coming back.
+        ${DEBUG} && log $0 "An input device went away"
       ;;
       (${FUNCTION_MODIFIER_A_EVENT})
         if [[ "${line}" =~ ${PRESS} ]]; then
