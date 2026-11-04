@@ -122,6 +122,11 @@ for core in pcsx_rearmed32 pcsx_rearmed; do
   check "${core}: stick is not a d-pad" "has 'input_player1_analog_dpad_mode = \"0\"' '${A}'"
   check "${core}: nothing dead in the append config" "! grep -q '^input_libretro_device_p' '${A}'"
 done
+check "no temporary file left" "[ ! -e '${P}.tmp' ]"
+rm -rf "${RM}"; mkdir -p "${P%/*}"; echo 'input_libretro_device_p1 = "5' >"${P}.tmp"
+psx pcsx_rearmed32
+check "a stale partial write is replaced" \
+  "[ \$(grep -c '^input_libretro_device_p[1-5] = \"517\"$' '${P}') = 5 ] && [ ! -e '${P}.tmp' ]"
 printf '%s\n' 'input_libretro_device_p1 = "1"' 'input_player1_btn_b = "8"' >"${P}"
 psx pcsx_rearmed32
 check "a remap the user saved stays" "has 'input_player1_btn_b = \"8\"' '${P}' && has 'input_libretro_device_p1 = \"1\"' '${P}'"

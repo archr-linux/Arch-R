@@ -878,12 +878,14 @@ function set_psx_pad() {
     esac
     local RMP="${REMAPS_DIR}/${NAME}/${NAME}.rmp"
     [ -e "${RMP}" ] && return
-    mkdir -p "${RMP%/*}"
+    mkdir -p "${RMP%/*}" || return
+    # Whole or not at all: a partial file would never be written again,
+    # and RetroArch rewrites a remap with device 1 when it saves it.
     local i
     for i in 1 2 3 4 5
     do
         echo "input_libretro_device_p${i} = \"${DEVICE}\""
-    done >"${RMP}"
+    done >"${RMP}.tmp" && mv -f "${RMP}.tmp" "${RMP}"
     log "DualShock remap written: ${RMP}"
 }
 
