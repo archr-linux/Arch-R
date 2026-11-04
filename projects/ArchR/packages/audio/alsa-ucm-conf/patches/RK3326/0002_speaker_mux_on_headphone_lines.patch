@@ -1,0 +1,27 @@
+diff --color '--color=never' -ruN a/ucm2/Rockchip/rk817-sound/HiFi.conf b/ucm2/Rockchip/rk817-sound/HiFi.conf
+--- a/ucm2/Rockchip/rk817-sound/HiFi.conf	2026-11-04 14:56:34.728041163 -0300
++++ b/ucm2/Rockchip/rk817-sound/HiFi.conf	2026-11-04 14:56:41.797629348 -0300
+@@ -1,4 +1,5 @@
+ Define.pbk_mux "SPK"
++Include.archr_speaker_path.File "/Rockchip/rk817-sound/speaker-path.conf"
+ 
+ If.1 {
+ 	Condition {
+diff --color '--color=never' -ruN a/ucm2/Rockchip/rk817-sound/speaker-path.conf b/ucm2/Rockchip/rk817-sound/speaker-path.conf
+--- a/ucm2/Rockchip/rk817-sound/speaker-path.conf	1969-12-31 21:00:00.000000000 -0300
++++ b/ucm2/Rockchip/rk817-sound/speaker-path.conf	2026-11-04 14:56:41.784948123 -0300
+@@ -0,0 +1,14 @@
++# Boards whose loudspeaker is fed from the headphone lines (HPOL/HPOR),
++# with no "Internal Speakers Switch" to gate it: the Playback Mux
++# position that reaches the speaker is "HP", and "SPK" (the class-D
++# output) is not wired, so it is silence. The list matches the ArchR
++# quirks that set DEVICE_PLAYBACK_PATH_SPK="HP"; a quirk folder is named
++# after the device tree model, which is what is read here.
++If.archr_speaker_on_hp {
++	Condition {
++		Type RegexMatch
++		String "$${sys:firmware/devicetree/base/model}"
++		Regex "^(Anbernic RG351M|Game Console R33S|Game Console R36S|Gameforce CHI|MagicX XU Mini M|Powkiddy RGB10X|Powkiddy RGB20S)$"
++	}
++	True.Define.pbk_mux "HP"
++}
