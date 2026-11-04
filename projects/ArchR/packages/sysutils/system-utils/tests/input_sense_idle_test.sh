@@ -29,6 +29,7 @@ log() { :; }
 FAKE_SUSPEND="${TMP}/bin/suspend"
 FAKE_SUSPEND_FLAG="${TMP}/suspended.flag"
 IDLE_UNIT=1
+REPORT_HOLD=1
 RUNEMU="${TMP}/runemu.sh"
 PATH="${TMP}/bin:\${PATH}"
 PROFILE
@@ -44,20 +45,28 @@ else
 fi
 echo "E: DEVNAME=\${2}"
 STUB
-# One evtest replays the scenario ("seconds line" per row); the rest idle.
+# One evtest replays the scenario ("seconds line" per row), a second one
+# the second pad's (events2, when there is one); the rest idle.
 cat >"${TMP}/bin/evtest" <<STUB
 #!/bin/bash
+SCRIPT=""
 if mkdir "${TMP}/evtest.first" 2>/dev/null; then
+  SCRIPT="${TMP}/events"
+elif mkdir "${TMP}/evtest.second" 2>/dev/null; then
+  SCRIPT="${TMP}/events2"
+fi
+if [ -f "\${SCRIPT}" ]; then
   while read -r DELAY LINE; do
     sleep "\${DELAY}"
     echo "\${LINE}"
-  done <"${TMP}/events"
+  done <"\${SCRIPT}"
 fi
 exec sleep 600
 STUB
 printf '#!/bin/sh\necho "$*" >>"%s/calls"\n' "${TMP}" >"${TMP}/bin/suspend"
 printf '#!/bin/sh\nexit 0\n' >"${TMP}/bin/mkcontroller"
-printf '#!/bin/sh\nfor a; do last=$a; done\necho "$last" >>"%s/calls"\n' "${TMP}" >"${TMP}/bin/systemd-run"
+# The whole command line of each systemd-run, for the unit's limits.
+printf '#!/bin/sh\necho "$*" >>"%s/units"\nfor a; do last=$a; done\necho "$last" >>"%s/calls"\n' "${TMP}" "${TMP}" >"${TMP}/bin/systemd-run"
 chmod +x "${TMP}/bin/"*
 
 PRESS="Event: time 1.0, type 1 (EV_KEY), code 304 (BTN_SOUTH), value 1"
@@ -68,7 +77,7 @@ run() {
   local LENGTH=${1}
   shift
   printf '%s\n' "$@" >"${TMP}/system.cfg"
-  rm -rf "${TMP}/calls" "${TMP}/udev.first" "${TMP}/evtest.first"
+  rm -rf "${TMP}/calls" "${TMP}/udev.first" "${TMP}/evtest.first" "${TMP}/evtest.second"
   touch "${TMP}/calls"
   setsid bash "${SCRIPT}" >/dev/null 2>&1 &
   local PID=$!
@@ -78,7 +87,8 @@ run() {
   sleep 0.2
   tr '\n' ' ' <"${TMP}/calls" | sed 's/ $//'
 }
-events() { printf '%s\n' "$@" >"${TMP}/events"; }
+events() { printf '%s\n' "$@" >"${TMP}/events"; rm -f "${TMP}/events2"; }
+events2() { printf '%s\n' "$@" >"${TMP}/events2"; }
 check() {
   if [ "${2}" = "${3}" ]; then
     echo "ok   ${1}"
@@ -152,5 +162,44 @@ events "0.3 $(key BTN_SELECT 1)" "0.1 $(key BTN_TR 1)" "0.1 $(key BTN_TR 0)" "0.
 check "select + R1 (RetroArch's save state) does not switch" "$(switcher 2)" ""
 events "0.3 $(key BTN_THUMBR 1)" "0.2 $(key BTN_THUMBR 0)"
 check "another button can be the shortcut" "$(switcher 2 "hotkey.switcher=BTN_THUMBR")" "switch"
+
+# FN + L1 + R1 held REPORT_HOLD (here 1 s): the report, once per hold, in
+# its own unit; let go earlier, nothing. Never a switcher tap.
+report() { run "$@" | tr ' ' '\n' | grep -x -e --osd -e switch | tr '\n' ' ' | sed 's/ $//'; }
+CHORD=("0.3 $(key BTN_MODE 1)" "0.1 $(key BTN_TL 1)" "0.1 $(key BTN_TR 1)")
+events "${CHORD[@]}" "1.3 $(key BTN_TR 0)" "0.1 $(key BTN_TL 0)" "0.1 $(key BTN_MODE 0)"
+check "FN + L1 + R1 held: the report" "$(report 3)" "--osd"
+events "${CHORD[@]}" "0.5 $(key BTN_TL 0)" "0.1 $(key BTN_TR 0)" "0.1 $(key BTN_MODE 0)"
+check "let go before the hold: nothing" "$(report 3)" ""
+events "${CHORD[@]}" "3.2 $(key BTN_MODE 0)"
+check "a long hold is one report" "$(report 4.5)" "--osd"
+events "${CHORD[@]}" "1.3 $(key BTN_MODE 0)" "0.2 $(key BTN_MODE 1)" "1.3 $(key BTN_MODE 0)"
+check "let go and held again: another" "$(report 4.5)" "--osd --osd"
+events "0.3 $(key BTN_TL 1)" "0.1 $(key BTN_TR 1)" "0.1 $(key BTN_MODE 1)" "0.2 $(key BTN_MODE 0)"
+check "FN tapped while L1 + R1 are held: no tap, no report" "$(report 3)" ""
+events "${CHORD[@]}" "1.3 $(key BTN_MODE 0)"
+check "the report can be turned off" "$(report 3 "hotkey.report.enabled=0")" ""
+events "0.3 $(key BTN_MODE 1)" "0.1 $(key BTN_TL 1)" "1.3 $(key BTN_TL 0)" "0.1 $(key BTN_MODE 0)"
+check "FN + L1 alone: nothing" "$(report 3)" ""
+events "${CHORD[@]}" "0.3 /dev/input/event3: error reading: No such device" "1.3 $(key BTN_MODE 1)"
+check "the pad gone mid-hold: no report" "$(report 3)" ""
+events "${CHORD[@]}" "0.3 /dev/input/event3: error reading: No such device" \
+  "0.2 $(key BTN_MODE 1)" "0.1 $(key BTN_TL 1)" "0.1 $(key BTN_TR 1)" "1.3 $(key BTN_MODE 0)"
+check "back and held again: the report" "$(report 3.5)" "--osd"
+events "${CHORD[@]}" "1.3 $(key BTN_MODE 0)"
+check "FN as the hotkey modifier: the report still" "$(report 3 "key.hotkey.a=BTN_MODE")" "--osd"
+# Two pads: the chord counts on one device only.
+events "0.3 $(key BTN_MODE 1)" "1.8 $(key BTN_MODE 0)"
+events2 "0.4 $(key BTN_TL 1)" "0.1 $(key BTN_TR 1)" "1.5 $(key BTN_TR 0)" "0.1 $(key BTN_TL 0)"
+check "FN on one pad, L1 + R1 on another: nothing" "$(report 3)" ""
+events "${CHORD[@]}" "1.5 $(key BTN_MODE 0)"
+events2 "0.6 $(key BTN_TL 1)" "0.2 $(key BTN_TL 0)"
+check "L1 on another pad does not cancel the chord" "$(report 3)" "--osd"
+events "${CHORD[@]}" "1.5 $(key BTN_MODE 0)"
+events2 "0.6 /dev/input/x: error reading: No such device"
+check "another pad gone does not cancel the chord" "$(report 3)" "--osd"
+check "the report's unit is capped" \
+  "$(grep -o 'RuntimeMaxSec=120 -p MemoryMax=128M -p CPUQuota=50%' "${TMP}/units" | sort -u)" \
+  "RuntimeMaxSec=120 -p MemoryMax=128M -p CPUQuota=50%"
 
 exit ${FAILED}

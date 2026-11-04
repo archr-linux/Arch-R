@@ -181,6 +181,14 @@ check "a value over lines takes the rest of the file" \
 check "private key takes the rest" "$(tail -n 1 "${X}/pstore/console-ramoops-0")" "<resto do arquivo removido>"
 check "no temporary files left" "$(find "${R}/storage/roms/relatorios" -name '*.part' | wc -l)" "0"
 
+# --osd: a card as it starts and one with the result; none without it.
+fake archr-osd "echo \"\$*\" >>'${TMP}/osd'"
+PATH="${TMP}/bin:${PATH}" ARCHR_REPORT_ROOT="${R}" bash "${SCRIPT}" >/dev/null
+check "no card without --osd" "$(cat "${TMP}/osd" 2>/dev/null)" ""
+OUT=$(PATH="${TMP}/bin:${PATH}" ARCHR_REPORT_ROOT="${R}" bash "${SCRIPT}" --osd)
+check "--osd: same report" "$?:$(grep -c '^REPORT=' <<<"${OUT}")" "0:1"
+check "--osd: start, then done" "$(tr '\n' '|' <"${TMP}/osd")" "send report start|send report done|"
+
 # Nothing left to zip (every file failed the filter): exit 1, no report.
 mkdir -p "${TMP}/broken"
 printf '#!/bin/sh\nexit 1\n' >"${TMP}/broken/awk"
@@ -195,6 +203,9 @@ check "no zip added" "$(find "${R}/storage/roms/relatorios" -name '*.zip' | wc -
 chmod 500 "${R}/storage/roms/relatorios"
 OUT=$(PATH="${TMP}/bin:${PATH}" ARCHR_REPORT_ROOT="${R}" bash "${SCRIPT}" 2>/dev/null)
 check "unwritable folder fails" "$?:${OUT}" "1:"
+rm -f "${TMP}/osd"
+PATH="${TMP}/bin:${PATH}" ARCHR_REPORT_ROOT="${R}" bash "${SCRIPT}" --osd >/dev/null 2>&1
+check "--osd: a failure says so" "$(tr '\n' '|' <"${TMP}/osd")" "send report start|send report failed|"
 chmod 700 "${R}/storage/roms/relatorios"
 
 exit ${FAILED}

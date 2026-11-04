@@ -3,13 +3,16 @@
 # Copyright (C) 2026 ArchR (https://github.com/archr-linux/Arch-R)
 #
 # archr-report: one zip with what a bug report needs, in a folder any PC
-# reads (roms/relatorios). Settings > System > Diagnostics runs it; it is
-# also meant to be run by hand (SSH) or by a button combination later.
+# reads (roms/relatorios). Settings > System > Diagnostics runs it; so does
+# the FN + L1 + R1 chord (input_sense), even in a game; and it can be run
+# by hand (SSH).
 #
 #   archr-report        builds the report; prints on stdout
 #                         REPORT=/storage/roms/relatorios/archr-relatorio-<date>.zip
 #                         SIZE=<bytes>
 #                       exit 1 when no report could be written.
+#   archr-report --osd  the same, with a card on screen (archr-osd) as it
+#                       starts and another with the result.
 #
 # What goes in: hardware, kernel and dmesg, the journal of this boot and of
 # the previous one (when the journal is persistent), failed services,
@@ -33,8 +36,24 @@ NAME="archr-relatorio-${STAMP}"
 CAP=$((2 * 1024 * 1024))
 LIMIT=15
 
+# The cards (--osd): "report start", then "report done" or "report failed"
+# by the exit status. The overlay's socket is in the session's runtime dir.
+: "${OSD:=archr-osd}"
+NOTIFY=""
+[ "${1:-}" = --osd ] && NOTIFY=1
+notify() {
+  [ -n "${NOTIFY}" ] || return 0
+  XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/var/run/0-runtime-dir}" "${OSD}" send report "$1" >/dev/null 2>&1
+  return 0
+}
+finish() {
+  [ -z "${WORK}" ] || rm -rf "${WORK}"
+  if [ "$1" = 0 ]; then notify "done"; else notify failed; fi
+}
+notify start
+WORK=""
+trap 'finish $?' EXIT
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/archr-report.XXXXXX") || exit 1
-trap 'rm -rf "${WORK}"' EXIT
 DIR="${WORK}/${NAME}"
 mkdir -p "${DIR}"
 

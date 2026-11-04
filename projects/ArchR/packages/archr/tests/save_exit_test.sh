@@ -9,6 +9,8 @@
 
 # shellcheck disable=SC2016 # stubs and their arguments expand when they run
 set -u
+# The card's runtime dir must come from the script, not this shell.
+unset XDG_RUNTIME_DIR
 HERE=$(cd "$(dirname "$0")" && pwd)
 SCRIPTS="$(dirname "${HERE}")/sources/scripts"
 FUNCTIONS="$(dirname "${HERE}")/profile.d/001-functions"
@@ -39,7 +41,7 @@ export TICK=0.05 STATE_WAIT=20 CLOSE_WAIT=40 LOCK_WAIT=20
 mkdir -p "${TMP}/run" "${TMP}/bin" "${STATES_DIR}/snes" "${MUPEN_STATES}"
 SAVE_EXIT="${SCRIPTS}/archr-game-save-exit"
 printf '#!/bin/sh\nfor a; do f=$a; done\necho picture >"$f"\n' >"${GRIM}"
-printf '#!/bin/sh\necho "$*" >>"%s/osd"\n' "${TMP}" >"${OSD}"
+printf '#!/bin/sh\necho "$*" >>"%s/osd"\necho "${XDG_RUNTIME_DIR}" >"%s/osd-dir"\n' "${TMP}" "${TMP}" >"${OSD}"
 # The mupen64plus keys: the emulator writes the state of the slot chosen.
 cat >"${KEYPRESS}" <<STUB
 #!/bin/sh
@@ -110,6 +112,7 @@ game "${ROM}" snes retroarch snes9x
 check "no automatic state: exit 3" "$?" "3"
 check "no automatic state: the game stays open" "$(running)" "running"
 check "no automatic state: the card says so" "$(cat "${TMP}/osd")" "send nostate"
+check "the card reaches the session's overlay" "$(cat "${TMP}/osd-dir")" "/var/run/0-runtime-dir"
 check "no automatic state: no switcher" "$([ -e "${SWITCHER}" ] && echo yes || echo no)" "no"
 printf 'savestate_auto_save = "true"\ncheevos_hardcore_mode_enable = "1"\n' >"${RETROARCH_RUN_CFG}"
 "${SAVE_EXIT}" switch >/dev/null 2>&1

@@ -126,7 +126,9 @@ alive() {
 # A card on screen saying the emulator saves no state; the game stays.
 refuse() {
   rm -f "${SWITCHER}"
-  "${OSD}" send nostate 2>/dev/null
+  # Run as a unit (systemd-run), with no session around: the overlay's
+  # socket is in the session's runtime dir.
+  XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/var/run/0-runtime-dir}" "${OSD}" send nostate 2>/dev/null
   echo "archr-game-save-exit: ${EMULATOR} cannot save a state now, the game stays open" >&2
   exit 3
 }
