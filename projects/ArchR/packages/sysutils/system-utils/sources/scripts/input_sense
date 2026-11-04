@@ -35,6 +35,16 @@ set -o pipefail
 #   hotkey.brightness=BTN_DPAD_RIGHT+BTN_DPAD_LEFT  function modifier + up/down
 #   hotkey.brightness.enabled=1
 #
+#   hotkey.switcher=BTN_MODE            a tap on this button alone, under
+#   hotkey.switcher.enabled=1           0.6 s (FN on the R36S: not in the SDL
+#                                       pad mapping; mupen64plus only uses it
+#                                       as a modifier with another button,
+#                                       DraStic opens its menu): save the game
+#                                       and open the launcher's switcher
+#                                       (archr-game-save-exit switch); another
+#                                       button pressed while it is held, or a
+#                                       longer hold, cancels it
+#
 #   idle.timeout=0                      minutes without any key event, then
 #   idle.timeout.game=0                 the power button's fake suspend; the
 #                                       second applies while a game runs.
@@ -186,6 +196,15 @@ HOTKEY_BRIGHTNESS=$(hotkey_pair hotkey.brightness)
 [ -z "${HOTKEY_BRIGHTNESS}" ] && HOTKEY_BRIGHTNESS="BTN_DPAD_RIGHT BTN_DPAD_LEFT"
 read -r HOTKEY_BRIGHTNESS_UP HOTKEY_BRIGHTNESS_DOWN <<< "${HOTKEY_BRIGHTNESS}"
 HOTKEY_BRIGHTNESS_ENABLED=$(hotkey_enabled hotkey.brightness)
+
+HOTKEY_SWITCHER=$(hotkey_button hotkey.switcher BTN_MODE)
+HOTKEY_SWITCHER_ENABLED=$(hotkey_enabled hotkey.switcher)
+FUNCTION_HOTKEY_SWITCHER_EVENT=$(press_event "${HOTKEY_SWITCHER}" '*')
+# Pressed with nothing else since: its release is a tap, when it came
+# within SWITCHER_TAP milliseconds (now_ms, below, sets NOW).
+SWITCHER_ARMED=false
+SWITCHER_DOWN=0
+: "${SWITCHER_TAP:=600}"
 
 FUNCTION_HOTKEY_DPAD_UP_EVENT=$(press_event "${HOTKEY_VOLUME_UP}")
 FUNCTION_HOTKEY_DPAD_DOWN_EVENT=$(press_event "${HOTKEY_VOLUME_DOWN}")
@@ -479,6 +498,8 @@ set +e
 # 0: watch it, 1: not an input we use, 2: udev has not described it yet.
 input_wanted() {
   local INFO
+  # archr-keypress's own keyboard (the emulators' save keys) is not ours.
+  [ "$(cat "${INPUT_SYSFS:-/sys/class/input}/${1##*/}/device/name" 2>/dev/null)" = archr-keypress ] && return 1
   INFO=$(udevadm info "${1}" 2>/dev/null)
   [[ "${INFO}" =~ ID_INPUT_(KEY|JOYSTICK|TOUCHSCREEN)= ]] && return 0
   [[ "${INFO}" == *ID_INPUT=* ]] && return 1
@@ -486,7 +507,10 @@ input_wanted() {
 }
 watch_inputs() {
   local -A WATCHED=()
-  local DEV SEEN="" NOW NODES REMAP="" CHANGED
+  # REMAP_DUE: a device we watch came or went (the first scan only finds
+  # the ones already known); nodes nobody watches (archr-keypress's
+  # keyboard) never remap the controllers.
+  local DEV SEEN="" NOW NODES REMAP="" REMAP_DUE="" FIRST=1
   for DEV in "${INPUT_DEVICES[@]}"; do
     evtest "${DEV}" 2>&1 &
     WATCHED[${DEV}]=$!
@@ -495,7 +519,6 @@ watch_inputs() {
     NODES=("${INPUT_DIR}"/event[0-9]*)
     NOW=${NODES[*]}
     if [ "${NOW}" != "${SEEN}" ]; then
-      CHANGED=${SEEN:+1}
       SEEN=${NOW}
       for DEV in "${INPUT_DIR}"/event[0-9]*; do
         [ -e "${DEV}" ] || continue
@@ -509,19 +532,23 @@ watch_inputs() {
         ${DEBUG} && log $0 "Watching ${DEV}"
         evtest "${DEV}" 2>&1 &
         WATCHED[${DEV}]=$!
+        [ -n "${FIRST}" ] || REMAP_DUE=1
       done
+      FIRST=""
       # The controller mapping follows (it takes seconds on an R36S): in
       # the background, after the new devices are already heard.
-      if [ -n "${CHANGED}" ] && { [ -z "${REMAP}" ] || ! kill -0 "${REMAP}" 2>/dev/null; }; then
-        mkcontroller >/dev/null 2>&1 &
-        REMAP=$!
-      fi
+    fi
+    if [ -n "${REMAP_DUE}" ] && { [ -z "${REMAP}" ] || ! kill -0 "${REMAP}" 2>/dev/null; }; then
+      REMAP_DUE=""
+      mkcontroller >/dev/null 2>&1 &
+      REMAP=$!
     fi
     # An evtest that ended on a node still present (a read error) starts
     # again; a vanished node is forgotten until it comes back.
     for DEV in "${!WATCHED[@]}"; do
       kill -0 "${WATCHED[${DEV}]}" 2>/dev/null && continue
       unset "WATCHED[${DEV}]"
+      [ -e "${DEV}" ] || REMAP_DUE=1
       if [ -e "${DEV}" ]; then
         evtest "${DEV}" 2>&1 &
         WATCHED[${DEV}]=$!
@@ -533,6 +560,30 @@ watch_inputs() {
 
 ### Take action when a known pattern of keys are pressed together.
 watch_inputs | grep --line-buffered "EV_KEY\|EV_SW\|error reading" | while next_event; do
+
+    # The switcher's tap, before the actions below (the button may also be
+    # a modifier there): pressed, then released with nothing in between.
+    # Its own unit: it outlives a restart of this service, and a second
+    # tap while it saves finds the unit running.
+    # (A case, as below: [[ == ]] would read "*(...)" as an extglob.)
+    case ${line} in
+      (${FUNCTION_HOTKEY_SWITCHER_EVENT})
+        if [[ "${line}" =~ ${PRESS} ]]; then
+          SWITCHER_ARMED=${HOTKEY_SWITCHER_ENABLED}
+          now_ms
+          SWITCHER_DOWN=${NOW}
+        elif [[ "${line}" =~ ${RELEASE} ]] && ${SWITCHER_ARMED} && now_ms &&
+             [ $(( NOW - SWITCHER_DOWN )) -lt "${SWITCHER_TAP}" ]; then
+          SWITCHER_ARMED=false
+          ${DEBUG} && log $0 "${HOTKEY_SWITCHER}: Save and switch"
+          systemd-run --no-block --collect --quiet --unit=archr-save-exit \
+            /usr/bin/archr-game-save-exit switch >/dev/null 2>&1
+        fi
+      ;;
+      (*)
+        ${SWITCHER_ARMED} && [[ "${line}" =~ ${PRESS} ]] && SWITCHER_ARMED=false
+      ;;
+    esac
 
     # Parse lines from any evtest instance:
     case ${line} in

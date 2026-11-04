@@ -1,0 +1,286 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ArchR (https://github.com/archr-linux/Arch-R)
+#
+# "Save and exit", called from outside the emulator: by the switcher
+# shortcut (input_sense), the critical battery guard and the power off that
+# follows a long suspend.
+#
+#   archr-game-save-exit switch|battery|suspend
+#       switch: saves the running game's state and closes it, only where
+#       the state is sure; otherwise the game stays open and archr-osd
+#       says the emulator saves no state (exit 3).
+#       battery, suspend: the power goes anyway; the state is saved where
+#       possible and the game always closes.
+#       Exit 0 once the game has closed, 1 when no game runs, 2 for a wrong
+#       argument, 3 when the switcher left the game open.
+#   archr-game-save-exit --forget ROM
+#       runemu.sh, as a game starts: its old record goes (the state no longer
+#       holds the latest progress), and so does the "last game" mark.
+#
+# How each emulator saves, never in a slot the player uses:
+#   retroarch    its automatic state (.state.auto), written by RetroArch
+#                itself when SIGTERM closes it; runemu.sh turns
+#                savestate_auto_save on for the run (not in netplay, and
+#                hardcore achievements refuse states), and the core must
+#                save states at all (savestate = "true" in its .info; not
+#                ScummVM, EasyRPG or FreeJ2ME). Closing is the save, so the
+#                state is confirmed after it: fresh and complete.
+#   duckstation  SIGINT: with SaveStateOnExit it writes the game's resume
+#                state (<serial>_resume.sav), its own slot apart from the
+#                player's; SIGTERM closes it without saving. Closing is the
+#                save, as for RetroArch.
+#   mupen64plus  slot 9 on a short-lived uinput keyboard (archr-keypress):
+#                9 and F5 (save); once the .st9 file is complete, the key of
+#                the slot it had, then SIGTERM closes the game.
+#   the others   no state from outside (PPSSPP and Flycast only save to the
+#                player's current slot); battery and suspend close them with
+#                their cartridge saves.
+# Whatever does not close in time is killed; a state not confirmed before
+# that is not recorded.
+#
+# Records, newest first, at most 20 (one per ROM), tab separated:
+#   time reason platform emulator core state picture rom
+# in ${RESUME_DIR}/resume.tsv; the line of the game closed last is also
+# ${RESUME_DIR}/resume-last, which the launcher reads at power on. The
+# picture is the screen as the player left it (PICTURE_FROM: one taken
+# already, before a notice covered the game). "switch" leaves ${SWITCHER}
+# for the launcher to open its switcher; ${SAVING} holds this script's PID
+# while it works, so the launcher waits for the record.
+
+: "${CURRENT_GAME:=/run/archr/current-game}"
+: "${RESUME_DIR:=/storage/.config/archr}"
+: "${SWITCHER:=/run/archr/switcher}"
+: "${SAVING:=/run/archr/saving}"
+: "${STATES_DIR:=/storage/roms/savestates}"
+: "${MUPEN_STATES:=/storage/roms/n64}"
+: "${DUCK_CFG:=/storage/.config/duckstation/settings.ini}"
+: "${MUPEN_CFG:=/tmp/mupen64plus/mupen64plus.cfg}"
+: "${RETROARCH_RUN_CFG:=/tmp/.retroarch.cfg}"
+: "${CORES_DIR:=/tmp/cores}"
+: "${KEYPRESS:=/usr/bin/archr-keypress}"
+: "${OSD:=archr-osd}"
+: "${GRIM:=grim}"
+: "${KILL_DATA:=/tmp/.process-kill-data}"
+# Tenths of a second: for a state file to appear, for the game to close
+# after the signal (RetroArch takes about 1 s with its state on the R36S),
+# and for another run holding the lock (battery, suspend).
+: "${STATE_WAIT:=50}"
+: "${CLOSE_WAIT:=200}"
+: "${LOCK_WAIT:=120}"
+: "${TICK:=0.1}"
+KEEP=20
+MUPEN_SLOT=9
+
+TSV="${RESUME_DIR}/resume.tsv"
+LAST="${RESUME_DIR}/resume-last"
+
+# Removes ROM's line from the records (and the last mark when it is ROM's).
+forget() {
+  local rom="$1" tmp
+  if [ -f "${TSV}" ]; then
+    tmp="${TSV}.$$"
+    awk -F'\t' -v rom="${rom}" '$8 != rom' "${TSV}" >"${tmp}" && mv -f "${tmp}" "${TSV}"
+  fi
+  if [ -f "${LAST}" ] && [ "$(cut -f8 "${LAST}")" = "${rom}" ]; then
+    rm -f "${LAST}"
+  fi
+}
+
+# Writes LINE first in the records and as the last mark, atomically.
+record() {
+  local line="$1" rom="$2" tmp
+  mkdir -p "${RESUME_DIR}" || return 1
+  tmp="${TSV}.$$"
+  {
+    printf '%s\n' "${line}"
+    [ -f "${TSV}" ] && awk -F'\t' -v rom="${rom}" '$8 != rom' "${TSV}"
+  } | head -n "${KEEP}" >"${tmp}" && mv -f "${tmp}" "${TSV}" || return 1
+  printf '%s\n' "${line}" >"${LAST}.$$" && mv -f "${LAST}.$$" "${LAST}"
+}
+
+# FILE changed during this run and stopped growing: written whole.
+complete() {
+  local size
+  [ -f "$1" ] && [ "$1" -nt "${MARK}" ] || return 1
+  size=$(stat -c %s "$1")
+  sleep 0.5
+  [ "$(stat -c %s "$1")" = "${size}" ] && [ "${size}" -gt 0 ]
+}
+
+# Waits up to STATE_WAIT tenths for FILE to be complete.
+wait_state() {
+  local n=0
+  while [ "${n}" -lt "${STATE_WAIT}" ]; do
+    complete "$1" && return 0
+    sleep "${TICK}"
+    n=$((n + 1))
+  done
+  return 1
+}
+
+alive() {
+  kill -0 "$1" 2>/dev/null
+}
+
+# A card on screen saying the emulator saves no state; the game stays.
+refuse() {
+  rm -f "${SWITCHER}"
+  "${OSD}" send nostate 2>/dev/null
+  echo "archr-game-save-exit: ${EMULATOR} cannot save a state now, the game stays open" >&2
+  exit 3
+}
+
+case "$1" in
+  --forget)
+    [ -n "$2" ] || exit 2
+    forget "$2"
+    exit 0
+    ;;
+  switch|battery|suspend) REASON="$1" ;;
+  *)
+    echo "usage: archr-game-save-exit switch|battery|suspend | --forget ROM" >&2
+    exit 2
+    ;;
+esac
+
+ROM="" PID="" PLATFORM="" EMULATOR="" CORE=""
+if [ -r "${CURRENT_GAME}" ]; then
+  { IFS= read -r ROM; IFS= read -r PID; IFS= read -r PLATFORM; IFS= read -r EMULATOR; IFS= read -r CORE; } <"${CURRENT_GAME}"
+fi
+if [ -z "${ROM}" ] || [[ ! "${PID}" =~ ^[0-9]+$ ]] || ! alive "${PID}"; then
+  echo "archr-game-save-exit: no game is running" >&2
+  exit 1
+fi
+
+# One run at a time. A second tap of the shortcut does nothing; the battery
+# and the suspend wait for the run going on (it may end the game first).
+mkdir -p "${SAVING%/*}"
+exec 9>"${SAVING}.lock"
+if [ "${REASON}" = switch ]; then
+  flock -n 9 || exit 0
+else
+  # BusyBox flock has no -w: try every tick, up to LOCK_WAIT tenths.
+  n=0
+  until flock -n 9; do
+    if [ "${n}" -ge "${LOCK_WAIT}" ]; then
+      echo "archr-game-save-exit: lock busy, going on" >&2
+      break
+    fi
+    sleep "${TICK}"
+    n=$((n + 1))
+  done
+  alive "${PID}" || exit 0
+fi
+printf '%s\n' "$$" >"${SAVING}"
+MARK=$(mktemp "${TMPDIR:-/tmp}/save-exit.XXXXXX") || exit 1
+trap 'rm -f "${SAVING}" "${MARK}"' EXIT
+
+# How this emulator saves, and whether it can now.
+STEM="${ROM##*/}"
+STEM="${STEM%.*}"
+METHOD=none
+STATE_FILE=""
+case "${EMULATOR}" in
+  retroarch)
+    if grep -qx 'savestate = "true"' "${CORES_DIR}/${CORE}_libretro.info" 2>/dev/null &&
+       grep -qx 'savestate_auto_save = "true"' "${RETROARCH_RUN_CFG}" 2>/dev/null &&
+       ! grep -qxE 'cheevos_hardcore_mode_enable = "(true|1)"' "${RETROARCH_RUN_CFG}" 2>/dev/null; then
+      METHOD="exit"
+      STATE_FILE="${STATES_DIR}/${PLATFORM}/${STEM}.state.auto"
+    fi
+    ;;
+  mupen64plus) METHOD=key ;;
+  duckstation)
+    grep -qE '^SaveStateOnExit *= *true' "${DUCK_CFG}" 2>/dev/null && METHOD="exit"
+    ;;
+esac
+[ "${REASON}" = switch ] && [ "${METHOD}" = none ] && refuse
+
+# The screen as the player left it, for the switcher and the power on.
+PICTURE="${RESUME_DIR}/pictures/${PLATFORM}/${STEM//[:?*\"<>|\\]/_}.png"
+mkdir -p "${PICTURE%/*}"
+if [ -f "${PICTURE_FROM}" ]; then
+  cp -f "${PICTURE_FROM}" "${PICTURE}.$$"
+else
+  XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/var/run/0-runtime-dir}" WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-1}" \
+    "${GRIM}" "${PICTURE}.$$" 2>/dev/null
+fi
+if [ -s "${PICTURE}.$$" ]; then
+  mv -f "${PICTURE}.$$" "${PICTURE}"
+else
+  rm -f "${PICTURE}.$$"
+  PICTURE=""
+fi
+
+STATE=""
+if [ "${METHOD}" = key ]; then
+  # Slot 9, then back to the slot in use (CurrentStateSlot of this run).
+  SLOT=$(sed -n 's/^CurrentStateSlot *= *\([0-9]\).*/\1/p' "${MUPEN_CFG}" 2>/dev/null)
+  STATE_FILE=""
+  if "${KEYPRESS}" "${MUPEN_SLOT}" F5; then
+    n=0
+    while [ -z "${STATE_FILE}" ] && [ "${n}" -lt "${STATE_WAIT}" ]; do
+      STATE_FILE=$(find "${MUPEN_STATES}" -maxdepth 1 -type f -name "*.st${MUPEN_SLOT}" -newer "${MARK}" 2>/dev/null | head -n1)
+      [ -n "${STATE_FILE}" ] || { sleep "${TICK}"; n=$((n + 1)); }
+    done
+  fi
+  [ -n "${STATE_FILE}" ] && wait_state "${STATE_FILE}" && STATE="${STATE_FILE}"
+  # Only now, with the state whole (or given up on), the slot it had.
+  "${KEYPRESS}" "${SLOT:-0}"
+  [ -z "${STATE}" ] && [ "${REASON}" = switch ] && refuse
+fi
+[ "${REASON}" = switch ] && : >"${SWITCHER}"
+
+# The processes to close: the names the exit shortcut kills (set_kill),
+# without its -9.
+TARGETS=""
+[ -r "${KILL_DATA}" ] && TARGETS=$(tr -s ' ' '\n' <"${KILL_DATA}" | grep -v '^-' | tr '\n' ' ')
+[ -n "${TARGETS// /}" ] || TARGETS="${EMULATOR}"
+# DuckStation's runs under an AppImage wrapper; it saves on SIGINT only.
+CLOSE=TERM
+if [ "${EMULATOR}" = duckstation ]; then
+  TARGETS=duckstation-sa
+  CLOSE=INT
+fi
+# killall, as the exit shortcut: BusyBox's pkill -x compares argv[0] as
+# written (/usr/bin/retroarch), so it matched nothing.
+signal() {
+  local name
+  for name in ${TARGETS}; do
+    killall "-$1" "${name}" 2>/dev/null
+  done
+}
+
+# A state written on the way out: RetroArch's, or DuckStation's resume
+# state, named by the game's serial (the newest one written since).
+exit_state() {
+  [ "${METHOD}" = exit ] && [ -z "${STATE}" ] || return 0
+  if [ "${EMULATOR}" = duckstation ]; then
+    STATE_FILE=$(find "${STATES_DIR}/${PLATFORM}" -maxdepth 1 -type f -name '*_resume.sav' \
+      -newer "${MARK}" 2>/dev/null | head -n1)
+  fi
+  [ -n "${STATE_FILE}" ] && complete "${STATE_FILE}" && STATE="${STATE_FILE}"
+}
+
+signal "${CLOSE}"
+n=0
+while alive "${PID}" && [ "${n}" -lt "${CLOSE_WAIT}" ]; do
+  # RetroArch's state is complete before it ends: no need to wait more.
+  exit_state
+  sleep "${TICK}"
+  n=$((n + 1))
+done
+exit_state
+if alive "${PID}"; then
+  echo "archr-game-save-exit: ${TARGETS} did not close, killing it" >&2
+  signal KILL
+fi
+
+# The state, then the record, then the card.
+LINE=$(printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' "$(date +%s)" "${REASON}" "${PLATFORM}" \
+  "${EMULATOR}" "${CORE}" "${STATE}" "${PICTURE}" "${ROM}")
+record "${LINE}" "${ROM}" || echo "archr-game-save-exit: cannot write ${TSV}" >&2
+sync
+echo "archr-game-save-exit: ${REASON} ${EMULATOR} state=${STATE:-none}"
+exit 0

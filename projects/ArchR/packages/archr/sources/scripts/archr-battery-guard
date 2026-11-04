@@ -1,0 +1,116 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ArchR (https://github.com/archr-linux/Arch-R)
+#
+# Watches the battery (Configurações › Sistema › Energia):
+#   power.battery.low=10       percent: a warning on screen (archr-osd), once
+#                              per discharge; 0 turns it off
+#   power.battery.critical=3   percent: a countdown on screen, then the game
+#                              is saved and closed (archr-game-save-exit
+#                              battery) and the device powers off; 0 off
+# Two readings in a row must be at or under the critical level (the fuel
+# gauge wavers near the end). A charger cancels the countdown, and so does a
+# level that rose during it; with a charger nothing happens at all. The
+# kernel says "Not charging" with a charger in and a full battery: anything
+# but "Discharging" is a charger.
+
+# shellcheck source=/dev/null
+. "${BATTERY_GUARD_PROFILE:-/etc/profile.d/001-functions}"
+
+: "${BATTERY:=/sys/class/power_supply/battery}"
+: "${CURRENT_GAME:=/run/archr/current-game}"
+: "${SAVE_EXIT:=/usr/bin/archr-game-save-exit}"
+: "${POWEROFF:=systemctl poweroff}"
+: "${GRIM:=grim}"
+: "${OSD:=archr-osd}"
+: "${INTERVAL:=10}"
+: "${COUNTDOWN:=8}"
+# Host tests stop after this many readings.
+: "${ROUNDS:=0}"
+
+percent() {
+  local value
+  value=$(get_setting "$1")
+  [[ "${value}" =~ ^[0-9]{1,2}$ ]] && echo "${value}" || echo "$2"
+}
+
+charging() {
+  [ "$(cat "${BATTERY}/status" 2>/dev/null)" != Discharging ]
+}
+
+level() {
+  cat "${BATTERY}/capacity" 2>/dev/null
+}
+
+game_running() {
+  local rom="" pid=""
+  [ -r "${CURRENT_GAME}" ] && { IFS= read -r rom; IFS= read -r pid; } <"${CURRENT_GAME}"
+  [ -n "${rom}" ] && [[ "${pid}" =~ ^[0-9]+$ ]] && kill -0 "${pid}" 2>/dev/null
+}
+
+# The countdown on screen, a message a second; 0 when it ran out, 1 when a
+# charger came or the level rose above the one it started at.
+countdown() {
+  local level="$1" game="$2" left now
+  for ((left = COUNTDOWN; left > 0; left--)); do
+    now=$(level)
+    charging && return 1
+    [[ "${now}" =~ ^[0-9]+$ ]] && [ "${now}" -gt "${level}" ] && return 1
+    ${OSD} send battery "${level}" "${left}" "${COUNTDOWN}" "${game}" 2>/dev/null
+    sleep 1
+  done
+  now=$(level)
+  ! charging && ! { [[ "${now}" =~ ^[0-9]+$ ]] && [ "${now}" -gt "${level}" ]; }
+}
+
+WARNED=0
+BELOW=0
+ROUND=0
+while :; do
+  LEVEL=$(level)
+  if [[ "${LEVEL}" =~ ^[0-9]+$ ]] && ! charging; then
+    LOW=$(percent power.battery.low 10)
+    CRITICAL=$(percent power.battery.critical 3)
+    # At the critical level the countdown says it all (and the game's
+    # picture, taken before it, must not hold this warning).
+    if [ "${LOW}" -gt 0 ] && [ "${LEVEL}" -le "${LOW}" ] && [ "${WARNED}" = 0 ] &&
+       { [ "${CRITICAL}" -eq 0 ] || [ "${LEVEL}" -gt "${CRITICAL}" ]; }; then
+      ${OSD} send battery-low "${LEVEL}" 2>/dev/null
+      WARNED=1
+    fi
+    if [ "${CRITICAL}" -gt 0 ] && [ "${LEVEL}" -le "${CRITICAL}" ]; then
+      # The first reading under the limit: a later rise above it cancels.
+      [ "${BELOW}" -eq 0 ] && FIRST=${LEVEL}
+      BELOW=$((BELOW + 1))
+    else
+      BELOW=0
+    fi
+    if [ "${BELOW}" -ge 2 ]; then
+      GAME=menu
+      SHOT=""
+      if game_running; then
+        GAME=game
+        # The game as it is, before the card covers it.
+        SHOT=$(mktemp "${TMPDIR:-/tmp}/battery-shot.XXXXXX") &&
+          XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/var/run/0-runtime-dir}" WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-1}" \
+            "${GRIM}" -t png "${SHOT}" 2>/dev/null
+      fi
+      if countdown "${FIRST}" "${GAME}"; then
+        echo "archr-battery-guard: battery at ${LEVEL}%, powering off"
+        [ "${GAME}" = game ] && PICTURE_FROM="${SHOT}" "${SAVE_EXIT}" battery
+        rm -f "${SHOT}"
+        ${POWEROFF}
+        exit 0
+      fi
+      rm -f "${SHOT}"
+      BELOW=0
+    fi
+  else
+    # A charger (or no reading): the next discharge warns again.
+    WARNED=0
+    BELOW=0
+  fi
+  ROUND=$((ROUND + 1))
+  [ "${ROUNDS}" -gt 0 ] && [ "${ROUND}" -ge "${ROUNDS}" ] && exit 0
+  sleep "${INTERVAL}"
+done

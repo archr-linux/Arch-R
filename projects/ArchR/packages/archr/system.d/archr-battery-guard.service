@@ -1,0 +1,14 @@
+[Unit]
+Description=ArchR critical and low battery guard
+RequiresMountsFor=/storage
+After=archr-automount.service
+ConditionPathExists=/sys/class/power_supply/battery/capacity
+
+[Service]
+Environment=HOME=/storage
+ExecStart=/usr/bin/archr-battery-guard
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -66,7 +66,9 @@ check "the state file reaches mupen64plus" \
 
 # The running game is recorded for the screenshot shortcut and forgotten
 # when runemu.sh quits.
-check "the game and the PID are recorded" 'grep -q "printf '"'"'%s\\\\n%s\\\\n'"'"' \"\${ROMNAME}\" \"\$\$\" >\"\${CURRENT_GAME}\"" "${RUNEMU}"'
+# Then system, emulator and core, for archr-game-save-exit.
+check "the game, the PID, system, emulator and core are recorded" \
+  'grep -q "\"\${ROMNAME}\" \"\$\$\" \"\${PLATFORM}\" \"\${EMULATOR}\" \"\${CORE}\" >\"\${CURRENT_GAME}\"" "${RUNEMU}"'
 check "and forgotten on quit" \
   '[ "$(sed -n "/^function quit() {/,/^}/p" "${RUNEMU}" | grep -c "rm -f \"\${CURRENT_GAME}\"")" = 1 ]'
 
