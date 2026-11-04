@@ -204,7 +204,6 @@ else
   DPAD_EVENTS=true
 fi
 
-CONTROLLER_DISCONNECTED="*error reading: No such device"
 DEVICE_DISCONNECTED="*error reading: No such device"
 
 ### Matches if a button was pressed (1), released (0) or held down (2)
@@ -216,12 +215,8 @@ RELEASE='value 0'
 FN_A_PRESSED=false
 FN_B_PRESSED=false
 
-### Volume repeat variables
-VOLUME_REPEAT_DELAY=0.3  # Initial delay before repeating starts (seconds)
-VOLUME_REPEAT_INTERVAL=0.1  # Interval between repeats (seconds)
 VOLUME_UP_PRESSED=false
 VOLUME_DOWN_PRESSED=false
-VOLUME_REPEAT_PID=""
 
 ### Allow actions to be overridden in system.cfg
 FN_A_ACTION_UP="$(get_setting key.function.a.up)"
@@ -239,56 +234,49 @@ FN_AB_ACTION_DOWN="$(get_setting key.function.ab.down)"
 [ -z "${FN_AB_ACTION_UP}" ]   && FN_AB_ACTION_UP="wifictl enable"
 [ -z "${FN_AB_ACTION_DOWN}" ] && FN_AB_ACTION_DOWN="wifictl disable"
 
-### Level pill (archr-osd), or a mako notification when it is not running.
+### Level pill (archr-osd) showing the current level; archr-levels sends it.
 show_osd() {
-  local key=audio.volume label=Volume level
-  if [ "${1}" = brightness ]; then
-    key=display.brightness
-    label=Brightness
-  fi
-  level=$(get_setting "${key}")
-  archr-osd send "${1}" "${level}" 2>/dev/null || mako-notify "${label}: ${level}%"
+  archr-levels "${1}" osd >/dev/null 2>&1
 }
 
-### Volume repeat function
-start_volume_repeat() {
-    local direction=$1
-
-    # Stop any existing volume repeat
-    stop_volume_repeat
-
-    # Initial volume adjustment
-    volume ${direction}
-    show_osd volume
-
-    # Start background process for repeating volume adjustments
-    (
-        sleep ${VOLUME_REPEAT_DELAY}
-        while true; do
-            # Check if button is still pressed before adjusting
-            if { [ "${direction}" = "up" ] && [ "${VOLUME_UP_PRESSED}" = true ]; } || \
-               { [ "${direction}" = "down" ] && [ "${VOLUME_DOWN_PRESSED}" = true ]; }; then
-                volume ${direction}
-                show_osd volume
-                sleep ${VOLUME_REPEAT_INTERVAL}
-            else
-                break
-            fi
-        done
-    ) &
-
-    VOLUME_REPEAT_PID=$!
-    ${DEBUG} && log $0 "Started volume repeat (${direction}) with PID: ${VOLUME_REPEAT_PID}"
+### Volume and brightness while a button is held: archr-levels steps once
+### now, then keeps going, faster and faster, until the release. A hold
+### lasts 400 ms unless renewed: a timer here renews it every 200 ms while
+### the button is down (the dpad has no key repeat), so if this script dies
+### the hold ends by itself. Only the button that started it ends it.
+LEVEL_KEY=""
+LEVEL_RENEWER=""
+start_level_hold() {
+  stop_level_hold
+  archr-levels "${1}" hold "${2}" osd >/dev/null 2>&1
+  [[ "${line}" =~ code\ [0-9]+\ \(([A-Z0-9_]+)\) ]] && LEVEL_KEY=${BASH_REMATCH[1]} || LEVEL_KEY="?"
+  local PARENT=${BASHPID}
+  (
+    while kill -0 "${PARENT}" 2>/dev/null; do
+      sleep 0.2
+      archr-levels renew >/dev/null 2>&1
+    done
+  ) &
+  LEVEL_RENEWER=$!
 }
 
-stop_volume_repeat() {
-    if [ -n "${VOLUME_REPEAT_PID}" ]; then
-        kill ${VOLUME_REPEAT_PID} 2>/dev/null
-        wait ${VOLUME_REPEAT_PID} 2>/dev/null
-        ${DEBUG} && log $0 "Stopped volume repeat with PID: ${VOLUME_REPEAT_PID}"
-    fi
-    VOLUME_REPEAT_PID=""
+stop_level_hold() {
+  [ -n "${LEVEL_KEY}" ] || return 0
+  kill "${LEVEL_RENEWER}" 2>/dev/null
+  wait "${LEVEL_RENEWER}" 2>/dev/null
+  LEVEL_KEY=""
+  LEVEL_RENEWER=""
+  archr-levels release >/dev/null 2>&1
 }
+
+# A release ends the hold only when it is the button that started it.
+release_level_hold() {
+  [ -n "${LEVEL_KEY}" ] && [[ "${1}" == *"(${LEVEL_KEY}), value 0"* ]] && stop_level_hold
+  return 0
+}
+
+# A hold left by a previous run, whose release never came, ends now.
+archr-levels release >/dev/null 2>&1
 
 ### Simple functions to execute button actions, including global kill.
 execute_kill() {
@@ -401,7 +389,9 @@ next_event() {
   read line
 }
 
-### Search the system for useful devices to monitor for inputs.
+### Search the system for useful devices to monitor for inputs (the host
+### test points INPUT_DIR elsewhere).
+: "${INPUT_DIR:=/dev/input}"
 INPUT_DEVICES=()
 
 get_devices() {
@@ -415,7 +405,7 @@ get_devices() {
   local RETRY=0
 
   while [ ${KJDEVS} = false ]; do
-    for DEV in /dev/input/ev*
+    for DEV in "${INPUT_DIR}"/ev*
     do
       unset SUPPORTS
       SUPPORTS=$(udevadm info ${DEV} | awk '/ID_INPUT_KEY=|ID_INPUT_JOYSTICK=|ID_INPUT_TOUCHSCREEN=/ {print $2}')
@@ -465,32 +455,75 @@ mkcontroller 2>/dev/null || :
 # ------------------------------------------------------------------
 set +e
 
-### Start multiple evtest loops, each continuously restarted on failure. Take action when a known pattern of keys are pressed together.
-(
-  for INPUT_DEVICE in "${INPUT_DEVICES[@]}"; do
-    (
-      while true
-      do
-        evtest "${INPUT_DEVICE}" 2>&1
-        # If evtest exits, wait briefly and restart
-        echo "evtest for ${INPUT_DEVICE} died; restarting in 1 second..." >&2
-        sleep 1
-      done
-    ) &
+### One evtest per key, joystick or touch device, started as devices come
+### and go: a pad plugged in or removed never restarts this script (a
+### restart dropped held buttons and left the power button deaf a moment).
+### Every HOTPLUG_SCAN seconds the node list is compared (a glob, no
+### process); only a changed list asks udev about new nodes.
+: "${HOTPLUG_SCAN:=2}"
+# 0: watch it, 1: not an input we use, 2: udev has not described it yet.
+input_wanted() {
+  local INFO
+  INFO=$(udevadm info "${1}" 2>/dev/null)
+  [[ "${INFO}" =~ ID_INPUT_(KEY|JOYSTICK|TOUCHSCREEN)= ]] && return 0
+  [[ "${INFO}" == *ID_INPUT=* ]] && return 1
+  return 2
+}
+watch_inputs() {
+  local -A WATCHED=()
+  local DEV SEEN="" NOW NODES REMAP="" CHANGED
+  for DEV in "${INPUT_DEVICES[@]}"; do
+    evtest "${DEV}" 2>&1 &
+    WATCHED[${DEV}]=$!
   done
+  while true; do
+    NODES=("${INPUT_DIR}"/event[0-9]*)
+    NOW=${NODES[*]}
+    if [ "${NOW}" != "${SEEN}" ]; then
+      CHANGED=${SEEN:+1}
+      SEEN=${NOW}
+      for DEV in "${INPUT_DIR}"/event[0-9]*; do
+        [ -e "${DEV}" ] || continue
+        [ -n "${WATCHED[${DEV}]:-}" ] && continue
+        input_wanted "${DEV}"
+        case $? in
+          1) continue ;;
+          # A node just created: look again at the next scan.
+          2) SEEN=""; continue ;;
+        esac
+        ${DEBUG} && log $0 "Watching ${DEV}"
+        evtest "${DEV}" 2>&1 &
+        WATCHED[${DEV}]=$!
+      done
+      # The controller mapping follows (it takes seconds on an R36S): in
+      # the background, after the new devices are already heard.
+      if [ -n "${CHANGED}" ] && { [ -z "${REMAP}" ] || ! kill -0 "${REMAP}" 2>/dev/null; }; then
+        mkcontroller >/dev/null 2>&1 &
+        REMAP=$!
+      fi
+    fi
+    # An evtest that ended on a node still present (a read error) starts
+    # again; a vanished node is forgotten until it comes back.
+    for DEV in "${!WATCHED[@]}"; do
+      kill -0 "${WATCHED[${DEV}]}" 2>/dev/null && continue
+      unset "WATCHED[${DEV}]"
+      if [ -e "${DEV}" ]; then
+        evtest "${DEV}" 2>&1 &
+        WATCHED[${DEV}]=$!
+      fi
+    done
+    sleep "${HOTPLUG_SCAN}"
+  done
+}
 
-  wait  # Wait for all background loops (they never end unless forcibly stopped)
-) | grep --line-buffered "EV_KEY\|EV_SW\|error reading" | while next_event; do
+### Take action when a known pattern of keys are pressed together.
+watch_inputs | grep --line-buffered "EV_KEY\|EV_SW\|error reading" | while next_event; do
 
     # Parse lines from any evtest instance:
     case ${line} in
-      (${CONTROLLER_DISCONNECTED})
-        ${DEBUG} && log $0 "Reloading due to ${CONTROLLER_DEVICE} reattach..."
-        get_devices
-      ;;
       (${DEVICE_DISCONNECTED})
-        ${DEBUG} && log $0 "Reloading due to ${DEVICE} reattach..."
-        get_devices
+        # watch_inputs notices the node going and coming back.
+        ${DEBUG} && log $0 "An input device went away"
       ;;
       (${FUNCTION_MODIFIER_A_EVENT})
         if [[ "${line}" =~ ${PRESS} ]]; then
@@ -516,7 +549,9 @@ set +e
           VOLUME_UP_PRESSED=true
           # Only start volume repeat if no function keys are pressed
           if [ "${FN_A_PRESSED}" = false ] && [ "${FN_B_PRESSED}" = false ]; then
-            start_volume_repeat up
+            start_level_hold volume up
+          elif [ "${FN_A_PRESSED}" = true ] && [ "${FN_B_PRESSED}" = false ] && [ "${FN_A_ACTION_UP}" = "brightness up" ]; then
+            start_level_hold brightness up
           else
             # If function keys are pressed, use the original behavior
             execute_action up
@@ -524,7 +559,7 @@ set +e
         elif [[ "${line}" =~ ${RELEASE} ]]; then
           ${DEBUG} && log $0 "Volume Up: Released"
           VOLUME_UP_PRESSED=false
-          stop_volume_repeat
+          release_level_hold "${line}"
         fi
       ;;
       (${FUNCTION_VOLUME_DOWN_EVENT})
@@ -533,7 +568,9 @@ set +e
           VOLUME_DOWN_PRESSED=true
           # Only start volume repeat if no function keys are pressed
           if [ "${FN_A_PRESSED}" = false ] && [ "${FN_B_PRESSED}" = false ]; then
-            start_volume_repeat down
+            start_level_hold volume down
+          elif [ "${FN_A_PRESSED}" = true ] && [ "${FN_B_PRESSED}" = false ] && [ "${FN_A_ACTION_DOWN}" = "brightness down" ]; then
+            start_level_hold brightness down
           else
             # If function keys are pressed, use the original behavior
             execute_action down
@@ -541,7 +578,7 @@ set +e
         elif [[ "${line}" =~ ${RELEASE} ]]; then
           ${DEBUG} && log $0 "Volume Down: Released"
           VOLUME_DOWN_PRESSED=false
-          stop_volume_repeat
+          release_level_hold "${line}"
         fi
       ;;
       (${FUNCTION_POWER_PRESSED_EVENT})
@@ -598,29 +635,25 @@ set +e
       (${FUNCTION_HOTKEY_DPAD_UP_EVENT}|${FUNCTION_HOTKEY_HAT_UP_EVENT})
         if [ "${FN_A_PRESSED}" = true ] && [ "${DPAD_EVENTS}" = true ] && ${HOTKEY_VOLUME_ENABLED}; then
           ${DEBUG} && log $0 "${FUNCTION_HOTKEY_DPAD_UP_EVENT}${FUNCTION_HOTKEY_HAT_UP_EVENT}: Volume Up"
-          volume up
-          show_osd volume
+          start_level_hold volume up
         fi
       ;;
       (${FUNCTION_HOTKEY_DPAD_DOWN_EVENT}|${FUNCTION_HOTKEY_HAT_DOWN_EVENT})
         if [ "${FN_A_PRESSED}" = true ] && [ "${DPAD_EVENTS}" = true ] && ${HOTKEY_VOLUME_ENABLED}; then
           ${DEBUG} && log $0 "${FUNCTION_HOTKEY_DPAD_DOWN_EVENT}${FUNCTION_HOTKEY_HAT_DOWN_EVENT}: Volume Down"
-          volume down
-          show_osd volume
+          start_level_hold volume down
         fi
       ;;
       (${FUNCTION_HOTKEY_DPAD_RIGHT_EVENT}|${FUNCTION_HOTKEY_HAT_RIGHT_EVENT})
         if [ "${FN_A_PRESSED}" = true ] && [ "${DPAD_EVENTS}" = true ] && ${HOTKEY_BRIGHTNESS_ENABLED}; then
           ${DEBUG} && log $0 "${FUNCTION_HOTKEY_DPAD_RIGHT_EVENT}${FUNCTION_HOTKEY_HAT_RIGHT_EVENT}: Brightness Up"
-          brightness up
-          show_osd brightness
+          start_level_hold brightness up
         fi
       ;;
       (${FUNCTION_HOTKEY_DPAD_LEFT_EVENT}|${FUNCTION_HOTKEY_HAT_LEFT_EVENT})
         if [ "${FN_A_PRESSED}" = true ] && [ "${DPAD_EVENTS}" = true ] && ${HOTKEY_BRIGHTNESS_ENABLED}; then
           ${DEBUG} && log $0 "${FUNCTION_HOTKEY_DPAD_LEFT_EVENT}${FUNCTION_HOTKEY_HAT_LEFT_EVENT}: Brightness Down"
-          brightness down
-          show_osd brightness
+          start_level_hold brightness down
         fi
       ;;
       (${FUNCTION_HOTKEY_TOUCH_EVENT})
@@ -655,6 +688,10 @@ set +e
          ${DEBUG} && log $0 "${FUNCTION_HOTKEY_BTN_NORTH_EVENT}: Opening Game Guide"
          /usr/bin/game-guides-tool
        fi
+     ;;
+     (*", value 0")
+       # A level held with the dpad stops when its button is released.
+       release_level_hold "${line}"
      ;;
   esac
 done

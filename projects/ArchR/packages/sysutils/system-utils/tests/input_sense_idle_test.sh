@@ -114,4 +114,20 @@ check "the game limit does not apply in the menu" "$(run 3 "idle.timeout.game=1"
 events "0.5 ${POWER}"
 check "the power button keeps its suspend" "$(run 2)" "power"
 
+# Volume buttons: archr-levels takes the hold and its release, once each;
+# other releases cost nothing.
+printf '#!/bin/sh\necho "$*" >>"%s/calls"\n' "${TMP}" >"${TMP}/bin/archr-levels"
+chmod +x "${TMP}/bin/archr-levels"
+VOLUP="Event: time 1.0, type 1 (EV_KEY), code 115 (KEY_VOLUMEUP), value"
+events "0.5 ${VOLUP} 1" "0.3 ${VOLUP} 0" "0.2 ${PRESS}" "0.1 ${PRESS%1}0"
+check "a held volume button" "$(run 2 | sed "s/ renew//g")" "release volume hold up osd release"
+# A held button renews the hold every 200 ms by itself (the dpad has no
+# key repeat), here for 1.1 s; another button's release does not end it,
+# its own does.
+events "0.5 ${VOLUP} 1" "0.5 ${PRESS}" "0.1 ${PRESS%1}0" "0.5 ${VOLUP} 0"
+CALLS=$(run 2.5)
+check "the hold starts and ends once" "$(echo "${CALLS}" | sed 's/ renew//g')" "release volume hold up osd release"
+RENEWS=$(echo "${CALLS}" | grep -o renew | wc -l)
+check "renewed every 200 ms while held" "$([ "${RENEWS}" -ge 4 ] && [ "${RENEWS}" -le 6 ] && echo yes)" yes
+
 exit ${FAILED}

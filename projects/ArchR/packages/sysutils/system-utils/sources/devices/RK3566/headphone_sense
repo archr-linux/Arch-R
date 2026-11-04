@@ -35,7 +35,7 @@ case "${2}" in
     ;;
 esac
 
-/usr/bin/volume $(get_setting "audio.volume")
+/usr/bin/volume restore
 
 # Headphone sensing 
 DEVICE="${DEVICE_HEADPHONE_DEV}"

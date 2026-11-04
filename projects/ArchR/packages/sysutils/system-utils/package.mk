@@ -2,13 +2,18 @@
 
 PKG_NAME="system-utils"
 PKG_VERSION="2.1"
-PKG_REV="5"
+PKG_REV="6"
 PKG_LICENSE="mix"
-PKG_DEPENDS_TARGET="toolchain sleep"
+PKG_DEPENDS_TARGET="toolchain sleep pulseaudio"
 PKG_SITE=""
 PKG_URL=""
 PKG_LONGDESC="Hardware button support scripts."
 PKG_TOOLCHAIN="manual"
+
+make_target() {
+  mkdir -p ${PKG_BUILD}
+  ${CC} ${CFLAGS} ${LDFLAGS} -o ${PKG_BUILD}/archr-levels ${PKG_DIR}/sources/levels/archr-levels.c -lm
+}
 
 makeinstall_target() {
 
@@ -23,6 +28,7 @@ makeinstall_target() {
   cp ${PKG_DIR}/sources/scripts/ledcontrol ${INSTALL}/usr/bin
   cp ${PKG_DIR}/sources/scripts/battery_led_status ${INSTALL}/usr/bin
   cp ${PKG_DIR}/sources/scripts/turbomode ${INSTALL}/usr/bin
+  cp ${PKG_BUILD}/archr-levels ${INSTALL}/usr/bin
   if [ -d "${PKG_DIR}/sources/devices/${DEVICE}" ]
   then
     cp ${PKG_DIR}/sources/devices/${DEVICE}/* ${INSTALL}/usr/bin
@@ -49,6 +55,10 @@ makeinstall_target() {
 
 
 post_install() {
+  # Owner of the volume and backlight levels (input_sense, the launcher
+  # and the volume/brightness scripts all go through it).
+  enable_service archr-levels.service
+
   # input_sense owns the power-button path on RK3326 (KEY_POWER from the
   # rk817 pwrkey drives archr-fake-suspend) and the R33S/RG351 quirks
   # already assume the unit is running, yet nothing ever enabled it, so

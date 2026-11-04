@@ -8,22 +8,11 @@
 
 tocon "Configuring display..."
 
-BRIGHTNESS_1=$(get_setting display.brightness)
-DEFAULT_BRIGHTNESS="10"
-MIN_BRIGHTNESS="5"
-
-if [ -z "${BRIGHTNESS_1}" ] || [ "${BRIGHTNESS_1}" -lt "${MIN_BRIGHTNESS}" ]; then
-    BRIGHTNESS_1="${DEFAULT_BRIGHTNESS}"
-fi
-
-brightness set "${BRIGHTNESS_1}"
-
-BRIGHTNESS_2=$(get_setting display.brightness2)
-
-if [ -n "${BRIGHTNESS_2}" ]; then
-    if [ "${BRIGHTNESS_2}" -lt "${MIN_BRIGHTNESS}" ]; then
-        BRIGHTNESS_2="${DEFAULT_BRIGHTNESS}"
-    fi
-
-    brightness set 2 "${BRIGHTNESS_2}"
+# archr-levels owns the levels, their defaults and the one-time conversion
+# of old values: re-apply what it holds, never a value read here (it could
+# predate the conversion and be written back over it).
+archr-levels brightness restore >/dev/null
+set -- /sys/class/backlight/*
+if [ $# -gt 1 ]; then
+  archr-levels brightness2 restore >/dev/null
 fi

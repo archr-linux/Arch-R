@@ -8,7 +8,9 @@ Description=ArchR user autostart script
 # held the UI behind iwd, connman, sshd and the rest of multi-user.target
 # (~6s on an R36S) for nothing: the UI is started by this script, and
 # 099-networkservices only starts services, it never needs a link up.
-After=userconfig.service
+# archr-levels answers before 006-display and 050-audio re-apply the levels.
+After=userconfig.service archr-levels.service
+Wants=archr-levels.service
 
 [Service]
 Type=oneshot
