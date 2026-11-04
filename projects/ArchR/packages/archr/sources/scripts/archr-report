@@ -148,107 +148,61 @@ for src in "${ROOT}"/sys/fs/pstore/*; do
   [ -f "${src}" ] && mkdir -p "${DIR}/pstore" && head -c "${CAP}" "${src}" >"${DIR}/pstore/${src##*/}"
 done
 
-# Secrets become <removed>; every file passes through here, text or not
-# (NUL bytes become blanks, any other byte is read as is: LC_ALL=C), and a
-# file that cannot be filtered is left out, never copied as it was.
-#   - A line that starts with a secret name ("name=", "name = ",
-#     "name: ", "\"name\":") loses everything after the separator; so does
-#     a line where a pass* name or Authorization appears later.
-#   - Elsewhere in a line, a secret name followed by = or : loses its value:
-#     a quoted string (escaped quotes included), or up to the next blank,
-#     comma, semicolon or &.
-#   - A value that opens { or [ is removed up to its closing bracket, over
-#     as many lines as it takes.
-#   - "Bearer X", "--passphrase X" (any secret option), the short options
-#     -u X and -p X, the user:password@ of a URL and the URL fields u, t,
-#     p, pw, pwd, ssid and devid (RetroAchievements, ScreenScraper) lose X.
-# Secret names hold pass, token, secret, login, auth, credential, cookie,
-# session or psk; or are pw or pwd as a word; or end in key as a word or
-# suffix (key, wifi.key, api_key, apikey, PreSharedKey), never hotkey or
-# keyboard; or are a user name of the scraper or of RetroAchievements.
+# Any line with a hint of a secret goes whole: "<prefix up to the secret
+# name>=<removed>", or "<linha removida>" when there is no name. The value
+# is never cut out alone. Hints:
+#   - a secret name as a word or suffix: pass, pw, pwd, token, secret,
+#     key (never hotkey or keyboard), psk, auth, bearer, credential,
+#     cookie, session, user, username or login used as a name ("user="),
+#     and the URL fields u, t, p, pw, pwd, user, ssid and devid;
+#   - user:password@ (in a URL or not), or any @ after a URL's //;
+#   - the options -p, -P, -u, -U (with the value apart or attached),
+#     --user, --*-user and --*pass*.
+# The last two kinds, and a URL field, remove the whole line even after a
+# name: what comes before the name may hold the secret.
+# A secret name whose line opens { or [ or leaves a quote open may go on
+# over the next lines: the rest of the file goes, a safe failure.
+# Every file passes through here, text or not (NUL bytes become blanks,
+# bytes are read as is: LC_ALL=C); one that cannot be filtered is left out.
 sanitize() {
   tr '\0' ' ' | LC_ALL=C awk '
-    function secret(name,    n) {
-      n = tolower(name)
-      gsub(/["\047\[\]]/, "", n)
-      return n ~ /(pass|token|secret|login|auth|credential|cookie|session|psk)/ ||
-        n ~ /(^|[_.-])pwd?$/ ||
-        n ~ /(^|[_.-]|api|private|shared|access|web|auth|secret)key$/ ||
-        n ~ /(scraper|screenscraper|cheevos|retroachievements).*(user|name)/
-    }
-    # Brackets opened minus closed in a piece of text.
-    function depth(text,    o, c) {
-      o = gsub(/[{[]/, "&", text)
-      c = gsub(/[]}]/, "&", text)
-      return o - c
-    }
-    # Length of what follows a removed name: a quoted string (with its
-    # escaped quotes) or a word.
-    function value(rest) {
-      if (match(rest, /^"([^"\\]|\\.)*"?/) || match(rest, /^\047([^\047\\]|\\.)*\047?/) ||
-          match(rest, /^[^[:space:],;&]*/))
-        return RLENGTH
-      return 0
-    }
-    # The removed value opens a bracket: the lines up to its close go too.
-    function nested(rest) {
-      if (rest ~ /^[{[]/) {
-        open = depth(rest)
-        if (open < 0)
-          open = 0
-      }
-    }
-    open > 0 {
-      open += depth($0)
-      if (open < 0)
-        open = 0
-      next
-    }
+    gone { next }
     {
-      line = $0
-      # user:password@ of any URL.
-      done = ""
-      while (match(line, /[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\/@[:space:]]+@/)) {
-        scheme = substr(line, RSTART, RLENGTH)
-        sub(/\/\/.*/, "//", scheme)
-        done = done substr(line, 1, RSTART - 1) scheme "<removed>@"
-        line = substr(line, RSTART + RLENGTH)
-      }
-      line = done line
-      if (match(line, /^[[:space:]]*["\047]?[A-Za-z0-9_.\[\]"\047-]+["\047]?[[:space:]]*[=:][[:space:]]*/)) {
-        head = substr(line, 1, RLENGTH)
-        name = head
-        sub(/[[:space:]]*[=:][[:space:]]*$/, "", name)
-        if (secret(name)) {
-          nested(substr(line, RLENGTH + 1))
-          print head "<removed>"
-          next
+      line = tolower($0)
+      named = 0
+      rest = line
+      # Words of letters and digits: the first secret one, if any.
+      while (match(rest, /[a-z0-9]+/)) {
+        word = substr(rest, RSTART, RLENGTH)
+        at = length(line) - length(rest) + RSTART + RLENGTH - 1
+        rest = substr(rest, RSTART + RLENGTH)
+        if (word ~ /(pass|token|secret|psk|bearer|credential|cookie|session)/ ||
+            word ~ /^(pw|pwd|auth[a-z]*)$/ || word ~ /key$/ && word !~ /hotkey$/ ||
+            word ~ /^(user(name)?|login)$/ && rest ~ /^"?[[:space:]]*[=:]/) {
+          named = at
+          break
         }
       }
-      out = ""
-      while (match(line, /(--[A-Za-z0-9_-]+[[:space:]]+|(^|[[:space:]])-[pu][[:space:]]+|[Bb][Ee][Aa][Rr][Ee][Rr][[:space:]]+|[A-Za-z0-9_.-]+"?[[:space:]]*[=:][[:space:]]*)/)) {
-        token = substr(line, RSTART, RLENGTH)
-        before = substr(line, RSTART - 1, 1)
-        out = out substr(line, 1, RSTART + RLENGTH - 1)
-        line = substr(line, RSTART + RLENGTH)
-        name = token
-        sub(/"?[[:space:]]*[=:]?[[:space:]]*$/, "", name)
-        sub(/^[[:space:]]*--?/, "", name)
-        lower = tolower(name)
-        cut = secret(name) || lower == "bearer" || token ~ /^[[:space:]]*-[pu][[:space:]]+$/ ||
-          ((before == "?" || before == "&") && lower ~ /^(u|t|p|pw|pwd|ssid|devid)$/)
-        if (cut && lower ~ /(authorization|pass)/ && token !~ /^--/) {
-          nested(line)
-          line = ""
-          out = out "<removed>"
-        } else if (cut) {
-          nested(line)
-          n = value(line)
-          line = substr(line, n + 1)
-          out = out "<removed>"
-        }
+      # Hints with no name before them: the whole line goes.
+      bare = line ~ /[?&](u|t|p|pw|pwd|user|ssid|devid)=/ ||
+        line ~ /[^[:space:]\/@:]+:[^[:space:]\/@]+@/ || line ~ /:\/\/[^[:space:]]*@/ ||
+        $0 ~ /(^|[[:space:]])-[pPuU]/ ||
+        line ~ /(^|[[:space:]])--([a-z0-9-]*-)?user([^a-z0-9-]|$)|(^|[[:space:]])--[a-z0-9-]*pass/
+      if (!named && !bare) {
+        print
+        next
       }
-      print out line
+      if (bare) {
+        print "<linha removida>"
+        next
+      }
+      print substr($0, 1, named) "=<removed>"
+      tail = substr($0, named + 1)
+      opened = gsub(/[{[]/, "", tail) > 0
+      if (opened || gsub(/"/, "\"", tail) % 2 || gsub(/\047/, "\047", tail) % 2) {
+        print "<resto do arquivo removido>"
+        gone = 1
+      }
     }'
 }
 # Compressed pstore records cannot be read through the filter: left out.

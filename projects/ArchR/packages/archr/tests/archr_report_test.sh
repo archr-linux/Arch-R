@@ -5,7 +5,8 @@
 # Host test for archr-report: plants secrets in every place the report
 # reads (configs, logs, pstore, command output, credential files) and
 # proves none of them reaches the zip, while the useful facts (the SSID,
-# the cores, the failed unit) do. Fake commands on PATH; nothing real runs.
+# the cores, the failed unit, hotkey settings) do. Fake commands on PATH;
+# nothing real runs.
 #   bash projects/ArchR/packages/archr/tests/archr_report_test.sh
 
 set -u
@@ -24,13 +25,13 @@ check() {
     FAILED=1
   fi
 }
-
 if bash -n "${SCRIPT}"; then echo "ok   bash -n"; else echo "FAIL bash -n"; FAILED=1; fi
 
 R="${TMP}/root"
 mkdir -p "${TMP}/bin" "${R}/storage/.config/system/configs" "${R}/storage/.config/retroarch" \
-  "${R}/storage/.config/archr-launcher" "${R}/storage/.cache/iwd" "${R}/var/log" \
-  "${R}/sys/fs/pstore" "${R}/usr/lib/libretro" "${R}/proc/device-tree" "${R}/storage/roms"
+  "${R}/storage/.config/archr-launcher" "${R}/storage/.config/archr" "${R}/storage/.cache/iwd" \
+  "${R}/var/log" "${R}/sys/fs/pstore" "${R}/usr/lib/libretro" "${R}/proc/device-tree" \
+  "${R}/storage/roms" "${R}/etc"
 
 # Every secret carries SECRET so one grep finds a leak.
 cat >"${R}/storage/.config/system/configs/system.cfg" <<'EOF'
@@ -53,43 +54,76 @@ cheevos_token = "SECRET-cheevostoken"
 netplay_password = "SECRET-netplay"
 video_driver = "gl"
 input_enable_hotkey = "nul"
+input_enable_hotkey_btn = "nul"
 keyboard_layout = "us"
-EOF
-cat >"${R}/storage/.config/archr-launcher/launcher.toml" <<'EOF'
-api_key = 'SECRET-apikey'
-[store]
-"auth_token": "SECRET-json"
-theme = "default"
+hotkey_enable=1
 EOF
 echo "Passphrase=SECRET-iwd" >"${R}/storage/.cache/iwd/MinhaCasa.psk"
 printf 'Running: retroarch -L core.so\nlogin user=foo SessionId=SECRET-session done\n' >"${R}/var/log/exec.log"
+# NUL bytes and a Latin-1 SSID: not "text", still filtered.
+printf 'bin\000ary\nretroarch: password=SECRET-binary\nconnected to Caf\351 wifi.key=SECRET-latin1\n' >>"${R}/var/log/exec.log"
+printf 'Game Console R36S\0password=SECRET-model' >"${R}/proc/device-tree/model"
+
+# One secret per line (earlier reviews, N1-N13). Lines that leave a quote
+# open after the name come last: they take the rest of the file.
 cat >"${R}/var/log/archr-launcher-session.log" <<'EOF'
 launcher: signed in, token: SECRET-launcherlog
-GET https://api.screenscraper.fr/api2/jeuInfos.php?devid=SECRET-devid&devpassword=x&ssid=SECRET-ssuser&sspassword=y&romnom=Zelda
+GET https://api.screenscraper.fr/api2/jeuInfos.php?devid=SECRET-devid&devpassword=x&ssid=SECRET-ssuser&sspassword=y
 GET https://retroachievements.org/dorequest.php?r=login&u=SECRET-rauser&t=SECRET-ratoken
-Authorization: Bearer SECRET-bearer
-iwctl --passphrase SECRET-passphrase station wlan0 connect MinhaCasa
-EOF
-cat >>"${R}/var/log/archr-launcher-session.log" <<'EOF'
-GET https://bob:SECRET-urlpass@example.org/x and ftp://u:SECRET-ftp@h/
-curl -u admin:SECRET-curl http://h
-cmd -p SECRET-shortp --verbose
-{"password": "a\"SECRET-escaped quote"}
-x pass='it\'s SECRET-single' end
-{"token":"t","pw":"SECRET-pw","pwd":"SECRET-pwd"}
+https://ra/dorequest.php?r=login&u=bob&t=SECRET-tok&p=SECRET-pw
+http://h?a=1&P=SECRET-upper&T=SECRET-uppert
 GET http://h/api?pw=SECRET-urlpw&game=Zelda2
+Authorization: Bearer SECRET-bearer
+Authorization:Bearer SECRET-bearer2
+BEARER   SECRET-bearer3
+iwctl --passphrase SECRET-passphrase station wlan0 connect MinhaCasa
+wpa_passphrase MyNet SECRET-wpa
+GET https://bob:SECRET-urlpass@example.org/x and ftp://u:SECRET-ftp@h/
+http://user:SECRET-at@h/a@b
+http://h/path/user@x/SECRET-pathat
+ssh://bob:SECRET-ssh@h:22
+user:SECRET-noscheme@host
+curl -u admin:SECRET-curl http://h
+curl -pSECRET-attachedp h
+curl -uadmin:SECRET-attachedu h
+curl --user=a:SECRET-longuser h
+curl --user a:SECRET-longuser2 h
+mysql -h x -pSECRET-mysql
+mysql --password=SECRET-mysql2
+-p SECRET-dashp
+a -P SECRET-bigp
+a -U bob:SECRET-bigu
+wget --http-user=bob --http-password=SECRET-wget
+wget --ftp-password SECRET-wget2
+x --pass SECRET-pass --token=SECRET-tok2 --api-key SECRET-apikey
+mount -o username=bob,password=SECRET-mount //h/s
+cifs credentials=SECRET-creds
+smbpasswd SECRET-smb
+cmd -p SECRET-shortp --verbose
+PASS=abc;PASS2=SECRET-pass2
+db.pass.word=SECRET-dbpass
+passwd:   SECRET-passwd more
 x=1 next passwd=a SECRET-midline words
-{"auth": {
-  "user": "SECRET-nesteduser",
-  "list": ["SECRET-nested1", "SECRET-nested2"]
-},
-"after_nested": 1}
+ra_user=SECRET-rauser2&ra_token=SECRET-ratoken2
+x=1 password=SECRET-tail secret
+curl -H "X-Api-Key: SECRET-apikeyheader" h
+{"password": "a\"SECRET-escaped quote"}
+{"token":"t","pw":"SECRET-pw2","pwd":"SECRET-pwd"}
+  "key"   :   "SECRET-key k"
+auth_token="SECRET-auth b"
+api_key = 'SECRET-apikey2'
 EOF
-# NUL bytes and a Latin-1 SSID: no longer "text", still filtered.
-printf 'bin\000ary\nretroarch: password=SECRET-binary\nconnected to Caf\351 wifi.key=SECRET-latin1\n' >>"${R}/var/log/exec.log"
+# Values over several lines: one per file, as each takes the rest of it.
+multi() { printf '%b' "$2" >"${R}$1"; }
+multi /var/log/runemu-debug.log 'before=1\n{"secret": {\n  "a": "x}y",\n  "b": "SECRET-n1"\n}}\nafter=1\n'
+multi /var/log/wifictl.log '{"password": [\n  "p]q",\n  "SECRET-n2"\n]\n'
+multi /var/log/boot.log 'key: [\n  SECRET-n3\n]\n'
+multi /storage/.config/retroarch/retroarch-core-options.cfg 'token = "multi\nSECRET-n4"\n'
+multi /storage/.config/archr-launcher/launcher.toml 'theme = "default"\nsecret: {\n  a: "}"\n  SECRET-n5\n}\n'
+multi /storage/.config/archr/systems.cfg '{"auth": {\n  "user": "SECRET-n6"\n},\n"after": 1}\n'
+multi /etc/resolv.conf "x pass='it\\\\'s SECRET-n7' end\nnameserver 1.1.1.1\n"
 echo "Kernel panic - not syncing: secret_key=SECRET-pstore" >"${R}/sys/fs/pstore/dmesg-ramoops-0"
 printf 'compressed\000SECRET-compressed' >"${R}/sys/fs/pstore/dmesg-ramoops-1.enc.z"
-printf 'Game Console R36S\0password=SECRET-model' >"${R}/proc/device-tree/model"
 touch "${R}/usr/lib/libretro/pcsx_rearmed_libretro.so"
 
 fake() { printf '#!/bin/sh\n%s\n' "$2" >"${TMP}/bin/$1"; chmod +x "${TMP}/bin/$1"; }
@@ -110,29 +144,28 @@ esac
 check "size printed" "$(sed -n 's/^SIZE=//p' <<<"${OUT}")" "$(stat -c %s "${R}${ZIP}")"
 
 mkdir "${TMP}/x" && (cd "${TMP}/x" && unzip -q "${R}${ZIP}")
-check "no secret leaks" "$(grep -rl SECRET "${TMP}/x" | sed "s#${TMP}/x/##")" ""
-check "iwd file never copied" "$(grep -rl Passphrase "${TMP}/x")" ""
+X=$(echo "${TMP}"/x/*)
+check "no secret leaks" "$(grep -rao 'SECRET[^ "]*' "${X}" | sed "s#${X}/##")" ""
+check "iwd file never copied" "$(grep -rl Passphrase "${X}")" ""
+check "compressed pstore left out" "$(find "${X}" -name '*.enc.z' | wc -l)" "0"
 for want in MinhaCasa pcsx_rearmed_libretro.so archr-broken.service duckstation-sa \
-  "R36S" "video_driver" "previous boot" "Kernel panic" "Running: retroarch" \
-  'input_enable_hotkey = "nul"' 'keyboard_layout = "us"' "r=login" \
-  "station wlan0 connect" "Caf" "example.org/x" "game=Zelda2" "after_nested" "cmd -p"; do
-  if grep -rqF -- "${want}" "${TMP}/x"; then echo "ok   keeps ${want}"; else echo "FAIL lost ${want}"; FAILED=1; fi
+  "R36S" 'video_driver = "gl"' "Kernel panic" "Running: retroarch" "kernel: normal line" \
+  'input_enable_hotkey = "nul"' 'input_enable_hotkey_btn = "nul"' 'keyboard_layout = "us"' \
+  "hotkey_enable=1" "Caf" "before=1" 'theme = "default"' "system.loglevel=verbose"; do
+  if grep -raqF -- "${want}" "${X}"; then echo "ok   keeps ${want}"; else echo "FAIL lost ${want}"; FAILED=1; fi
 done
-check "names kept, values removed" \
-  "$(grep -h '^root.password=' "${TMP}"/x/*/configs/system.cfg)" "root.password=<removed>"
-check "unquoted value with blanks removed whole" \
-  "$(grep -h '^wifi.key=' "${TMP}"/x/*/configs/system.cfg)" "wifi.key=<removed>"
-check "URL fields" \
-  "$(grep -ho 'u=[^&]*&t=.*' "${TMP}"/x/*/logs/launcher.log)" "u=<removed>&t=<removed>"
-check "bearer token" "$(grep -h '^Authorization' "${TMP}"/x/*/logs/launcher.log)" "Authorization: <removed>"
-check "compressed pstore left out" "$(find "${TMP}/x" -name '*.enc.z' | wc -l)" "0"
-check "quoted value removed whole" \
-  "$(grep -h '^cheevos_password' "${TMP}"/x/*/configs/retroarch.cfg)" 'cheevos_password = <removed>'
+# Named secrets keep their name; other hints take the whole line.
+line() { grep -ah -- "$1" "${X}/$2" | head -1; }
+check "name kept, value gone" "$(line '^root.password' configs/system.cfg)" "root.password=<removed>"
+check "value with blanks" "$(line '^wifi.key' configs/system.cfg)" "wifi.key=<removed>"
+check "quoted value" "$(line '^cheevos_password' configs/retroarch.cfg)" "cheevos_password=<removed>"
+check "bearer" "$(line '^Authorization=' logs/launcher.log)" "Authorization=<removed>"
+check "URL user:password" "$(line 'example.org\|^<linha' logs/launcher.log)" "<linha removida>"
+check "every line of the log accounted for" "$(grep -c '' "${X}/logs/launcher.log")" "$(($(grep -c '' "${R}/var/log/archr-launcher-session.log") - 6 + 3))"
+check "a value over lines takes the rest of the file" \
+  "$(tr '\n' '|' <"${X}/logs/runemu-debug.log")" \
+  '### /var/log/runemu-debug.log|before=1|{"secret=<removed>|<resto do arquivo removido>|'
 check "no temporary files left" "$(find "${R}/storage/roms/relatorios" -name '*.part' | wc -l)" "0"
-
-check "URL user and password" \
-  "$(grep -h '^GET https://' "${TMP}"/x/*/logs/launcher.log | grep -o '//[^ ]*example.org')" "//<removed>@example.org"
-check "curl -u" "$(grep -h '^curl -u' "${TMP}"/x/*/logs/launcher.log)" "curl -u <removed> http://h"
 
 # Nothing left to zip (every file failed the filter): exit 1, no report.
 mkdir -p "${TMP}/broken"
