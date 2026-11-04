@@ -162,6 +162,50 @@ static int followed_by(const char *first, const char *ev)
 
 /* ---- tests ---------------------------------------------------------- */
 
+/* Overlay that already ends in 11/29 (every generated overlay does). */
+static void test_sequence_with_11_29_is_not_repeated(void)
+{
+	const char *lines[] = { G_LINE, M_LINE, "I seq=b9f11283",
+		"I seq=11 wait=0x96", "I seq=29 wait=0x32" };
+	struct generic_panel *ctx;
+	char ev[2048];
+
+	CHECK(probe(lines, N(lines), &ctx) == 0, "probe failed: %s", logbuf);
+	if (!ctx)
+		return;
+	nevents = 0;
+	CHECK(ctx->panel.funcs->prepare(&ctx->panel) == 0, "prepare failed: %s", logbuf);
+	events_string(ev, sizeof(ev));
+	CHECK(count_events("W 11") == 1, "0x11 sent %d times: %s", count_events("W 11"), ev);
+	CHECK(count_events("W 29") == 1, "0x29 sent %d times: %s", count_events("W 29"), ev);
+	CHECK(index_of("W 11") >= 0 && index_of("W 11") < index_of("W 29"), "11 not before 29: %s", ev);
+	CHECK(followed_by("W 11", "sleep 150"), "no 150 ms after 0x11: %s", ev);
+	CHECK(followed_by("W 29", "sleep 50"), "no 50 ms after 0x29: %s", ev);
+}
+
+/* Overlay without 11/29: the driver sends 11, waits, then 29. */
+static void test_driver_sends_11_wait_29_when_missing(void)
+{
+	const char *lines[] = { G_LINE, M_LINE, "I seq=b9f11283" };
+	struct generic_panel *ctx;
+	char ev[2048];
+	int i11, i29;
+
+	CHECK(probe(lines, N(lines), &ctx) == 0, "probe failed: %s", logbuf);
+	if (!ctx)
+		return;
+	nevents = 0;
+	CHECK(ctx->panel.funcs->prepare(&ctx->panel) == 0, "prepare failed: %s", logbuf);
+	events_string(ev, sizeof(ev));
+	i11 = index_of("W 11");
+	i29 = index_of("W 29");
+	CHECK(count_events("W 11") == 1 && count_events("W 29") == 1, "not one each: %s", ev);
+	CHECK(i11 >= 0 && i29 > i11, "order is not 11 then 29: %s", ev);
+	CHECK(i11 >= 0 && i29 > i11 + 1 && strncmp(events[i11 + 1], "sleep ", 6) == 0 &&
+	      atoi(events[i11 + 1] + 6) >= 5, "no wait between 11 and 29: %s", ev);
+	CHECK(index_of("W b9f11283") < i11, "vendor sequence not first: %s", ev);
+}
+
 static void test_wait_is_decimal_or_0x(void)
 {
 	const char *lines[] = { G_LINE, M_LINE, "I seq=11 wait=250", "I seq=29 wait=0x250" };
@@ -176,6 +220,31 @@ static void test_wait_is_decimal_or_0x(void)
 	events_string(ev, sizeof(ev));
 	CHECK(followed_by("W 11", "sleep 250"), "wait=250 is not 250 ms: %s", ev);
 	CHECK(followed_by("W 29", "sleep 592"), "wait=0x250 is not 592 ms: %s", ev);
+}
+
+/* A write that fails stops prepare() and is logged with its step. */
+static void test_write_failure_aborts_prepare(void)
+{
+	const char *lines[] = { G_LINE, M_LINE, "I seq=b9f11283", "I seq=b480",
+		"I seq=cc0b", "I seq=11 wait=0x96", "I seq=29 wait=0x32" };
+	struct generic_panel *ctx;
+	char ev[2048];
+	int ret;
+
+	CHECK(probe(lines, N(lines), &ctx) == 0, "probe failed: %s", logbuf);
+	if (!ctx)
+		return;
+	nevents = 0;
+	writes = 0;
+	fail_write_at = 2;
+	ret = ctx->panel.funcs->prepare(&ctx->panel);
+	events_string(ev, sizeof(ev));
+	CHECK(ret == -EIO, "prepare returned %d, want -EIO: %s", ret, ev);
+	CHECK(writes == 2, "%d writes, want to stop at the failed one: %s", writes, ev);
+	CHECK(strstr(logbuf, "init step 1 (cmd 0xb4") != NULL, "failure not logged: %s", logbuf);
+	CHECK(stub_vdd.count == 0 && stub_iovcc.count == 0, "supplies left on (%d, %d)",
+	      stub_vdd.count, stub_iovcc.count);
+	CHECK(!ctx->prepared, "panel marked prepared after a failure");
 }
 
 static void test_malformed_lines_fail_probe(void)
@@ -281,7 +350,10 @@ int main(int argc, char **argv)
 		return load_file(argv[2]);
 
 #define RUN(t) do { int before = failures; t(); printf("%s %s\n", failures == before ? "PASS" : "FAIL", #t); } while (0)
+	RUN(test_sequence_with_11_29_is_not_repeated);
+	RUN(test_driver_sends_11_wait_29_when_missing);
 	RUN(test_wait_is_decimal_or_0x);
+	RUN(test_write_failure_aborts_prepare);
 	RUN(test_malformed_lines_fail_probe);
 	RUN(test_unknown_keys_and_comments_are_tolerated);
 	RUN(test_sync_polarity);

@@ -62,6 +62,13 @@ struct generic_panel_mode {
  * needs is 0x250 = 592 ms (eeclone, kept from the old hex reading).
  */
 #define GENERIC_PANEL_MAX_WAIT_MS 1000
+
+/*
+ * Time between exit_sleep_mode (0x11) and the next command when the
+ * driver sends 0x11 itself. MIPI DCS asks for 5 ms; ST7703 and NV3051D
+ * datasheets ask for 120 ms.
+ */
+#define GENERIC_PANEL_SLEEP_OUT_MS 120
 struct generic_panel_init_seq {
     int dcs;
     int len;
@@ -83,6 +90,8 @@ struct generic_panel {
     struct generic_panel_size size;
     struct generic_panel_mode *modes;
     struct generic_panel_init_seq *iseq;
+    bool seq_has_exit_sleep;
+    bool seq_has_display_on;
     struct display_timing *timings;
     uint32_t num_timings;
 
@@ -428,6 +437,28 @@ int load_panel_description(struct mipi_dsi_device *dsi, struct generic_panel *ct
     }
     ctx->iseq = fwd;
 
+    /*
+     * Most vendor sequences already end with exit_sleep_mode (0x11) and
+     * set_display_on (0x29). prepare() sends only the ones missing, so
+     * they are neither repeated nor sent in the wrong order.
+     */
+    for (tmp = ctx->iseq; tmp; tmp = tmp->link) {
+        int cmd;
+
+        if (tmp->read > 0)
+            continue;
+        if (tmp->dcs == DCS_PSEUDO_CMD_SEQ)
+            cmd = tmp->len > 0 ? tmp->data[0] : -1;
+        else
+            cmd = tmp->dcs;
+        if (cmd == MIPI_DCS_EXIT_SLEEP_MODE)
+            ctx->seq_has_exit_sleep = true;
+        else if (cmd == MIPI_DCS_SET_DISPLAY_ON)
+            ctx->seq_has_display_on = true;
+    }
+    dev_info(&dsi->dev, "exit_sleep from %s, display_on from %s\n",
+             ctx->seq_has_exit_sleep ? "sequence" : "driver",
+             ctx->seq_has_display_on ? "sequence" : "driver");
 
     return 0;
 }
@@ -443,6 +474,7 @@ static int generic_panel_init_sequence(struct generic_panel *ctx)
     struct mipi_dsi_device *dsi = to_mipi_dsi_device(ctx->dev);
     struct device *dev = ctx->dev;
     int ret;
+    int step = 0;
 
     struct generic_panel_init_seq *iseq = ctx->iseq;
     while (iseq) {
@@ -457,17 +489,28 @@ static int generic_panel_init_sequence(struct generic_panel *ctx)
                     dev_info(ctx->dev, "read[%d]: %02x\n", i, readbuf[i]);
                 }
             }
-        } else if (iseq->dcs == DCS_PSEUDO_CMD_SEQ) {
-            ret = mipi_dsi_dcs_write_buffer(dsi, iseq->data, iseq->len);
-            dev_dbg(dev, "iseq 0x%px len=%d -> %d\n", (void*)iseq, iseq->len, ret);
         } else {
-            ret = mipi_dsi_dcs_write(dsi, iseq->dcs, iseq->data, iseq->len);
-            dev_dbg(dev, "iseq %02x len=%d -> %d\n", iseq->dcs, iseq->len, ret);
+            int cmd;
+
+            if (iseq->dcs == DCS_PSEUDO_CMD_SEQ) {
+                cmd = iseq->len > 0 ? iseq->data[0] : -1;
+                ret = mipi_dsi_dcs_write_buffer(dsi, iseq->data, iseq->len);
+            } else {
+                cmd = iseq->dcs;
+                ret = mipi_dsi_dcs_write(dsi, iseq->dcs, iseq->data, iseq->len);
+            }
+            dev_dbg(dev, "iseq %d cmd %02x len=%d -> %d\n", step, cmd, iseq->len, ret);
+            if (ret < 0) {
+                dev_err(dev, "init step %d (cmd 0x%02x, %d bytes) failed: %d\n",
+                        step, cmd, iseq->len, ret);
+                return ret;
+            }
         }
         if (iseq->wait) {
             msleep(iseq->wait);
         }
         iseq = iseq->link;
+        step++;
     }
 
     dev_dbg(dev, "Panel init sequence done\n");
@@ -550,16 +593,21 @@ static int generic_panel_prepare(struct drm_panel *panel)
         goto disable_iovcc;
     }
 
-    ret = mipi_dsi_dcs_set_display_on(dsi);
-    if (ret < 0) {
-        dev_err(ctx->dev, "Failed to set display on: %d\n", ret);
-        goto disable_iovcc;
+    if (!ctx->seq_has_exit_sleep) {
+        ret = mipi_dsi_dcs_exit_sleep_mode(dsi);
+        if (ret < 0) {
+            dev_err(ctx->dev, "Failed to exit sleep mode: %d\n", ret);
+            goto disable_iovcc;
+        }
+        msleep(GENERIC_PANEL_SLEEP_OUT_MS);
     }
 
-    ret = mipi_dsi_dcs_exit_sleep_mode(dsi);
-    if (ret < 0) {
-        dev_err(ctx->dev, "Failed to exit sleep mode: %d\n", ret);
-        goto disable_iovcc;
+    if (!ctx->seq_has_display_on) {
+        ret = mipi_dsi_dcs_set_display_on(dsi);
+        if (ret < 0) {
+            dev_err(ctx->dev, "Failed to set display on: %d\n", ret);
+            goto disable_iovcc;
+        }
     }
 
     msleep(ctx->delays.enable);
