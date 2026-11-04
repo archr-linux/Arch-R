@@ -26,6 +26,10 @@
 #                save states at all (savestate = "true" in its .info; not
 #                ScummVM, EasyRPG or FreeJ2ME). Closing is the save, so the
 #                state is confirmed after it: fresh and complete.
+#   duckstation  SIGINT: with SaveStateOnExit it writes the game's resume
+#                state (<serial>_resume.sav), its own slot apart from the
+#                player's; SIGTERM closes it without saving. Closing is the
+#                save, as for RetroArch.
 #   mupen64plus  slot 9 on a short-lived uinput keyboard (archr-keypress):
 #                9 and F5 (save); once the .st9 file is complete, the key of
 #                the slot it had, then SIGTERM closes the game.
@@ -50,6 +54,7 @@
 : "${SAVING:=/run/archr/saving}"
 : "${STATES_DIR:=/storage/roms/savestates}"
 : "${MUPEN_STATES:=/storage/roms/n64}"
+: "${DUCK_CFG:=/storage/.config/duckstation/settings.ini}"
 : "${MUPEN_CFG:=/tmp/mupen64plus/mupen64plus.cfg}"
 : "${RETROARCH_RUN_CFG:=/tmp/.retroarch.cfg}"
 : "${CORES_DIR:=/tmp/cores}"
@@ -177,6 +182,9 @@ case "${EMULATOR}" in
     fi
     ;;
   mupen64plus) METHOD=key ;;
+  duckstation)
+    grep -qE '^SaveStateOnExit *= *true' "${DUCK_CFG}" 2>/dev/null && METHOD="exit"
+    ;;
 esac
 [ "${REASON}" = switch ] && [ "${METHOD}" = none ] && refuse
 
@@ -220,6 +228,12 @@ fi
 TARGETS=""
 [ -r "${KILL_DATA}" ] && TARGETS=$(tr -s ' ' '\n' <"${KILL_DATA}" | grep -v '^-' | tr '\n' ' ')
 [ -n "${TARGETS// /}" ] || TARGETS="${EMULATOR}"
+# DuckStation's runs under an AppImage wrapper; it saves on SIGINT only.
+CLOSE=TERM
+if [ "${EMULATOR}" = duckstation ]; then
+  TARGETS=duckstation-sa
+  CLOSE=INT
+fi
 # killall, as the exit shortcut: BusyBox's pkill -x compares argv[0] as
 # written (/usr/bin/retroarch), so it matched nothing.
 signal() {
@@ -229,19 +243,26 @@ signal() {
   done
 }
 
-signal TERM
+# A state written on the way out: RetroArch's, or DuckStation's resume
+# state, named by the game's serial (the newest one written since).
+exit_state() {
+  [ "${METHOD}" = exit ] && [ -z "${STATE}" ] || return 0
+  if [ "${EMULATOR}" = duckstation ]; then
+    STATE_FILE=$(find "${STATES_DIR}/${PLATFORM}" -maxdepth 1 -type f -name '*_resume.sav' \
+      -newer "${MARK}" 2>/dev/null | head -n1)
+  fi
+  [ -n "${STATE_FILE}" ] && complete "${STATE_FILE}" && STATE="${STATE_FILE}"
+}
+
+signal "${CLOSE}"
 n=0
 while alive "${PID}" && [ "${n}" -lt "${CLOSE_WAIT}" ]; do
   # RetroArch's state is complete before it ends: no need to wait more.
-  if [ "${METHOD}" = exit ] && [ -z "${STATE}" ] && complete "${STATE_FILE}"; then
-    STATE="${STATE_FILE}"
-  fi
+  exit_state
   sleep "${TICK}"
   n=$((n + 1))
 done
-if [ "${METHOD}" = exit ] && [ -z "${STATE}" ] && complete "${STATE_FILE}"; then
-  STATE="${STATE_FILE}"
-fi
+exit_state
 if alive "${PID}"; then
   echo "archr-game-save-exit: ${TARGETS} did not close, killing it" >&2
   signal KILL

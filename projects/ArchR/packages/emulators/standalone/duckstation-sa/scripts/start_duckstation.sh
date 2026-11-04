@@ -139,4 +139,8 @@ export PAN_MESA_DEBUG=forcepack
 export MESA_NO_ERROR=1
 
 #Run Duckstation
-${EMUPERF} duckstation-sa -fullscreen -bigpicture -nogui -- "${1}" > /dev/null 2>&1
+# A state to start from (runemu.sh --entrystate): the resume state
+# archr-game-save-exit left, or one picked on the launcher's Saves screen.
+STATE=""
+[ -f "${ARCHR_ENTRY_STATE}" ] && STATE="${ARCHR_ENTRY_STATE}"
+${EMUPERF} duckstation-sa -fullscreen -bigpicture -nogui ${STATE:+-statefile "${STATE}"} -- "${1}" > /dev/null 2>&1

@@ -152,6 +152,42 @@ check "mupen64plus without a state: open" "$?|$(running)|$(cat "${TMP}/osd")" "3
 stop
 rm -f "${TMP}/no-state"
 
+# DuckStation: SIGINT (TERM would close it without saving), its resume
+# state by serial; without SaveStateOnExit the switcher leaves it open.
+export DUCK_CFG="${TMP}/duckstation.ini"
+echo 'SaveStateOnExit = true' >"${DUCK_CFG}"
+mkdir -p "${STATES_DIR}/psx"
+cat >"${TMP}/bin/duckstation-sa" <<STUB
+#!/usr/bin/python3
+import signal, sys, time
+def save(*_):
+    open("${STATES_DIR}/psx/SCUS-94426_resume.sav", "w").write("state")
+    sys.exit(0)
+signal.signal(signal.SIGINT, save)
+signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+while True:
+    time.sleep(0.05)
+STUB
+chmod +x "${TMP}/bin/duckstation-sa"
+duck() {
+  "${TMP}/bin/duckstation-sa" &
+  EMU=$!
+  echo "-9 AppRun.wrapped" >"${KILL_DATA}"
+  sleep 0.3
+  game "/roms/psx/CTR.chd" psx duckstation duckstation-sa
+}
+duck
+"${SAVE_EXIT}" switch >/dev/null 2>&1
+check "duckstation: closed by SIGINT" "$?|$(running)" "0|closed"
+check "duckstation: its resume state" "$(cut -f6 "${RESUME_DIR}/resume-last")" "${STATES_DIR}/psx/SCUS-94426_resume.sav"
+stop
+echo 'SaveStateOnExit = false' >"${DUCK_CFG}"
+duck
+"${SAVE_EXIT}" switch >/dev/null 2>&1
+check "duckstation without SaveStateOnExit: open" "$?|$(running)" "3|running"
+stop
+rm -f "${SWITCHER}"
+
 # An emulator without a state from outside: the switcher leaves it; the
 # battery closes it, and one that ignores the signal is killed.
 printf '#!/bin/bash\ntrap "" TERM\nwhile :; do sleep 0.05; done\n' >"${TMP}/bin/stubborn"
@@ -193,11 +229,11 @@ stop
 
 # runemu.sh, as a game starts: its record and the last mark go.
 "${SAVE_EXIT}" --forget "${ROM}"
-check "forget drops the line" "$(cut -f8 "${RESUME_DIR}/resume.tsv" | tr '\n' '|')" "/roms/nds/Game.nds|${N64}|"
+check "forget drops the line" "$(cut -f8 "${RESUME_DIR}/resume.tsv" | tr '\n' '|')" "/roms/nds/Game.nds|/roms/psx/CTR.chd|${N64}|"
 "${SAVE_EXIT}" --forget /roms/nds/Game.nds
 check "forget drops the last mark of that game" "$([ -e "${RESUME_DIR}/resume-last" ] && echo kept || echo gone)" "gone"
 "${SAVE_EXIT}" --forget /roms/other.sfc
-check "forget of another game keeps the lines" "$(wc -l <"${RESUME_DIR}/resume.tsv")" "1"
+check "forget of another game keeps the lines" "$(wc -l <"${RESUME_DIR}/resume.tsv")" "2"
 
 # The battery guard, with readings, the screen and the power off stubbed.
 BAT="${TMP}/battery"
