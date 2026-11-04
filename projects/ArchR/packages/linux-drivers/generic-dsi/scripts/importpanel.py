@@ -195,7 +195,8 @@ while iseq:
     data = iseq[0:datalen]
     iseq = iseq[datalen:]
 
-    maybe_wait = f" wait={wait}" if (wait) else ""
+    # 0x: older drivers read wait= as hex, newer ones as decimal or 0x hex
+    maybe_wait = f" wait=0x{wait:x}" if (wait) else ""
     maybe_comment = f" # orig_cmd=0x{cmd:x}" if comment else ""
     acc += [f"I seq={data.hex()}{maybe_wait}{maybe_comment}"]
 
