@@ -16,6 +16,11 @@ SCRIPTS="${PKG}/sources/scripts"
 TMP=$(mktemp -d)
 trap 'rm -rf "${TMP}"' EXIT
 FAILED=0
+# On the device /usr/bin/paste was pastebinit, which uploads its input to a
+# public pastebin. The scripts never get a paste; any call is recorded.
+mkdir -p "${TMP}/nopaste"
+printf '#!/bin/sh\necho "$*" >>"%s/paste-calls"\nexit 1\n' "${TMP}" >"${TMP}/nopaste/paste"
+chmod +x "${TMP}/nopaste/paste"
 
 export SETSETTINGS_PROFILE="${TMP}/profile" SETSETTINGS_RETROARCH="${TMP}/ra" \
   SETSETTINGS_ROMS="${TMP}/roms" SETSETTINGS_APPEND="${TMP}/append.cfg" SETSETTINGS_REMAPS="${TMP}/remaps" \
@@ -25,7 +30,7 @@ cat >"${SETSETTINGS_PROFILE}" <<PROFILE
 . "${PKG}/profile.d/001-functions"
 J_CONF="${TMP}/system.cfg"
 J_CONF_LOCK="${TMP}/system.cfg.lock"
-PATH="${SCRIPTS}:\${PATH}"
+PATH="${SCRIPTS}:${TMP}/nopaste:\${PATH}"
 PROFILE
 mkdir -p "${TMP}/ra" "${TMP}/roms/savestates" "${TMP}/joypads"
 # A USB pad took js0; the built-in one sits on the host bus.
@@ -222,5 +227,6 @@ check "migration marked done" "has 'migration.retroarch_defaults=1' '${C}'"
 echo "gba.ratio=3/2" >>"${C}"
 bash "${SCRIPTS}/archr-retroarch-defaults"
 check "migration runs once" "has 'gba.ratio=3/2' '${C}'"
+check "paste is never called" "[ ! -e '${TMP}/paste-calls' ]"
 
 exit "${FAILED}"

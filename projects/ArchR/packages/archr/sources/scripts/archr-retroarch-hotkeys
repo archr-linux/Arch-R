@@ -87,7 +87,8 @@ L2_AXIS=$(value input_l2_axis)
 } >"${CONFIG}.hotkeys"
 
 # Replace those keys, keep everything else, publish with one rename.
-KEYS=$(sed 's/ = .*//' "${CONFIG}.hotkeys" | paste -sd'|')
+KEYS=$(sed 's/ = .*//' "${CONFIG}.hotkeys" | tr '\n' '|')
+KEYS=${KEYS%|}
 if grep -Ev "^(${KEYS})[[:space:]]*=" "${CONFIG}" >"${CONFIG}.new" &&
    cat "${CONFIG}.hotkeys" >>"${CONFIG}.new" &&
    mv -f "${CONFIG}.new" "${CONFIG}"

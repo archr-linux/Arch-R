@@ -51,11 +51,16 @@ case "$3" in
 esac
 EOF
 chmod +x "${T}/bin/modinfo"
+# On the device /usr/bin/paste was pastebinit, which uploads its input to a
+# public pastebin. The script never gets a paste; any call is recorded.
+printf '#!/bin/sh\necho "$*" >>"%s/paste-calls"\nexit 1\n' "${T}" >"${T}/bin/paste"
+chmod +x "${T}/bin/paste"
+advisor() { PATH="${T}/bin:${PATH}" bash "${SCRIPT}" "$@"; }
 : >"${LIB}/firmware/mt7601u.bin"
 : >"${LIB}/firmware/rtl_bt/rtl8761b_fw.bin"
 : >"${LIB}/firmware/rtl_bt/rtl8761b_config.bin"
 OUT="${T}/usr/share/archr/usb-advisor.tsv"
-PATH="${T}/bin:${PATH}" bash "${SCRIPT}" gen "${LIB}" "${CHIPS}" "${OUT}" 2026-10-30
+advisor gen "${LIB}" "${CHIPS}" "${OUT}" 2026-10-30
 check "gen dates the table" 'head -n1 "${OUT}" | grep -qx "date	2026-10-30"'
 check "two drivers for one ID, one enough" \
   'grep -qx "dev	0bda:0179	Realtek RTL8188ETV	wifi	2.4	8188eu,rtl8xxxu	ok" "${OUT}" ||
@@ -89,13 +94,13 @@ device 1-1 0bda 0179 "802.11n NIC" ff 8188eu
 mkdir "${R}/sys/class/net/wlan0" "${R}/sys/class/net/lo"
 ln -s ../../../devices/usb1/1-1/1-1:1.0 "${R}/sys/class/net/wlan0/device"
 echo "[    5.1] mt7663u 1-3:1.0: Direct firmware load for mediatek/mt7663pr2h.bin failed with error -2" >"${T}/dmesg"
-bash "${SCRIPT}" scan 0bda:0179
+advisor scan 0bda:0179
 A="${R}/run/archr/usb-advice"
 check "a working dongle" \
   'grep -qx "dev	0bda:0179	Realtek RTL8188ETV	wifi	2.4	8188eu,rtl8xxxu	8188eu	wlan0	-	works" "${A}" ||
    grep -qx "dev	0bda:0179	Realtek RTL8188ETV	wifi	2.4	rtl8xxxu,8188eu	8188eu	wlan0	-	works" "${A}"'
 check "never seen: announced" 'grep -qx "added	0bda:0179" "${A}" && grep -qx "seq	1" "${A}"'
-bash "${SCRIPT}" scan 0bda:0179
+advisor scan 0bda:0179
 check "seen with the same verdict: quiet" '! grep -q "^added" "${A}" && grep -qx "seq	2" "${A}"'
 
 device 1-2 0bda b733 "802.11ac WLAN Adapter" ff ""
@@ -104,7 +109,7 @@ device 1-4 045e 028e "Controller" ff xpad
 device 1-5 1234 5678 "Mass Storage" 08 ""
 device 1-6 0a12 9999 "x" e0 ""
 printf 'Odd\tBT\001\n' >"${R}/sys/devices/usb1/1-6/product"
-bash "${SCRIPT}" scan 0bda:b733
+advisor scan 0bda:b733
 check "no driver for the chip" \
   'grep -qx "dev	0bda:b733	Realtek RTL8733BU	wifi+bt	2.4+5	-	-	-	-	no_driver" "${A}" && grep -qx "added	0bda:b733" "${A}"'
 check "bound but its firmware failed to load" \
@@ -117,12 +122,13 @@ check "seen list, newest scan first" \
   '[ "$(cut -f2 "${S}" | paste -sd" ")" = "0bda:0179 0bda:b733 0e8d:7663 0a12:9999" ]'
 
 rm "${R}/sys/bus/usb/devices/1-2"
-bash "${SCRIPT}" scan
+advisor scan
 check "unplugged: gone from now, kept in seen" \
   '! grep -q "0bda:b733" "${A}" && grep -q "0bda:b733" "${S}" && ! grep -q "^added" "${A}"'
-bash "${SCRIPT}" forget 0bda:b733
+advisor forget 0bda:b733
 check "forget drops one adapter" '! grep -q "0bda:b733" "${S}" && grep -q "0bda:0179" "${S}"'
 check "the scan holds the lock file" '[ -e "${R}/run/archr/usb-advisor.lock" ]'
-check "forget refuses anything but an ID" '! bash "${SCRIPT}" forget "../x" 2>/dev/null'
+check "forget refuses anything but an ID" '! advisor forget "../x" 2>/dev/null'
+check "paste is never called" '[ ! -e "${T}/paste-calls" ]'
 
 exit "${FAILED}"
