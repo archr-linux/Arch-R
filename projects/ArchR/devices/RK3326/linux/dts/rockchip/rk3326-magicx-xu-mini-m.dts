@@ -60,11 +60,11 @@
 			"I seq=ef080808403f64",
 			"I seq=ff7701000013",
 			"I seq=e6167c", "I seq=e8000e",
-			"I seq=e8000c wait=50",
+			"I seq=e8000c wait=0x50",
 			"I seq=e80000",
 			"I seq=ff7701000000",
-			"I seq=11 wait=150",
-			"I seq=29 wait=120";
+			"I seq=11 wait=0x150",
+			"I seq=29 wait=0x120";
 		rotation = <90>;
 	};
 };

@@ -301,8 +301,8 @@
 	"I seq=ff30", "I seq=ff52", "I seq=ff00",
 	"I seq=3602",
 	"I seq=3a70",
-	"I seq=11 wait=200",
-	"I seq=29 wait=10";
+	"I seq=11 wait=0x200",
+	"I seq=29 wait=0x10";
 };
 
 &io_domains {
