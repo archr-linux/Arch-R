@@ -225,7 +225,7 @@ adapters() {
       local failed
       failed=$(${ARCHR_USB_DMESG:-dmesg} 2>/dev/null |
         sed -nE "s/.* ${dev##*/}(:[^ ]*)?: Direct firmware load for ([^ ]*) failed.*/\2/p" |
-        sort -u | paste -sd, -)
+        sort -u | tr '\n' , | sed 's/,$//')
       [ -n "${failed}" ] && missing="${failed}"
     fi
     if [ -n "${iface}" ]; then

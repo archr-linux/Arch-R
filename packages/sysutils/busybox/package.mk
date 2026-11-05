@@ -119,7 +119,6 @@ makeinstall_target() {
     cp ${PKG_DIR}/scripts/pastebinit ${INSTALL}/usr/bin/
       sed -e "s/@DISTRONAME@-@OS_VERSION@/${DISTRONAME}-${OS_VERSION}/g" \
           -i ${INSTALL}/usr/bin/pastebinit
-      ln -sf pastebinit ${INSTALL}/usr/bin/paste
 
   mkdir -p ${INSTALL}/usr/sbin
     cp ${PKG_DIR}/scripts/kernel-overlays-setup ${INSTALL}/usr/sbin

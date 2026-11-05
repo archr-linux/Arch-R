@@ -5,6 +5,10 @@
 
 PKG_NAME="busybox"
 PKG_VERSION="1.36.1"
+PKG_REV="2"
+# Needs the coreutils that owns /usr/bin/paste and restores it after this
+# busybox drops it (see coreutils' 80-archr-paste.hook).
+PKG_PACMAN_DEPENDS="coreutils>=9.6-2"
 PKG_LICENSE="GPL"
 PKG_SITE="http://www.busybox.net"
 PKG_URL="http://busybox.net/downloads/${PKG_NAME}-${PKG_VERSION}.tar.bz2"
@@ -125,7 +129,6 @@ makeinstall_target() {
       ln -sf dthelper ${INSTALL}/usr/bin/dtsoc
     cp ${PKG_DIR}/scripts/lsb_release ${INSTALL}/usr/bin/
     cp ${PKG_DIR}/scripts/pastebinit ${INSTALL}/usr/bin/
-    ln -sf pastebinit ${INSTALL}/usr/bin/paste
 
   mkdir -p ${INSTALL}/usr/sbin
     cp ${PKG_DIR}/scripts/kernel-overlays-setup ${INSTALL}/usr/sbin

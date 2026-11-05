@@ -7,7 +7,8 @@
 # (the image's own installed-package db), which must agree exactly.
 # Run from the top of the source tree. Sets name, version (with an epoch
 # when it has one), fileversion (version without the epoch, for archive
-# names), pkgrel and replaces (the PKG_REPLACES list), plus pkgmk/relmk
+# names), pkgrel, replaces (the PKG_REPLACES list) and depends (the
+# PKG_PACMAN_DEPENDS list), plus pkgmk/relmk
 # and srcmk (empty when no package.mk builds the package any more).
 #
 # PKG_ID_EXCLUDES: tar --exclude patterns for files never shipped.
@@ -194,6 +195,15 @@ pkg_identity() {
     replaces=""
     if [ -n "${relmk}" ]; then
         replaces="$(awk -F'"' '/^PKG_REPLACES=/ {print $2; exit}' "${relmk}")"
+    fi
+
+    # PKG_PACMAN_DEPENDS lists what the installed package needs at run
+    # time, with an optional version ("coreutils>=9.6-2"), so pacman -S or
+    # -U of this one package pulls them into the same transaction.
+    # PKG_DEPENDS_TARGET is build order only and never reaches pacman.
+    depends=""
+    if [ -n "${relmk}" ]; then
+        depends="$(awk -F'"' '/^PKG_PACMAN_DEPENDS=/ {print $2; exit}' "${relmk}")"
     fi
 
     # srcmk: the package.mk that builds this package, device packages
