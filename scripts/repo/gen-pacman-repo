@@ -113,10 +113,15 @@ EOF
     # The signer is still passed to repo-add below so the db gets its
     # own .sig and trust flows from there.
 
+    BUILT+=("${outfile}")
     echo "  + ${name} ${version}-${pkgrel}"
 }
 
 echo "gen-pacman-repo: packaging install_pkg/* into .pkg.tar.zst..."
+# Exactly the archives this run wrote: a reused OUT_DIR still holds older
+# ones (a skipped package's, a previous version's), which must not reach
+# the db.
+BUILT=()
 for src in "${BUILD_DIR}/install_pkg/"*; do
     build_one_pkg "${src}"
 done
@@ -129,9 +134,9 @@ local_files="${OUT_DIR}/${REPO_NAME}.files.tar.gz"
 rm -f "${local_db}" "${local_files}"
 
 if [ -n "${SIGNER}" ]; then
-    repo-add --sign --key "${SIGNER}" "${local_db}" "${OUT_DIR}"/*.pkg.tar.zst
+    repo-add --sign --key "${SIGNER}" "${local_db}" "${BUILT[@]}"
 else
-    repo-add "${local_db}" "${OUT_DIR}"/*.pkg.tar.zst
+    repo-add "${local_db}" "${BUILT[@]}"
 fi
 
 # Pacman fetches archr.db (no .tar.gz); the conventional way is to ship
@@ -161,7 +166,7 @@ printf '[options]\nArchitecture = aarch64\nSigLevel = Never\n' > "${seed_conf}"
 if fakeroot pacman -U --dbonly --noconfirm --config "${seed_conf}" \
         --root "${OUT_DIR}/.seed-root" --dbpath "${seed_dbpath}" \
         --cachedir "${OUT_DIR}" \
-        "${OUT_DIR}"/*.pkg.tar.zst >/dev/null 2>&1; then
+        "${BUILT[@]}" >/dev/null 2>&1; then
     tar -C "${seed_dbpath}" -czf "${OUT_DIR}/${REPO_NAME}-localdb.tar.gz" local
     echo "  wrote ${REPO_NAME}-localdb.tar.gz ($(ls -1 "${seed_dbpath}/local" | wc -l) entries)"
 else
