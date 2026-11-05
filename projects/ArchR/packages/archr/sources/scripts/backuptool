@@ -934,8 +934,9 @@ backup() {
     fi
     # Checksum and mtime of what goes in, relative to the archive root.
     # sha256sum and stat keep their input order, so the lines pair up.
+    # Not paste: on the device /usr/bin/paste used to be pastebinit.
     mkdir -p "${WORKDIR}/${MANIFEST%/*}" || exit 1
-    (cd "${WORKDIR}" && paste -d ' ' \
+    (cd "${WORKDIR}" && awk 'FNR == NR { t[FNR] = $0; next } { print t[FNR] " " $0 }' \
         <(tr '\n' '\0' <files.zip | xargs -0 -r stat -c '%Y' --) \
         <(tr '\n' '\0' <files.zip | xargs -0 -r sha256sum --)) | \
         sed -E 's|^([0-9]+) ([0-9a-f]{64})  /?|\2 \1 |' >"${WORKDIR}/${MANIFEST}" || exit 1

@@ -44,6 +44,14 @@ esac
 EOF
 chmod +x "${TMP}/sys/systemctl"
 printf 'smbd\nsyncthing\n' >"${TMP}/sys/active"
+# On the device /usr/bin/paste was pastebinit, which uploads its input to a
+# public pastebin. Any call to paste is recorded and fails here.
+cat >"${TMP}/sys/paste" <<EOF
+#!/bin/sh
+echo "\$*" >>"${TMP}/sys/paste-calls"
+exit 1
+EOF
+chmod +x "${TMP}/sys/paste"
 RUNPATH="${TMP}/sys:${PATH}"
 if [ "${MODE}" = busybox ]; then
   printf '#!/bin/sh\nexec "%s" unzip "$@"\n' "${BUSYBOX}" >"${TMP}/unzip/unzip"
@@ -130,7 +138,11 @@ put storage/roms/backup/old.srm
 put storage/roms/backup/ARCHIVED_ArchR_BACKUP-old.zip
 mkdir -p "${ROOT}/storage/.config/drastic"
 ln -s "${ROOT}/storage/roms/nds" "${ROOT}/storage/.config/drastic/backup"
-run backup >"${TMP}/backup.log" 2>&1
+if ! run backup >"${TMP}/backup.log" 2>&1; then
+  echo 'FAIL backup'; cat "${TMP}/backup.log"
+  [ ! -e "${TMP}/sys/paste-calls" ] || { echo 'FAIL paste called:'; cat "${TMP}/sys/paste-calls"; }
+  exit 1
+fi
 for f in "${FILES[@]}"; do
   [ "$(unzip -p "${ZIP}" "${R}/${f}")" = "$f" ] || { echo "FAIL missing save: $f"; exit 1; }
 done
@@ -862,4 +874,5 @@ check test "$(grep -c 'private.psk' "${TMP}/entries" || true)" = 0
 check test "$(grep -c 'elsewhere' "${TMP}/entries" || true)" = 0
 check grep -q 'Skipped.*elsewhere/file' "${TMP}/custom.log"
 check bash -n "${SCRIPT}"
+check test ! -e "${TMP}/sys/paste-calls"
 echo "ok   backuptool integration tests (${MODE})"
