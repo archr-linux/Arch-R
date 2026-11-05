@@ -8,9 +8,12 @@
 # needs coreutils-2, which ships paste, a spare copy and the real
 # 80-archr-paste.hook. Every order and combination, in one transaction or
 # several, and a fresh image, must end with GNU paste owned by coreutils.
+# The hook never writes through a link: not when paste links to a
+# directory, not when a link waits at a temporary name.
 # NOHOOK=1 builds coreutils-2 without the hook, to see the test fail.
 # Runs unprivileged: unshare -r gives pacman the root it wants and lets
-# the hook chroot; a host busybox provides sh, cp and mv inside the root.
+# the hook chroot; inside the root, sh is a host busybox and the other
+# tools are the host's GNU coreutils, as on the device.
 #   bash scripts/repo/tests/paste_migration_test.sh
 
 set -u
@@ -63,16 +66,22 @@ BB1="${TMP}/repo/busybox-1.pkg.tar.gz" CU1="${TMP}/repo/coreutils-1.pkg.tar.gz"
 BB2="${TMP}/repo/busybox-2.pkg.tar.gz" CU2="${TMP}/repo/coreutils-2.pkg.tar.gz"
 
 # --- a root ------------------------------------------------------------------
-# sh, cp and mv for the hook, outside the files the packages own.
+# Tools for the hook, outside the files the packages own: sh from busybox,
+# the rest from the host's GNU coreutils, as on the device.
+GNUTOOLS="cp mv mktemp cat chmod rm"
 newroot() { # name
     R="${TMP}/root-$1"
     mkdir -p "${R}/var/lib/pacman" "${R}/var/cache/pacman/pkg" "${R}/var/log" \
         "${R}/etc/pacman.d/hooks" "${R}/usr/bin" "${R}/usr/lib/testbb"
-    cp "${BUSYBOX}" "${R}/usr/lib/testbb/busybox"
-    for lib in $(ldd "${BUSYBOX}" 2>/dev/null | grep -o '/[^ ]*'); do
-        mkdir -p "${R}$(dirname "${lib}")" && cp -L "${lib}" "${R}${lib}"
+    local bin lib
+    for bin in "${BUSYBOX}" $(for t in ${GNUTOOLS}; do type -P "${t}"; done); do
+        cp "${bin}" "${R}/usr/lib/testbb/"
+        for lib in $(ldd "${bin}" 2>/dev/null | grep -o '/[^ ]*'); do
+            [ -e "${R}${lib}" ] || { mkdir -p "${R}$(dirname "${lib}")" && cp -L "${lib}" "${R}${lib}"; }
+        done
     done
-    for a in sh cp mv; do ln -s ../lib/testbb/busybox "${R}/usr/bin/${a}"; done
+    ln -s "../lib/testbb/$(basename "${BUSYBOX}")" "${R}/usr/bin/sh"
+    for bin in ${GNUTOOLS}; do ln -s "../lib/testbb/${bin}" "${R}/usr/bin/${bin}"; done
 }
 pc() { # pacman in root R, as the device: HookDir = /etc/pacman.d/hooks/
     unshare -r pacman --root "${R}" --dbpath "${R}/var/lib/pacman" --config "${TMP}/pacman.conf" \
@@ -145,6 +154,47 @@ pc -Sy busybox coreutils; check "image, reinstall both" $?
 if grep -q pastebinit "${R}/var/lib/pacman/local/coreutils-1.0-2/files"; then
     echo "FAIL image db"; FAILED=1
 fi
+
+# --- publishing never follows a link ----------------------------------------
+# paste is a link to a directory: the new file replaces the link and
+# nothing lands in the directory.
+newroot link-to-dir
+pc -U "${BB2}" "${CU2}"
+mkdir "${R}/srv-dir"
+ln -sfn /srv-dir "${R}/usr/bin/paste"
+pc -Sy busybox; rc=$?
+if [ "${rc}" = 0 ] && [ ! -L "${R}/usr/bin/paste" ] && [ "$(cat "${R}/usr/bin/paste")" = "${GNU}" ] &&
+   [ "$(stat -c %a "${R}/usr/bin/paste")" = 755 ] && [ -z "$(ls -A "${R}/srv-dir")" ]; then
+    echo "ok   paste linked to a directory: the link is replaced"
+else
+    echo "FAIL paste linked to a directory: $(state); in the directory: $(ls -A "${R}/srv-dir" | tr '\n' ' ')"
+    FAILED=1
+fi
+# Whatever waits at a predictable temporary name is never written through.
+newroot planted-temp
+pc -U "${BB2}" "${CU2}"
+echo victim >"${R}/victim"
+rm "${R}/usr/bin/paste"
+ln -s /victim "${R}/usr/bin/paste.archr-new"
+pc -Sy busybox; rc=$?
+if [ "${rc}" = 0 ] && [ "$(cat "${R}/victim")" = victim ] && [ ! -L "${R}/usr/bin/paste" ] &&
+   [ "$(cat "${R}/usr/bin/paste")" = "${GNU}" ]; then
+    echo "ok   a planted temporary link is not followed"
+else
+    echo "FAIL a planted temporary link: victim '$(cat "${R}/victim")', $(state)"
+    FAILED=1
+fi
+[ -z "$(ls -A "${R}/usr/bin" | grep '^\.paste\.')" ] ||
+    { echo "FAIL a temporary file was left in /usr/bin"; FAILED=1; }
+
+# The copy is unreadable: the hook fails and leaves no temporary file.
+newroot copy-missing
+pc -U "${BB2}" "${CU2}"
+rm "${R}/usr/bin/paste" "${R}/usr/lib/coreutils/paste"
+pc -Sy busybox
+if [ ! -e "${R}/usr/bin/paste" ] && [ -z "$(ls -A "${R}/usr/bin" | grep '^\.paste\.')" ]; then
+    echo "ok   a failed copy leaves no temporary file"
+else echo "FAIL a failed copy: $(ls -A "${R}/usr/bin" | tr '\n' ' ')"; FAILED=1; fi
 
 # --- the real package.mk files match the toy ones -----------------------------
 TOP="$(cd "${HERE}/../../.." && pwd)/projects/ArchR/packages"

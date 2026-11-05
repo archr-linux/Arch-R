@@ -3,7 +3,9 @@
 # order pacman picks, alone or with coreutils. After every such transaction
 # the file comes back from the copy coreutils keeps, if it is missing or
 # still a link. pacman reads hooks again at PostTransaction, so this one
-# also runs in the transaction that installs it.
+# also runs in the transaction that installs it. No step follows a link:
+# mktemp makes a new file, and mv -T replaces paste itself even when it
+# is a link to a directory.
 [Trigger]
 Operation = Install
 Operation = Upgrade
@@ -21,4 +23,4 @@ Target = coreutils
 [Action]
 Description = Restoring GNU paste...
 When = PostTransaction
-Exec = /usr/bin/sh -c 'p=/usr/bin/paste; if [ -L "$p" ] || [ ! -e "$p" ]; then cp -p /usr/lib/coreutils/paste "$p.archr-new" && mv -f "$p.archr-new" "$p"; fi'
+Exec = /usr/bin/sh -c 'p=/usr/bin/paste; [ -L "$p" ] || [ ! -e "$p" ] || exit 0; t=$(mktemp /usr/bin/.paste.XXXXXX) || exit 1; if cat /usr/lib/coreutils/paste >"$t" && chmod 755 "$t" && mv -fT "$t" "$p"; then exit 0; fi; rm -f "$t"; exit 1'
