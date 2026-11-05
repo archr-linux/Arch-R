@@ -5,8 +5,9 @@
 # pkg_identity INSTALL_PKG_DIR: the pacman identity ArchR gives a built
 # package, shared by gen-pacman-repo (the repo) and gen-image-localdb
 # (the image's own installed-package db), which must agree exactly.
-# Run from the top of the source tree. Sets name, version, pkgrel and
-# replaces (the PKG_REPLACES list), plus pkgmk/relmk.
+# Run from the top of the source tree. Sets name, version (with an epoch
+# when it has one), fileversion (version without the epoch, for archive
+# names), pkgrel and replaces (the PKG_REPLACES list), plus pkgmk/relmk.
 #
 # PKG_ID_EXCLUDES: tar --exclude patterns for files never shipped.
 
@@ -30,8 +31,72 @@ PKG_ID_EXCLUDES=(
     '*/modules/*/modules.builtin.alias.bin'
 )
 
+# Checked once, when sourced from the top of the source tree.
+PKG_ID_GIT=0
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    PKG_ID_GIT=1
+    [ "$(git rev-parse --is-shallow-repository 2>/dev/null)" = true ] &&
+        echo "pkg-identity: shallow clone, git-pinned package dates are not reliable" >&2
+else
+    echo "pkg-identity: no git history, git-pinned packages get the date 00000000T0000" >&2
+fi
+
+pkg_is_git_sha() {
+    [[ "$1" =~ ^[0-9a-f]{40}$ ]]
+}
+
+# The package.mk a dynamic PKG_VERSION="$(get_pkg_version X)" takes its
+# version from (X's), so a bump there dates the packages that reuse it.
+pkg_version_source() {
+    local mk="$1" other
+    [ -n "${mk}" ] || return 0
+    other="$(sed -n 's/^PKG_VERSION="\$(get_pkg_version \([^)]*\))"$/\1/p' "${mk}" | head -1)"
+    [ -n "${other}" ] || return 0
+    find projects/ArchR/packages packages -mindepth 2 -maxdepth 6 \
+        -path "*/${other}/package.mk" -print -quit 2>/dev/null
+}
+
+# pkg_git_date FILE...: the newest UTC time, YYYYMMDDTHHMM, at which the
+# distribution changed any of FILE. A file committed as is: the committer
+# date of the last first-parent commit touching it (on main a merge counts
+# at its own date, so the order follows main). A file edited but not
+# committed: its mtime (a local build; the same in every script of the
+# build). No git history at all (a source tarball): 00000000T0000, a
+# fixed date older than any real one, so such a build never outranks a
+# published package; it is not meant for publishing.
+pkg_git_date() {
+    local f d best=""
+    if [ "${PKG_ID_GIT}" != 1 ]; then
+        echo "00000000T0000"
+        return 0
+    fi
+    for f in "$@"; do
+        [ -f "${f}" ] || continue
+        if git ls-files --error-unmatch -- "${f}" >/dev/null 2>&1 &&
+           git diff --quiet HEAD -- "${f}" 2>/dev/null; then
+            d="$(TZ=UTC git log -1 --first-parent --format=%cd \
+                    --date=format-local:%Y%m%dT%H%M -- "${f}" 2>/dev/null)"
+        else
+            d="$(TZ=UTC date -r "${f}" +%Y%m%dT%H%M)"
+        fi
+        [[ "${d}" > "${best}" ]] && best="${d}"
+    done
+    echo "${best:-00000000T0000}"
+}
+
+# pkg_git_pkgver SHA FILE...: the pacman version of a package pinned to
+# git commit SHA, given the package.mk files that set it:
+# 1:0.git<YYYYMMDDTHHMM>.<sha7>. The date makes every bump sort higher;
+# epoch 1 makes it sort above the bare hashes devices already have
+# installed. PKG_VERSION itself is untouched (source URL, build dirs).
+pkg_git_pkgver() {
+    local sha="$1"
+    shift
+    printf '1:0.git%s.%s\n' "$(pkg_git_date "$@")" "${sha:0:7}"
+}
+
 pkg_identity() {
-    local src="$1" dirname rev real replaced
+    local src="$1" dirname rev real="" replaced datemk
     dirname="$(basename "${src}")"
 
     # The install_pkg dir name is "<pkgname>-<version_or_githash>". Strip
@@ -76,7 +141,6 @@ pkg_identity() {
     # printf instead of echo to avoid the trailing newline being
     # turned into a stray '.' by tr -c.
     version="$(printf '%s' "${version}" | tr -c 'a-zA-Z0-9.+_' '.')"
-
     # The name above is derived from the install_pkg directory, which
     # goes wrong when PKG_VERSION is empty or starts with a letter
     # ("autostart-", "mako-notify-v1.0"); devices already carry those
@@ -114,4 +178,21 @@ pkg_identity() {
     if [ -n "${relmk}" ]; then
         replaces="$(awk -F'"' '/^PKG_REPLACES=/ {print $2; exit}' "${relmk}")"
     fi
+
+    # A PKG_VERSION pinned to a git commit (40 hex chars) cannot be the
+    # pkgver: vercmp orders commit hashes arbitrarily, so a bump to a hash
+    # that sorts lower (a1b2... after 1018...) looked like a downgrade and
+    # was never offered. See pkg_git_pkgver.
+    # Dated by the package.mk that pins it; device packages
+    # (projects/ArchR/devices) are only looked up for this.
+    if pkg_is_git_sha "${version}"; then
+        datemk="${relmk:-$(find projects/ArchR/devices -mindepth 3 -maxdepth 6 \
+                    -path "*/${real:-${name}}/package.mk" -print -quit 2>/dev/null)}"
+        version="$(pkg_git_pkgver "${version}" "${datemk}" \
+                    $(pkg_version_source "${datemk}"))"
+    fi
+
+    # The archive name leaves the epoch out: GitHub Releases rewrite ':' in
+    # asset names, and pacman finds the file through the db anyway.
+    fileversion="${version#*:}"
 }
