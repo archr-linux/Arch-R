@@ -80,6 +80,11 @@ docker-%: UID := $(shell id -u)
 # GID is the main user group of current user - ensures docker sets file permissions properly
 docker-%: GID := $(shell id -g)
 
+# GIT_COMMON_DIR_MOUNT: a git worktree keeps its history outside the checkout
+# (the main clone's .git); mount it at the same path, read-only, so the build
+# sees the history scripts/repo/pkg-identity dates git-pinned packages from.
+docker-%: GIT_COMMON_DIR_MOUNT := $(shell d="$$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"; if [ -n "$$d" ] && [ "$${d#$$(pwd -P)/}" = "$$d" ]; then echo "-v \"$$d:$$d:ro\""; fi)
+
 # PWD is 'present working directory' and passes through the full path to current dir to docker (becomes 'work')
 docker-%: PWD := $(shell pwd)
 
@@ -124,6 +129,6 @@ docker-%:
 	@# .env carries the whole environment, secrets such as
 	@# SCREENSCRAPER_DEV_LOGIN included: owner-only, and gone after the run.
 	@umask 077 && ./scripts/get_env > .env
-	BUILD_DIR="$(DOCKER_WORK_DIR)" $(DOCKER_CMD) run $(PODMAN_ARGS) $(INTERACTIVE) --init --env-file .env --rm --user $(UID):$(GID) $(GLOBAL_SETTINGS) $(LOCAL_SSH_KEYS_FILE) -v "$(PWD)":"$(DOCKER_WORK_DIR)" -v /tmp:/tmp -w "$(DOCKER_WORK_DIR)" $(DOCKER_EXTRA_OPTS) $(DOCKER_IMAGE) $(COMMAND); \
+	BUILD_DIR="$(DOCKER_WORK_DIR)" $(DOCKER_CMD) run $(PODMAN_ARGS) $(INTERACTIVE) --init --env-file .env --rm --user $(UID):$(GID) $(GLOBAL_SETTINGS) $(LOCAL_SSH_KEYS_FILE) $(GIT_COMMON_DIR_MOUNT) -v "$(PWD)":"$(DOCKER_WORK_DIR)" -v /tmp:/tmp -w "$(DOCKER_WORK_DIR)" $(DOCKER_EXTRA_OPTS) $(DOCKER_IMAGE) $(COMMAND); \
 	  status=$$?; rm -f .env; exit $$status
 	@if [ "$*" = "RK3326" ]; then ./scripts/repo/sync-site-bases; fi

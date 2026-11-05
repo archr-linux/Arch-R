@@ -75,17 +75,26 @@ version: `vercmp` orders hashes arbitrarily, so a bump to a hash that
 sorts lower was taken for a downgrade and never offered. `pkg-identity`
 publishes such a package as
 
-    1:0.git<YYYYMMDD>T<HHMM>.<sha7>     e.g. 1:0.git20261104T2045.1018f17
+    1:0.git<YYYYMMDD>T<HHMMSS>.<sha7>     e.g. 1:0.git20261104T204530.1018f17
 
-where the date is the UTC committer date of the last first-parent commit
-that changed its package.mk (and, for `$(get_pkg_version X)`, X's), so
-every bump sorts higher. Epoch 1 puts it above every bare hash already
-installed, so the first release with this scheme offers each of these
-packages once. An uncommitted package.mk is dated by its mtime; a tree
-without git history (a source tarball) uses `00000000T0000`, older than
-any real date, and is not meant for publishing. `PKG_VERSION` itself is
-unchanged: source URLs, build directories and stamps still use the hash.
-Archive names leave the epoch out (GitHub rewrites `:` in asset names).
+where the date is the UTC committer date, to the second, of the last
+first-parent commit that changed its package.mk (and, for
+`$(get_pkg_version X)`, X's; for an overlay, the base package.mk it
+sources), so every bump sorts higher. Epoch 1 puts it above every bare
+hash already installed, so the first release with this scheme offers
+each of these packages once. An uncommitted package.mk is dated by its
+mtime. `PKG_VERSION` itself is unchanged: source URLs, build directories
+and stamps still use the hash. Archive names leave the epoch out (GitHub
+rewrites `:` in asset names).
+
+The image's package db (`gen-image-localdb`, run inside the build
+container) and the repo (`gen-pacman-repo`, run on the host) must give
+the same versions, so both need the full git history of the checkout.
+Without it (a source tarball, a shallow clone) they stop with an error.
+`ARCHR_PKGVER_ALLOW_NOGIT=1` lets a development build that is never
+published go on, with the placeholder date `00000000T000000` and a
+warning. `make docker-*` mounts the main clone's `.git` read-only when
+building from a git worktree, whose history lives outside the checkout.
 `bash scripts/repo/tests/pkg_identity_test.sh` checks the ordering.
 
 `gen-pacman-repo` skips an `install_pkg/` tree that no package.mk builds
