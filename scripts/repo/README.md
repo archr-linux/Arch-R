@@ -65,3 +65,25 @@ Updates page when the release carries a `changelog.txt` asset next to
 the repo (`repo-<channel>/changelog.txt`). Its first line is the version
 the release brings (for example `2.1.2`); the following lines are the
 notes, in plain text. Without the asset the page simply has no notes.
+
+## Versions of git-pinned packages
+
+A package.mk whose `PKG_VERSION` is a 40-hex commit (367 of them today:
+the libretro cores, the WiFi drivers such as `AIC8800` and `RTL8821CU`,
+`archr-launcher`, `retroarch`, ...) cannot use that hash as its pacman
+version: `vercmp` orders hashes arbitrarily, so a bump to a hash that
+sorts lower was taken for a downgrade and never offered. `pkg-identity`
+publishes such a package as
+
+    1:0.git<YYYYMMDD>T<HHMM>.<sha7>     e.g. 1:0.git20261104T2045.1018f17
+
+where the date is the UTC committer date of the last first-parent commit
+that changed its package.mk (and, for `$(get_pkg_version X)`, X's), so
+every bump sorts higher. Epoch 1 puts it above every bare hash already
+installed, so the first release with this scheme offers each of these
+packages once. An uncommitted package.mk is dated by its mtime; a tree
+without git history (a source tarball) uses `00000000T0000`, older than
+any real date, and is not meant for publishing. `PKG_VERSION` itself is
+unchanged: source URLs, build directories and stamps still use the hash.
+Archive names leave the epoch out (GitHub rewrites `:` in asset names).
+`bash scripts/repo/tests/pkg_identity_test.sh` checks the ordering.
