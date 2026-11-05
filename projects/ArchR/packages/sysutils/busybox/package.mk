@@ -125,7 +125,6 @@ makeinstall_target() {
       ln -sf dthelper ${INSTALL}/usr/bin/dtsoc
     cp ${PKG_DIR}/scripts/lsb_release ${INSTALL}/usr/bin/
     cp ${PKG_DIR}/scripts/pastebinit ${INSTALL}/usr/bin/
-    ln -sf pastebinit ${INSTALL}/usr/bin/paste
 
   mkdir -p ${INSTALL}/usr/sbin
     cp ${PKG_DIR}/scripts/kernel-overlays-setup ${INSTALL}/usr/sbin
