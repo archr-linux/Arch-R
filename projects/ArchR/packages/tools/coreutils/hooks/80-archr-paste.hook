@@ -1,0 +1,24 @@
+# /usr/bin/paste moved from busybox (a link to pastebinit) to coreutils.
+# Both old packages own that path, and upgrading busybox deletes it in any
+# order pacman picks, alone or with coreutils. After every such transaction
+# the file comes back from the copy coreutils keeps, if it is missing or
+# still a link. pacman reads hooks again at PostTransaction, so this one
+# also runs in the transaction that installs it.
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Operation = Remove
+Type = Path
+Target = usr/bin/paste
+
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Package
+Target = busybox
+Target = coreutils
+
+[Action]
+Description = Restoring GNU paste...
+When = PostTransaction
+Exec = /usr/bin/sh -c 'p=/usr/bin/paste; if [ -L "$p" ] || [ ! -e "$p" ]; then cp -p /usr/lib/coreutils/paste "$p.archr-new" && mv -f "$p.archr-new" "$p"; fi'

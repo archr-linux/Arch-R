@@ -47,6 +47,13 @@ makeinstall_target() {
     cp ${PKG_BUILD}/.${TARGET_NAME}/src/libstdbuf.so ${INSTALL}/usr/lib/coreutils/
   fi
 
+  # /usr/bin/paste used to be busybox's link to pastebinit, and on
+  # installed devices both packages own that path. Upgrading busybox
+  # deletes it, so the hook puts it back from this copy afterwards.
+  cp ${PKG_BUILD}/.${TARGET_NAME}/src/paste ${INSTALL}/usr/lib/coreutils/
+  mkdir -p ${INSTALL}/etc/pacman.d/hooks
+  cp ${PKG_DIR}/hooks/80-archr-paste.hook ${INSTALL}/etc/pacman.d/hooks/
+
   # Create compatibility symlink: [ -> test
   ln -sf test ${INSTALL}/usr/bin/[
 }
