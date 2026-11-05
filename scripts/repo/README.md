@@ -65,3 +65,39 @@ Updates page when the release carries a `changelog.txt` asset next to
 the repo (`repo-<channel>/changelog.txt`). Its first line is the version
 the release brings (for example `2.1.2`); the following lines are the
 notes, in plain text. Without the asset the page simply has no notes.
+
+## Versions of git-pinned packages
+
+A package.mk whose `PKG_VERSION` is a 40-hex commit (367 of them today:
+the libretro cores, the WiFi drivers such as `AIC8800` and `RTL8821CU`,
+`archr-launcher`, `retroarch`, ...) cannot use that hash as its pacman
+version: `vercmp` orders hashes arbitrarily, so a bump to a hash that
+sorts lower was taken for a downgrade and never offered. `pkg-identity`
+publishes such a package as
+
+    1:0.git<YYYYMMDD>T<HHMMSS>.<sha7>     e.g. 1:0.git20261104T204530.1018f17
+
+where the date is the UTC committer date, to the second, of the last
+first-parent commit that changed its package.mk (and, for
+`$(get_pkg_version X)`, X's; for an overlay, the base package.mk it
+sources), so every bump sorts higher. Epoch 1 puts it above every bare
+hash already installed, so the first release with this scheme offers
+each of these packages once. An uncommitted package.mk is dated by its
+mtime. `PKG_VERSION` itself is unchanged: source URLs, build directories
+and stamps still use the hash. Archive names leave the epoch out (GitHub
+rewrites `:` in asset names).
+
+The image's package db (`gen-image-localdb`, run inside the build
+container) and the repo (`gen-pacman-repo`, run on the host) must give
+the same versions, so both need the full git history of the checkout.
+Without it (a source tarball, a shallow clone) they stop with an error.
+`ARCHR_PKGVER_ALLOW_NOGIT=1` lets a development build that is never
+published go on, with the placeholder date `00000000T000000` and a
+warning. `make docker-*` mounts the main clone's `.git` read-only when
+building from a git worktree, whose history lives outside the checkout.
+`bash scripts/repo/tests/pkg_identity_test.sh` checks the ordering.
+
+`gen-pacman-repo` skips an `install_pkg/` tree that no package.mk builds
+any more (a build dir keeps trees of renamed or dropped packages, such as
+the old `*-sa` emulators); the packages that replace them carry
+`PKG_REPLACES`.
