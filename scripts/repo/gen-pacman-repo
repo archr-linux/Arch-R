@@ -54,7 +54,7 @@ build_one_pkg() {
     # Skip anything that is not an actually built package tree.
     [ -d "${src}" ] || return 0
 
-    local name version fileversion pkgrel replaces replaced pkgmk relmk srcmk
+    local name version fileversion pkgrel replaces replaced depends needed pkgmk relmk srcmk
     pkg_identity "${src}"
     # A build dir keeps install_pkg/ trees of packages that were renamed or
     # dropped since; no package.mk builds them, so they are not published.
@@ -84,6 +84,9 @@ license = GPL
 EOF
     for replaced in ${replaces}; do
         printf 'replaces = %s\nconflict = %s\n' "${replaced}" "${replaced}" >>"${pkginfo}"
+    done
+    for needed in ${depends}; do
+        printf 'depend = %s\n' "${needed}" >>"${pkginfo}"
     done
 
     # Pack with .PKGINFO as the FIRST tar entry; pacman/repo-add stream

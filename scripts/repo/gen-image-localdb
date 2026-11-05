@@ -36,7 +36,7 @@ for src in "${IN}"/*; do
     real="$(sed -n 's/^INFO_PKG_NAME="\(.*\)"$/\1/p' "${src}/.archr-package")"
     [ -n "${real}" ] && [ -f "${STAMPS}/${real}/install_target" ] || continue
 
-    name="" version="" fileversion="" pkgrel="" replaces="" pkgmk="" relmk="" srcmk=""
+    name="" version="" fileversion="" pkgrel="" replaces="" depends="" pkgmk="" relmk="" srcmk=""
     pkg_identity "${src}"
     entry="${work}/local/${name}-${version}-${pkgrel}"
     mkdir -p "${entry}"
@@ -49,6 +49,9 @@ for src in "${IN}"/*; do
         if [ -n "${replaces}" ]; then
             printf '%%REPLACES%%\n'; printf '%s\n' ${replaces}; printf '\n'
             printf '%%CONFLICTS%%\n'; printf '%s\n' ${replaces}; printf '\n'
+        fi
+        if [ -n "${depends}" ]; then
+            printf '%%DEPENDS%%\n'; printf '%s\n' ${depends}; printf '\n'
         fi
     } >"${entry}/desc"
     # The file list pacman records: everything the package archive holds

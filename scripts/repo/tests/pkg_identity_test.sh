@@ -151,7 +151,10 @@ else
 fi
 
 # 8. The image db (gen-image-localdb) and the repo (gen-pacman-repo) of
-# one build give every package the same version.
+# one build give every package the same version, and the same run-time
+# dependencies (PKG_PACMAN_DEPENDS).
+printf 'PKG_PACMAN_DEPENDS="glibc coreutils>=9.6-2"\n' >>packages/tools/zlib/package.mk
+deps() { tar -xOzf "$1" "$2" | sed -n '/^%DEPENDS%$/,/^$/p' | tr '\n' ' '; }
 for d in "AIC8800-${SHA_B}" "zlib-1.3.1" "udevil-${SHA_A}"; do
     n="${d%-*}"
     mkdir -p "${TMP}/build/install_pkg/${d}/usr/share/${n}" "${TMP}/stamps/${n}"
@@ -164,11 +167,16 @@ bash "$(dirname "${HERE}")/gen-image-localdb" "${TMP}/build/install_pkg" "${TMP}
 image="$(tar -tzf "${TMP}/image-db.tar.gz" | sed -n 's#^local/\([^/]*\)/desc$#\1#p' | sort | tr '\n' ' ')"
 check "image db versions" "${image}" \
     "AIC8800-1:0.git20261105T211041.a1b2c3d-1 udevil-1:0.git20261108T113000.1018f17-1 zlib-1.3.1-1 "
+check "image db depends" "$(deps "${TMP}/image-db.tar.gz" local/zlib-1.3.1-1/desc)" \
+    "%DEPENDS% glibc coreutils>=9.6-2  "
+check "image db: no depends unless asked" "$(tar -xOzf "${TMP}/image-db.tar.gz" --wildcards 'local/AIC8800-*/desc' | grep -c '%DEPENDS%')" 0
 if command -v repo-add >/dev/null; then
     rm -rf "${TMP}/out"
     BUILD_DIR="${TMP}/build" OUT_DIR="${TMP}/out" bash "$(dirname "${HERE}")/gen-pacman-repo" >/dev/null 2>&1
     check "repo db versions = image db versions" \
         "$(tar -tzf "${TMP}/out/archr.db.tar.gz" | sed -n 's#^\([^/]*\)/desc$#\1#p' | sort | tr '\n' ' ')" "${image}"
+    check "repo db depends = image db depends" "$(deps "${TMP}/out/archr.db.tar.gz" zlib-1.3.1-1/desc)" \
+        "%DEPENDS% glibc coreutils>=9.6-2  "
 fi
 
 # 9. Without the full history (a source tarball, a shallow clone) both
