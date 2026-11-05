@@ -5,6 +5,7 @@
 
 PKG_NAME="coreutils"
 PKG_VERSION="9.6"
+PKG_REV="2"
 PKG_SHA256="7a0124327b398fd9eb1a6abde583389821422c744ffa10734b24f557610d3283"
 PKG_LICENSE="GPLv2+"
 PKG_SITE="https://www.gnu.org/software/coreutils/"
