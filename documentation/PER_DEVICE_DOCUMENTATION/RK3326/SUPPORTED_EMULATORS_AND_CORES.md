@@ -4,7 +4,6 @@
 |&#xf013; System|Moonlight Game Streaming (moonlight)|System|`moonlight`|.sh|**moonlight:** moonlight (default)<br>|
 |&#xf013; System|Music Player (music)|System|`playlists`|.m3u .sh|**gmu:** gmu (default)<br>|
 |&#xf013; System|Ports (ports)|System|`ports`|.sh .appimage|**portmaster:** portmaster (default)<br>|
-|&#xf013; System|Screenshots (imageviewer)|System|`screenshots`|.jpg .jpeg .png .bmp .psd .tga .gif .hdr .pic .ppm .pgm .mkv .pdf .mp4 .avi||
 |&#xf013; System|Tools (tools)|System|`modules`|.sh||
 |Acorn|BBC Micro (bbcmicro)|1981|`bbcmicro`|.ssd .dsd|**retroarch:** b2 (default)<br>|
 |Amstrad|Amstrad CPC (amstradcpc)|1984|`amstradcpc`|.dsk .cpr .sna .tap .cdt .kcr .voc .m3u .zip .7z|**retroarch:** crocods (default)<br>**retroarch:** cap32<br>|
@@ -71,7 +70,7 @@
 |Nintendo|Game Boy Color (gbc)|1998|`gbc`|.gb .gbc .zip .7z|**retroarch:** gambatte (default)<br>**retroarch:** sameboy<br>**retroarch:** gearboy<br>**retroarch:** tgbdual<br>**retroarch:** mgba<br>**retroarch:** vbam<br>**retroarch:** DoubleCherryGB<br>**retroarch:** skyemu<br>**mednafen:** gb<br>|
 |Nintendo|Game Boy Color (Hacks) (gbch)|1998|`gbch`|.gb .gbc .zip .7z|**retroarch:** gambatte (default)<br>**retroarch:** sameboy<br>**retroarch:** gearboy<br>**retroarch:** tgbdual<br>**retroarch:** mgba<br>**retroarch:** vbam<br>**retroarch:** DoubleCherryGB<br>**retroarch:** skyemu<br>**mednafen:** gb<br>|
 |Nintendo|NES (Hacks) (nesh)|1985|`nesh`|.nes .unif .unf .zip .7z|**retroarch:** nestopia (default)<br>**retroarch:** fceumm<br>**retroarch:** quicknes<br>**retroarch:** mesen<br>**mednafen:** nesh<br>|
-|Nintendo|Nintendo 64 (n64)|1996|`n64`|.z64 .n64 .v64 .zip .7z|**mupen64plus:** mupen64plus-arch (default)<br>**retroarch:** mupen64plus_next<br>**retroarch:** mupen64plus<br>**retroarch:** parallel_n64<br>|
+|Nintendo|Nintendo 64 (n64)|1996|`n64`|.z64 .n64 .v64 .zip .7z|**mupen64plus:** mupen64plus-arch (default)<br>**retroarch:** mupen64plus_next<br>**retroarch:** parallel_n64<br>|
 |Nintendo|Nintendo DS (nds)|2005|`nds`|.nds .zip .7z|**drastic:** drastic-arch (default)<br>**melonds:** melonds-sa<br>**retroarch:** melonds<br>**retroarch:** melondsds<br>**retroarch:** desmume<br>**retroarch:** skyemu<br>|
 |Nintendo|Nintendo DSiWare (ndsiware)|2008|`ndsiware`|.nds .zip .7z|**retroarch:** melondsds (default)<br>**melonds:** melonds-sa<br>|
 |Nintendo|Nintendo Entertainment System (nes)|1985|`nes`|.nes .unif .unf .zip .7z|**retroarch:** nestopia (default)<br>**retroarch:** fceumm<br>**retroarch:** quicknes<br>**retroarch:** mesen<br>**mednafen:** nes<br>|
