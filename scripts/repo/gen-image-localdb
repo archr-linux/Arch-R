@@ -36,7 +36,7 @@ for src in "${IN}"/*; do
     real="$(sed -n 's/^INFO_PKG_NAME="\(.*\)"$/\1/p' "${src}/.archr-package")"
     [ -n "${real}" ] && [ -f "${STAMPS}/${real}/install_target" ] || continue
 
-    name="" version="" fileversion="" pkgrel="" replaces="" pkgmk="" relmk=""
+    name="" version="" fileversion="" pkgrel="" replaces="" pkgmk="" relmk="" srcmk=""
     pkg_identity "${src}"
     entry="${work}/local/${name}-${version}-${pkgrel}"
     mkdir -p "${entry}"

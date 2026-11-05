@@ -7,7 +7,8 @@
 # (the image's own installed-package db), which must agree exactly.
 # Run from the top of the source tree. Sets name, version (with an epoch
 # when it has one), fileversion (version without the epoch, for archive
-# names), pkgrel and replaces (the PKG_REPLACES list), plus pkgmk/relmk.
+# names), pkgrel and replaces (the PKG_REPLACES list), plus pkgmk/relmk
+# and srcmk (empty when no package.mk builds the package any more).
 #
 # PKG_ID_EXCLUDES: tar --exclude patterns for files never shipped.
 
@@ -45,11 +46,14 @@ pkg_is_git_sha() {
     [[ "$1" =~ ^[0-9a-f]{40}$ ]]
 }
 
-# The package.mk a dynamic PKG_VERSION="$(get_pkg_version X)" takes its
-# version from (X's), so a bump there dates the packages that reuse it.
+# The package.mk files a package.mk takes its version from, so a bump
+# there dates the packages that reuse it: X's for a dynamic
+# PKG_VERSION="$(get_pkg_version X)", and a base package.mk an overlay
+# sources (". ${ROOT}/packages/.../package.mk").
 pkg_version_source() {
     local mk="$1" other
     [ -n "${mk}" ] || return 0
+    sed -n 's#^\. *"\{0,1\}\${\{0,1\}ROOT}\{0,1\}/\([^" ]*package\.mk\).*#\1#p' "${mk}"
     other="$(sed -n 's/^PKG_VERSION="\$(get_pkg_version \([^)]*\))"$/\1/p' "${mk}" | head -1)"
     [ -n "${other}" ] || return 0
     find projects/ArchR/packages packages -mindepth 2 -maxdepth 6 \
@@ -96,7 +100,7 @@ pkg_git_pkgver() {
 }
 
 pkg_identity() {
-    local src="$1" dirname rev real="" replaced datemk
+    local src="$1" dirname rev real="" replaced
     dirname="$(basename "${src}")"
 
     # The install_pkg dir name is "<pkgname>-<version_or_githash>". Strip
@@ -179,17 +183,20 @@ pkg_identity() {
         replaces="$(awk -F'"' '/^PKG_REPLACES=/ {print $2; exit}' "${relmk}")"
     fi
 
+    # srcmk: the package.mk that builds this package, device packages
+    # (projects/ArchR/devices) included; empty for a leftover install_pkg
+    # dir whose package is gone (renamed or dropped).
+    srcmk="${relmk:-$(find projects/ArchR/devices -mindepth 3 -maxdepth 6 \
+                -path "*/${real:-${name}}/package.mk" -print -quit 2>/dev/null || :)}"
+
     # A PKG_VERSION pinned to a git commit (40 hex chars) cannot be the
     # pkgver: vercmp orders commit hashes arbitrarily, so a bump to a hash
     # that sorts lower (a1b2... after 1018...) looked like a downgrade and
     # was never offered. See pkg_git_pkgver.
-    # Dated by the package.mk that pins it; device packages
-    # (projects/ArchR/devices) are only looked up for this.
+    # Dated by srcmk and the package.mk files its version comes from.
     if pkg_is_git_sha "${version}"; then
-        datemk="${relmk:-$(find projects/ArchR/devices -mindepth 3 -maxdepth 6 \
-                    -path "*/${real:-${name}}/package.mk" -print -quit 2>/dev/null)}"
-        version="$(pkg_git_pkgver "${version}" "${datemk}" \
-                    $(pkg_version_source "${datemk}"))"
+        version="$(pkg_git_pkgver "${version}" "${srcmk}" \
+                    $(pkg_version_source "${srcmk}"))"
     fi
 
     # The archive name leaves the epoch out: GitHub Releases rewrite ':' in
