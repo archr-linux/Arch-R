@@ -54,8 +54,14 @@ build_one_pkg() {
     # Skip anything that is not an actually built package tree.
     [ -d "${src}" ] || return 0
 
-    local name version fileversion pkgrel replaces replaced pkgmk relmk
+    local name version fileversion pkgrel replaces replaced pkgmk relmk srcmk
     pkg_identity "${src}"
+    # A build dir keeps install_pkg/ trees of packages that were renamed or
+    # dropped since; no package.mk builds them, so they are not published.
+    if [ -z "${srcmk}" ]; then
+        echo "  - ${dirname}: no package.mk builds it, skipped"
+        return 0
+    fi
     local outfile="${OUT_DIR}/${name}-${fileversion}-${pkgrel}-${ARCH}.pkg.tar.zst"
 
     # .PKGINFO sidecar that pacman reads on install. pkgbase is

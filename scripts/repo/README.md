@@ -87,3 +87,8 @@ any real date, and is not meant for publishing. `PKG_VERSION` itself is
 unchanged: source URLs, build directories and stamps still use the hash.
 Archive names leave the epoch out (GitHub rewrites `:` in asset names).
 `bash scripts/repo/tests/pkg_identity_test.sh` checks the ordering.
+
+`gen-pacman-repo` skips an `install_pkg/` tree that no package.mk builds
+any more (a build dir keeps trees of renamed or dropped packages, such as
+the old `*-sa` emulators); the packages that replace them carry
+`PKG_REPLACES`.

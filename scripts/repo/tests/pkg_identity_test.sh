@@ -27,7 +27,8 @@ SHA_C=0000000000000000000000000000000000000001   # sorts below both
 # A source tree in git: a pinned driver, a package reusing its version,
 # and a normal one.
 SRC="${TMP}/src"
-mkdir -p "${SRC}/packages/drivers/AIC8800" "${SRC}/packages/drivers/AIC8800-extra" \
+mkdir -p "${SRC}/projects/ArchR/packages" "${SRC}/projects/ArchR/devices" \
+         "${SRC}/packages/drivers/AIC8800" "${SRC}/packages/drivers/AIC8800-extra" \
          "${SRC}/packages/tools/zlib" "${TMP}/install_pkg"
 cd "${SRC}" || exit 1
 git init -q .
@@ -95,7 +96,35 @@ touch -d "2026-11-06T03:04:00Z" packages/drivers/AIC8800/package.mk
 check "dirty package.mk" "$(identity "AIC8800-${SHA_A}" | cut -d' ' -f2)" "1:0.git20261106T0304.1018f17"
 git checkout -q -- packages
 
-# 6. No git history (source tarball): a fixed date older than any real one.
+# 6. An overlay that sources a base package.mk is dated by the base too.
+mkdir -p projects/ArchR/packages/sysutils/udevil packages/sysutils/udevil
+pkgmk udevil "${SHA_B}" >packages/sysutils/udevil/package.mk
+printf '. ${ROOT}/packages/sysutils/udevil/package.mk\nPKG_TOOLCHAIN="manual"\n' \
+    >projects/ArchR/packages/sysutils/udevil/package.mk
+commit "2026-11-07T10:00:00Z" "udevil overlay"
+pkgmk udevil "${SHA_A}" >packages/sysutils/udevil/package.mk
+commit "2026-11-08T11:30:00Z" "udevil bump in the base"
+check "overlay dated by its base" "$(identity "udevil-${SHA_A}" | cut -d' ' -f2)" "1:0.git20261108T1130.1018f17"
+
+# 7. gen-pacman-repo publishes only what a package.mk still builds: an
+# install_pkg dir left from a renamed or dropped package is skipped.
+if command -v repo-add >/dev/null; then
+    for d in "AIC8800-${SHA_C}" "zlib-1.3.1" "ppsspp-sa-${SHA_B}" "gone-2.0"; do
+        mkdir -p "${TMP}/build/install_pkg/${d}/usr/share/${d}"
+        echo "${d}" >"${TMP}/build/install_pkg/${d}/usr/share/${d}/file"
+    done
+    out="$(BUILD_DIR="${TMP}/build" OUT_DIR="${TMP}/out" bash "$(dirname "${HERE}")/gen-pacman-repo" 2>&1)"
+    check "obsolete git-pinned dir skipped" "$(grep -c "ppsspp-sa-${SHA_B}: no package.mk builds it, skipped" <<<"${out}")" 1
+    check "obsolete dir skipped" "$(grep -c "gone-2.0: no package.mk builds it, skipped" <<<"${out}")" 1
+    check "published packages" "$(cd "${TMP}/out" && ls -1 ./*.pkg.tar.zst | sort | tr '\n' ' ')" \
+        "./AIC8800-0.git20261105T2110.0000000-1-aarch64.pkg.tar.zst ./zlib-1.3.1-1-aarch64.pkg.tar.zst "
+    check "repo db" "$(tar -tzf "${TMP}/out/archr.db.tar.gz" | grep '/desc$' | sort | tr '\n' ' ')" \
+        "AIC8800-1:0.git20261105T2110.0000000-1/desc zlib-1.3.1-1/desc "
+else
+    echo "skip gen-pacman-repo: repo-add not installed"
+fi
+
+# 8. No git history (source tarball): a fixed date older than any real one.
 mkdir -p "${TMP}/tarball"
 cp -r "${SRC}/packages" "${TMP}/tarball/"
 check "no git fallback" "$(cd "${TMP}/tarball" && GIT_CEILING_DIRECTORIES="${TMP}" bash -c ". '${IDENTITY}' 2>/dev/null; pkg_git_pkgver ${SHA_C} packages/drivers/AIC8800/package.mk")" \
