@@ -117,7 +117,8 @@ run servicos.txt systemctl --failed --no-pager
 run servicos.txt systemctl list-units --type=service --state=running --no-pager
 
 # network: interfaces, routes and the station (SSID and signal)
-run rede.txt ip addr
+run rede.txt ip -f inet addr
+run rede.txt ip -f inet6 addr
 run rede.txt ip route
 run rede.txt iw dev
 run rede.txt iwctl station wlan0 show
