@@ -14,8 +14,9 @@
 # countdown and just before the power off. A voltage that recovers cancels.
 # And the voltage cuts by itself: under the design minimum + CUT_MARGIN for
 # CUT_READINGS readings in a row, whatever the percentage says (an old pack
-# must not die unsaved). Voltages outside 3.0-4.45 V, or unreadable, are
-# discarded; a design minimum outside 3.3-3.5 V (or missing) is taken as 3.4 V.
+# must not die unsaved). Voltages outside 2.7-4.45 V, or unreadable, are
+# discarded (2.7-3.0 V is a real, deep discharge); during a countdown a
+# discarded reading keeps it going, only a recovered voltage cancels; a design minimum outside 3.3-3.5 V (or missing) is taken as 3.4 V.
 # Two readings in a row must be at or under the critical level (the fuel
 # gauge wavers near the end). A charger cancels the countdown, and so does a
 # level that rose during it; with a charger nothing happens at all. The
@@ -57,7 +58,7 @@ level() {
 volts() {
   local volt
   volt=$(cat "${BATTERY}/voltage_avg" 2>/dev/null)
-  [[ "${volt}" =~ ^[0-9]+$ ]] && [ "${volt}" -ge 3000000 ] && [ "${volt}" -le 4450000 ] &&
+  [[ "${volt}" =~ ^[0-9]+$ ]] && [ "${volt}" -ge 2700000 ] && [ "${volt}" -le 4450000 ] &&
     echo "${volt}"
 }
 
@@ -80,12 +81,12 @@ volt_under() {
   [ -n "${volt}" ] && [ "${volt}" -lt $(($(design_min) + $1)) ]
 }
 
-# Whether the reason that started the countdown ($1: percent or volts) holds.
+# Whether the reason that started the countdown ($1: percent or volts) holds:
+# a reading that cannot be used keeps it, only a recovered voltage ends it.
 still() {
-  case "$1" in
-    percent) volt_under "${SOFT_MARGIN}" ;;
-    *) volt_under "${CUT_MARGIN}" ;;
-  esac
+  local margin="${CUT_MARGIN}"
+  [ "$1" = percent ] && margin="${SOFT_MARGIN}"
+  [ -z "$(volts)" ] || volt_under "${margin}"
 }
 
 game_running() {

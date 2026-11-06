@@ -361,13 +361,26 @@ volts 3540000
 (sleep 4.5; volts 3700000) &
 INTERVAL=1 COUNTDOWN=4 ROUNDS=6 guard
 check "the cut: a voltage that recovers during the countdown cancels it" "$(cat "${TMP}/power")" ""
+# A real deep discharge (2.7-3.0 V) is not an invalid reading: it carries on.
+battery 35 Discharging
+volts 3400000
+(sleep 1.5; volts 2950000) &
+COUNTDOWN=4 guard
+check "35% at 3.4 V, then 2.95 V during the countdown: power off" "$(tr '\n' '|' <"${TMP}/power")" "off|"
+volts 3400000
+(sleep 1.5; volts 2500000) &
+COUNTDOWN=4 guard
+check "... a reading under 2.7 V during the countdown is dropped: still power off" "$(tr '\n' '|' <"${TMP}/power")" "off|"
+volts 2950000
+ROUNDS=3 guard
+check "2.95 V from the start: the cut" "$(tr '\n' '|' <"${TMP}/power")" "off|"
 volts 3540000
 guard "power.battery.critical=0"
 check "the cut follows the critical setting (0: off)" "$(cat "${TMP}/power")" ""
 
 # Voltages that cannot be right are thrown away.
 battery 3 Discharging
-for bad in 2500000 4600000 abc ""; do
+for bad in 2600000 4600000 abc ""; do
   volts "${bad}"
   ROUNDS=4 guard
   check "an invalid voltage (${bad}): nothing" "$(cat "${TMP}/osd" "${TMP}/power")" ""
