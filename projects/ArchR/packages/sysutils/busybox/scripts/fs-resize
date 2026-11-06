@@ -3,21 +3,48 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2009-2014 Stephan Raue (stephan@openelec.tv)
 
+# The log is on the boot FAT, the one partition a PC can read when the
+# first boot hangs. vfat keeps writes in the page cache for up to ~30 s and
+# a hung kernel never writes them back, so the log used to stop well before
+# the step that hung. Sync the boot FAT before each step and after it: the
+# log then always ends at the step that was running, with its uptime.
+logsync() {
+  sync -f "$LOG" 2>/dev/null || sync
+}
+
+uptime_s() {
+  cut -d' ' -f1 /proc/uptime
+}
+
 StartProgressLog() {
+  local rc
   if [ "$1" = "spinner" ]; then
-    echo "*** $3" >>$LOG
+    echo "*** [$(uptime_s)] $3" >>$LOG
+    logsync
   fi
   StartProgress "$@"
+  rc=$?
+  if [ "$1" = "spinner" ]; then
+    echo "    [$(uptime_s)] exit $rc" >>$LOG
+    logsync
+  fi
+  return $rc
 }
 
 if [ -e /storage/.please_resize_me ] ; then
   . /usr/lib/archr/functions
 
   hidecursor
+  # The boot runs with the console at log level 1 (scripts/init). While
+  # the card is repartitioned, show kernel errors (mmc timeouts, I/O
+  # errors) on the screen, so a photo of a stuck first boot says why.
+  PRINTK=$(cat /proc/sys/kernel/printk 2>/dev/null)
+  echo "4 4 1 7" >/proc/sys/kernel/printk 2>/dev/null
 
   mount -o remount,rw /flash
   LOG=/flash/fs-resize.log
   date -Iseconds >>$LOG
+  logsync
 
   # this sh** was never intended to be used
   # on already installed and runing system
@@ -106,6 +133,9 @@ if [ -e /storage/.please_resize_me ] ; then
     # is the kernel vfat dirty flag, written to the primary sector only
     # while /flash is mounted read-write.
     echo "NOTE: the FAT32 cluster-count and boot-sector-backup warnings above are expected and harmless." >>$LOG
+    # The kernel's view of the run (mmc, ext4, exFAT), for comparing a
+    # good first boot with a bad one.
+    { echo "--- dmesg"; dmesg; echo "--- end of dmesg"; } >>$LOG 2>&1
     StartProgressLog spinner "Syncing to disk...      " "sync >>$LOG 2>&1"
     StartProgress countdown "Rebooting in 5s...     " 5 "NOW"
   else
@@ -113,5 +143,6 @@ if [ -e /storage/.please_resize_me ] ; then
     StartProgress countdown "Rebooting in 5s... " 5 "NOW"
   fi
   mount -o remount,ro /flash
+  [ -n "$PRINTK" ] && echo $PRINTK >/proc/sys/kernel/printk 2>/dev/null
 fi
 reboot -f &>/dev/null
