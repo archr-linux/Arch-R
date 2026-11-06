@@ -1,0 +1,151 @@
+From: Douglas Teles <dga.teles@gmail.com>
+Date: Fri, 6 Nov 2026 10:00:00 -0300
+Subject: [PATCH] power: supply: rk817-battery: raise a counter found under
+ its loaded voltage
+
+The state of charge is the columb counter and nothing else, and on the
+R36S nothing corrects it for good. A finished charge never reaches the
+RK817 (the charger IC is separate), and a rested relax pair needs the
+system under 300 mA, which a running handheld seldom draws. A counter
+that starts low, say from a power-on voltage that sagged under the boot
+surge of a worn pack and was clamped to the design minimum, then reads
+0% for good, with the pack at 3.85 V (issue 50).
+
+A battery under load reads lower than at rest, never higher, so the soc
+its loaded voltage maps to in the ocv table is a floor for the real one,
+needing no internal resistance. While discharging at 50 mA or more,
+re-init the counter to that floor once it has sat more than 10% under
+it for 15 polls (30 s) in a row. A charging pack reads higher than at
+rest and is left out. The floor is a lower bound: the next rested pair
+or finished charge settles the rest.
+
+Also share the counter re-init between this and the relax recalibration.
+
+---
+--- a/drivers/power/supply/rk817_charger.c
++++ b/drivers/power/supply/rk817_charger.c
+@@ -105,6 +105,9 @@
+ 	/* Retained for the ocv-capacity table the recalibration needs. */
+ 	struct power_supply_battery_info *bat_info;
+ 
++	/* Polls in a row the counter sat under the loaded voltage bound. */
++	int low_polls;
++
+ 	/* Stamped at system suspend to correct the gauge across sleep. */
+ 	time64_t slp_boottime;
+ 	int slp_charge_uah;
+@@ -821,6 +824,22 @@
+ 	return 0;
+ }
+ 
++/* Re-init the columb counter, and the saved state, to soc (1/1000 %). */
++static void rk817_bat_set_soc(struct rk817_charger *charger, int soc)
++{
++	struct rk808 *rk808 = charger->rk808;
++	int charge_now_adc;
++	u8 bulk_reg[4];
++
++	charger->soc = soc;
++	charge_now_adc = CHARGE_TO_ADC(soc * charger->fcc_mah / 100000,
++				       charger->res_div);
++	put_unaligned_be32(charge_now_adc, bulk_reg);
++	regmap_bulk_write(rk808->regmap, RK817_GAS_GAUGE_Q_INIT_H3,
++			  bulk_reg, 4);
++	rk817_record_battery_nvram_values(charger);
++}
++
+ /*
+  * The relax pair is a true rested voltage: where it disagrees with the
+  * tracked soc by more than 5% (chosen arbitrarily), re-init the counter
+@@ -828,9 +847,7 @@
+  */
+ static void rk817_bat_ocv_recalibrate(struct rk817_charger *charger)
+ {
+-	struct rk808 *rk808 = charger->rk808;
+-	int ocv_soc, charge_now_adc;
+-	u8 bulk_reg[4];
++	int ocv_soc;
+ 
+ 	if (!charger->battery_present)
+ 		return;
+@@ -847,13 +864,65 @@
+ 	dev_info(charger->dev,
+ 		 "OCV %duV disagrees with soc, recalibrating (%d -> %d)\n",
+ 		 charger->relax_voltage_uv, charger->soc, ocv_soc);
+-	charger->soc = ocv_soc;
+-	charge_now_adc = CHARGE_TO_ADC(ocv_soc * charger->fcc_mah / 100000,
+-				       charger->res_div);
+-	put_unaligned_be32(charge_now_adc, bulk_reg);
+-	regmap_bulk_write(rk808->regmap, RK817_GAS_GAUGE_Q_INIT_H3,
+-			  bulk_reg, 4);
+-	rk817_record_battery_nvram_values(charger);
++	rk817_bat_set_soc(charger, ocv_soc);
++}
++
++/* rk817-loaded-begin (plain C: the host test builds this block alone) */
++
++/* Discharge current below which the voltage says little: 50 mA. */
++#define RK817_LOADED_MIN_UA	50000
++/* The counter must sit this far under the bound: 10% of charge. */
++#define RK817_LOADED_GAP	10000
++/* ... for this many polls in a row (2 s each): half a minute. */
++#define RK817_LOADED_POLLS	15
++
++/*
++ * A battery under load reads lower than at rest, never higher, so the soc
++ * its loaded voltage maps to is a floor for the real one. True once the
++ * counter has sat under that floor, by the gap, for the polls required;
++ * polls counts them and starts over whenever the counter is back in line.
++ */
++static bool rk817_soc_under_floor(int soc, int floor, int *polls)
++{
++	if (floor - soc <= RK817_LOADED_GAP) {
++		*polls = 0;
++		return false;
++	}
++
++	return ++*polls >= RK817_LOADED_POLLS;
++}
++
++/* rk817-loaded-end */
++
++/*
++ * Nothing but a rested pair (relax mode needs under 300 mA, which a running
++ * handheld seldom draws) or a finished charge (the R36S charger IC never
++ * tells the RK817) corrects the columb counter. One that starts low, say
++ * from a boot voltage sagging under the power-on surge, then reads 0% at
++ * 3.85 V for good. While discharging, the loaded voltage still gives a
++ * floor for the real soc: raise a counter found far under it.
++ */
++static void rk817_bat_loaded_recalibrate(struct rk817_charger *charger)
++{
++	int floor;
++
++	if (!charger->battery_present || charger->plugged_in ||
++	    charger->cur_avg_ua > -RK817_LOADED_MIN_UA) {
++		charger->low_polls = 0;
++		return;
++	}
++
++	floor = power_supply_batinfo_ocv2cap(charger->bat_info,
++					     charger->volt_avg_uv, 20) * 1000;
++	if (floor < 0 || !rk817_soc_under_floor(charger->soc, floor,
++						&charger->low_polls))
++		return;
++
++	dev_info(charger->dev,
++		 "%duV under load puts soc over %d, recalibrating (%d -> %d)\n",
++		 charger->volt_avg_uv, floor, charger->soc, floor);
++	charger->low_polls = 0;
++	rk817_bat_set_soc(charger, floor);
+ }
+ 
+ static int
+@@ -1144,6 +1213,7 @@
+ 
+ 	rk817_read_props(charger);
+ 	rk817_bat_ocv_recalibrate(charger);
++	rk817_bat_loaded_recalibrate(charger);
+ 
+ 	/* Every 2 seconds, so charger plug/unplug shows up promptly. */
+ 	queue_delayed_work(system_wq, &charger->work, msecs_to_jiffies(2000));
