@@ -8,9 +8,14 @@
 #   power.battery.critical=3   percent: a countdown on screen, then the game
 #                              is saved and closed (archr-game-save-exit
 #                              battery) and the device powers off; 0 off
-# The percentage is a counter, which can sit at 0% on a pack that is not
-# empty; a voltage over the design minimum by MARGIN says it is wrong, and
-# then the level is not trusted (no warning, no power off).
+# The percentage is the fuel gauge's counter, which can sit at 0% on a pack
+# that is not empty (issue 50), so it never acts alone: the voltage must be
+# low too (under the design minimum + SOFT_MARGIN), at every step of the
+# countdown and just before the power off. A voltage that recovers cancels.
+# And the voltage cuts by itself: under the design minimum + CUT_MARGIN for
+# CUT_READINGS readings in a row, whatever the percentage says (an old pack
+# must not die unsaved). Voltages outside 3.0-4.45 V, or unreadable, are
+# discarded; a design minimum outside 3.3-3.5 V (or missing) is taken as 3.4 V.
 # Two readings in a row must be at or under the critical level (the fuel
 # gauge wavers near the end). A charger cancels the countdown, and so does a
 # level that rose during it; with a charger nothing happens at all. The
@@ -26,7 +31,9 @@
 : "${POWEROFF:=systemctl poweroff}"
 : "${GRIM:=grim}"
 : "${OSD:=archr-osd}"
-: "${MARGIN:=150000}" # microvolts over the design minimum
+: "${SOFT_MARGIN:=150000}" # microvolts over the design minimum
+: "${CUT_MARGIN:=50000}"
+: "${CUT_READINGS:=3}"
 : "${INTERVAL:=10}"
 : "${COUNTDOWN:=8}"
 # Host tests stop after this many readings.
@@ -46,13 +53,39 @@ level() {
   cat "${BATTERY}/capacity" 2>/dev/null
 }
 
-# True when the voltage shows the pack well above empty: with a load it reads
-# lower than at rest, never higher, so this is no false alarm.
-charged() {
-  local volt min
+# The battery voltage in microvolts, nothing when unreadable or implausible.
+volts() {
+  local volt
   volt=$(cat "${BATTERY}/voltage_avg" 2>/dev/null)
+  [[ "${volt}" =~ ^[0-9]+$ ]] && [ "${volt}" -ge 3000000 ] && [ "${volt}" -le 4450000 ] &&
+    echo "${volt}"
+}
+
+# The design minimum, kept to what a lithium pack can have.
+design_min() {
+  local min
   min=$(cat "${BATTERY}/voltage_min_design" 2>/dev/null)
-  [[ "${volt}" =~ ^[0-9]+$ && "${min}" =~ ^[0-9]+$ ]] && [ "${volt}" -gt $((min + MARGIN)) ]
+  if [[ "${min}" =~ ^[0-9]+$ ]] && [ "${min}" -ge 3300000 ] && [ "${min}" -le 3500000 ]; then
+    echo "${min}"
+  else
+    echo 3400000
+  fi
+}
+
+# Whether the voltage now is under the design minimum + $1 (false when the
+# voltage is not readable).
+volt_under() {
+  local volt
+  volt=$(volts)
+  [ -n "${volt}" ] && [ "${volt}" -lt $(($(design_min) + $1)) ]
+}
+
+# Whether the reason that started the countdown ($1: percent or volts) holds.
+still() {
+  case "$1" in
+    percent) volt_under "${SOFT_MARGIN}" ;;
+    *) volt_under "${CUT_MARGIN}" ;;
+  esac
 }
 
 game_running() {
@@ -62,66 +95,94 @@ game_running() {
 }
 
 # The countdown on screen, a message a second; 0 when it ran out, 1 when a
-# charger came or the level rose above the one it started at.
+# charger came, the voltage recovered, or (for the percentage) the level rose
+# above the one it started at.
 countdown() {
-  local level="$1" game="$2" left now
-  for ((left = COUNTDOWN; left > 0; left--)); do
+  local level="$1" game="$2" mode="$3" left now
+  rose() {
     now=$(level)
+    [ "${mode}" = percent ] && [[ "${now}" =~ ^[0-9]+$ ]] && [ "${now}" -gt "${level}" ]
+  }
+  for ((left = COUNTDOWN; left > 0; left--)); do
     charging && return 1
-    [[ "${now}" =~ ^[0-9]+$ ]] && [ "${now}" -gt "${level}" ] && return 1
+    still "${mode}" || return 1
+    rose && return 1
     ${OSD} send battery "${level}" "${left}" "${COUNTDOWN}" "${game}" 2>/dev/null
     sleep 1
   done
-  now=$(level)
-  ! charging && ! { [[ "${now}" =~ ^[0-9]+$ ]] && [ "${now}" -gt "${level}" ]; }
+  ! charging && still "${mode}" && ! rose
+}
+
+# The countdown, the save and the power off; 0 when it powered off.
+power_off() {
+  local level="$1" mode="$2" game=menu shot=""
+  if game_running; then
+    game=game
+    # The game as it is, before the card covers it.
+    shot=$(mktemp "${TMPDIR:-/tmp}/battery-shot.XXXXXX") &&
+      XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/var/run/0-runtime-dir}" WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-1}"         "${GRIM}" -t png "${shot}" 2>/dev/null
+  fi
+  if countdown "${level}" "${game}" "${mode}"; then
+    echo "archr-battery-guard: battery at ${level}% ($(volts) uV, ${mode}), powering off"
+    [ "${game}" = game ] && PICTURE_FROM="${shot}" "${SAVE_EXIT}" battery
+    rm -f "${shot}"
+    # The save took time: a charger or a recovered voltage still cancels.
+    if ! charging && still "${mode}"; then
+      ${POWEROFF}
+      return 0
+    fi
+    return 1
+  fi
+  rm -f "${shot}"
+  return 1
 }
 
 WARNED=0
 BELOW=0
+CUT=0
 ROUND=0
 while :; do
   LEVEL=$(level)
-  if [[ "${LEVEL}" =~ ^[0-9]+$ ]] && ! charging && ! charged; then
+  if ! charging && { [[ "${LEVEL}" =~ ^[0-9]+$ ]] || [ -n "$(volts)" ]; }; then
     LOW=$(percent power.battery.low 10)
     CRITICAL=$(percent power.battery.critical 3)
+    # The percentage counts only with the voltage low too.
+    LEVELOK=0
+    [[ "${LEVEL}" =~ ^[0-9]+$ ]] && volt_under "${SOFT_MARGIN}" && LEVELOK=1
     # At the critical level the countdown says it all (and the game's
     # picture, taken before it, must not hold this warning).
-    if [ "${LOW}" -gt 0 ] && [ "${LEVEL}" -le "${LOW}" ] && [ "${WARNED}" = 0 ] &&
+    if [ "${LEVELOK}" = 1 ] && [ "${LOW}" -gt 0 ] && [ "${LEVEL}" -le "${LOW}" ] && [ "${WARNED}" = 0 ] &&
        { [ "${CRITICAL}" -eq 0 ] || [ "${LEVEL}" -gt "${CRITICAL}" ]; }; then
       ${OSD} send battery-low "${LEVEL}" 2>/dev/null
       WARNED=1
     fi
-    if [ "${CRITICAL}" -gt 0 ] && [ "${LEVEL}" -le "${CRITICAL}" ]; then
+    if [ "${LEVELOK}" = 1 ] && [ "${CRITICAL}" -gt 0 ] && [ "${LEVEL}" -le "${CRITICAL}" ]; then
       # The first reading under the limit: a later rise above it cancels.
       [ "${BELOW}" -eq 0 ] && FIRST=${LEVEL}
       BELOW=$((BELOW + 1))
     else
       BELOW=0
     fi
-    if [ "${BELOW}" -ge 2 ]; then
-      GAME=menu
-      SHOT=""
-      if game_running; then
-        GAME=game
-        # The game as it is, before the card covers it.
-        SHOT=$(mktemp "${TMPDIR:-/tmp}/battery-shot.XXXXXX") &&
-          XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/var/run/0-runtime-dir}" WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-1}" \
-            "${GRIM}" -t png "${SHOT}" 2>/dev/null
-      fi
-      if countdown "${FIRST}" "${GAME}"; then
-        echo "archr-battery-guard: battery at ${LEVEL}%, powering off"
-        [ "${GAME}" = game ] && PICTURE_FROM="${SHOT}" "${SAVE_EXIT}" battery
-        rm -f "${SHOT}"
-        ${POWEROFF}
-        exit 0
-      fi
-      rm -f "${SHOT}"
+    # The voltage alone, with the percentage on, as the critical setting says.
+    if [ "${CRITICAL}" -gt 0 ] && volt_under "${CUT_MARGIN}"; then
+      CUT=$((CUT + 1))
+    else
+      CUT=0
+    fi
+    MODE=""
+    [ "${BELOW}" -ge 2 ] && MODE=percent
+    [ "${CUT}" -ge "${CUT_READINGS}" ] && MODE=volts
+    if [ -n "${MODE}" ]; then
+      [ "${MODE}" = volts ] && FIRST=${LEVEL:-0}
+      power_off "${FIRST}" "${MODE}" && exit 0
       BELOW=0
+      CUT=0
     fi
   else
     # A charger (or no reading): the next discharge warns again.
     WARNED=0
     BELOW=0
+    CUT=0
   fi
   ROUND=$((ROUND + 1))
   [ "${ROUNDS}" -gt 0 ] && [ "${ROUND}" -ge "${ROUNDS}" ] && exit 0
