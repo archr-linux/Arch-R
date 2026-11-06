@@ -260,6 +260,8 @@ guard() {
     bash "${SCRIPTS}/archr-battery-guard" >/dev/null 2>&1
 }
 battery() { echo "$1" >"${BAT}/capacity"; echo "$2" >"${BAT}/status"; }
+# Volts, in microvolts as the kernel says them; none to leave the files out.
+volts() { echo "$1" >"${BAT}/voltage_avg"; echo 3500000 >"${BAT}/voltage_min_design"; }
 
 battery 50 Discharging
 guard
@@ -299,6 +301,24 @@ battery 3 Discharging
 (sleep 1.5; battery 5 Discharging) &
 COUNTDOWN=4 guard
 check "a level that rose during the countdown cancels it" "$(cat "${TMP}/power")" ""
+# A gauge stuck at 0% on a pack that is not empty (issue 50): the voltage
+# says so, and the device must not power off nor warn.
+battery 0 Discharging
+volts 3850000
+guard
+check "0% at 3.85 V: the gauge is wrong, nothing" "$(cat "${TMP}/osd" "${TMP}/power")" ""
+battery 3 Discharging
+volts 3660000
+guard
+check "3% at 3.66 V, over the margin above the minimum: nothing" "$(cat "${TMP}/osd" "${TMP}/power")" ""
+volts 3640000
+guard
+check "3% at 3.64 V: the pack is low, power off" "$(tr '\n' '|' <"${TMP}/power")" "off|"
+battery 9 Discharging
+volts 3900000
+guard
+check "9% at 3.90 V: no warning either" "$(cat "${TMP}/osd")" ""
+rm -f "${BAT}/voltage_avg" "${BAT}/voltage_min_design"
 battery 3 Discharging
 guard "power.battery.critical=0" "power.battery.low=0"
 check "both off: nothing" "$(cat "${TMP}/osd" "${TMP}/power")" ""

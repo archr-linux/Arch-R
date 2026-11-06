@@ -8,6 +8,9 @@
 #   power.battery.critical=3   percent: a countdown on screen, then the game
 #                              is saved and closed (archr-game-save-exit
 #                              battery) and the device powers off; 0 off
+# The percentage is a counter, which can sit at 0% on a pack that is not
+# empty; a voltage over the design minimum by MARGIN says it is wrong, and
+# then the level is not trusted (no warning, no power off).
 # Two readings in a row must be at or under the critical level (the fuel
 # gauge wavers near the end). A charger cancels the countdown, and so does a
 # level that rose during it; with a charger nothing happens at all. The
@@ -23,6 +26,7 @@
 : "${POWEROFF:=systemctl poweroff}"
 : "${GRIM:=grim}"
 : "${OSD:=archr-osd}"
+: "${MARGIN:=150000}" # microvolts over the design minimum
 : "${INTERVAL:=10}"
 : "${COUNTDOWN:=8}"
 # Host tests stop after this many readings.
@@ -40,6 +44,15 @@ charging() {
 
 level() {
   cat "${BATTERY}/capacity" 2>/dev/null
+}
+
+# True when the voltage shows the pack well above empty: with a load it reads
+# lower than at rest, never higher, so this is no false alarm.
+charged() {
+  local volt min
+  volt=$(cat "${BATTERY}/voltage_avg" 2>/dev/null)
+  min=$(cat "${BATTERY}/voltage_min_design" 2>/dev/null)
+  [[ "${volt}" =~ ^[0-9]+$ && "${min}" =~ ^[0-9]+$ ]] && [ "${volt}" -gt $((min + MARGIN)) ]
 }
 
 game_running() {
@@ -68,7 +81,7 @@ BELOW=0
 ROUND=0
 while :; do
   LEVEL=$(level)
-  if [[ "${LEVEL}" =~ ^[0-9]+$ ]] && ! charging; then
+  if [[ "${LEVEL}" =~ ^[0-9]+$ ]] && ! charging && ! charged; then
     LOW=$(percent power.battery.low 10)
     CRITICAL=$(percent power.battery.critical 3)
     # At the critical level the countdown says it all (and the game's
