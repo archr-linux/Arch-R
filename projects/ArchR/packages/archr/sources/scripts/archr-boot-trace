@@ -1,0 +1,81 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026-present ArchR (https://github.com/archr-linux/Arch-R)
+#
+# Boot trace on the boot partition, for a boot that sits on a frozen
+# screen. The screen proves nothing then: it may stop updating while the
+# system goes on underneath. /flash is the one partition any PC reads, so
+# the trace goes to /flash/boot-trace.log, synced at every line.
+#
+# It runs only while /flash/archr-trace exists: fs-resize leaves it for the
+# first full boot, and a user can create it (an empty file) from a PC. The
+# initramfs logs its own steps there first (scripts/init, boot_trace); this
+# carries on under systemd: every few seconds the boot state, the jobs still
+# waiting, the autostart step, the processes stuck in the kernel (D state,
+# with the function they wait in) and the new kernel messages. Once the boot
+# is over, a last summary and the marker goes: one boot is traced.
+#
+# Paths can be redirected for the host test (tests/boot_trace_test.sh).
+
+FLASH=${BOOT_TRACE_FLASH:-/flash}
+STEP=${BOOT_TRACE_STEP:-/storage/.boot_last_step}
+ROUNDS=${BOOT_TRACE_ROUNDS:-60}
+EVERY=${BOOT_TRACE_EVERY:-3}
+MARK=${FLASH}/archr-trace
+LOG=${FLASH}/boot-trace.log
+
+[ -f "${MARK}" ] || exit 0
+mount -o remount,rw "${FLASH}" 2>/dev/null
+
+logsync() {
+  sync -f "${LOG}" 2>/dev/null || sync
+}
+
+up() {
+  cut -d' ' -f1 /proc/uptime
+}
+
+# Kernel lines not logged yet.
+SEEN=0
+new_kmsg() {
+  local lines
+  mapfile -t lines < <(dmesg 2>/dev/null)
+  [ "${#lines[@]}" -lt "${SEEN}" ] && SEEN=0
+  [ "${#lines[@]}" -gt "${SEEN}" ] && printf '%s\n' "${lines[@]:${SEEN}}"
+  SEEN=${#lines[@]}
+}
+
+round() {
+  echo "--- [$(up)] system: $1"
+  systemctl list-jobs --no-pager --no-legend 2>&1 | head -n 20
+  [ -f "${STEP}" ] && echo "autostart step: $(cat "${STEP}" 2>/dev/null)"
+  echo "ui: $(systemctl is-active sway.service archr-launcher-session.service 2>&1 | paste -sd' ')"
+  ps -eo stat=,pid=,wchan:24=,args= 2>/dev/null | awk '$1 ~ /^D/'
+  new_kmsg
+}
+
+echo "=== [$(up)] systemd" >>"${LOG}"
+logsync
+state=
+for _ in $(seq 1 "${ROUNDS}"); do
+  state=$(systemctl is-system-running 2>/dev/null)
+  round "${state}" >>"${LOG}" 2>&1
+  logsync
+  case ${state} in
+    running | degraded) break ;;
+  esac
+  sleep "${EVERY}"
+done
+
+{
+  echo "--- [$(up)] summary (system: ${state})"
+  systemctl --failed --no-pager --no-legend 2>&1
+  journalctl -b -p warning --no-pager -o short-monotonic 2>&1 | tail -n 200
+  ps -eo stat,pid,etime,wchan:24,args 2>&1
+  new_kmsg
+  echo "=== end of trace"
+} >>"${LOG}" 2>&1
+rm -f "${MARK}"
+logsync
+mount -o remount,ro "${FLASH}" 2>/dev/null
+exit 0

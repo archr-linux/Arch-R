@@ -1,0 +1,15 @@
+[Unit]
+Description=Boot trace on the boot partition (/flash/boot-trace.log)
+# Only while /flash/archr-trace exists (fs-resize leaves it for the first
+# full boot; a PC can create it). No ordering: it watches the boot from
+# its start and holds nothing back.
+DefaultDependencies=no
+ConditionPathExists=/flash/archr-trace
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/archr-boot-trace
+TimeoutStopSec=5
+
+[Install]
+WantedBy=archr.target
