@@ -85,13 +85,29 @@ kill "${RPID}" 2>/dev/null; wait "${RPID}" 2>/dev/null; RPID=
 setup
 printf '#!/bin/bash\necho "resize2fs $*" >>%s/calls\n' "${T}" >"${T}/bin/resize2fs"
 chmod +x "${T}/bin/resize2fs"
-PATH="${T}/bin:${PATH}" timeout 60 bash "${R}/lib/fs-resize" >"${T}/out" 2>&1 </dev/null
+RESTART_WAIT=0 PATH="${T}/bin:${PATH}" timeout 60 bash "${R}/lib/fs-resize" >"${T}/out" 2>&1 </dev/null
 check "normal: resize2fs ran on the STORAGE partition" 'grep -q "^resize2fs /dev/mmcblk0p3" "${T}/calls"'
-check "normal: reboots at the end" 'grep -q "^reboot" "${T}/calls"'
+check "normal: reboots at the end, straight through reboot() (-ff)" 'grep -q "^reboot -ff$" "${T}/calls"'
+check "normal: the log says the restart was reached, after the sync" \
+  'LOG | tail -1 | grep -q "restarting" && LOG | grep -A1 "^\*\*\* .*\] sync" | grep -q "exit 0"'
+check "normal: /flash is read-only again before the restart" \
+  '[ "$(grep -n "remount,ro" "${T}/calls" | tail -1 | cut -d: -f1)" -lt "$(grep -n "^reboot" "${T}/calls" | cut -d: -f1)" ]'
 check "normal: kernel messages of the run land in the log" 'LOG | grep -q "stub kernel line"'
 check "normal: console log level restored" '[ "$(cat "${R}/proc/sys/kernel/printk")" = "1 4 1 7" ]'
 check "normal: steps carry the uptime they started at" 'LOG | grep -q "^\*\*\* \[12.34\] resize2fs"'
 check "normal: every step logged an exit status" \
   '[ "$(LOG | grep -c "^\*\*\* ")" -gt 0 ] && [ "$(LOG | grep -c "^\*\*\* ")" = "$(LOG | grep -c "exit [0-9]")" ]'
+
+### 3. reboot() never returns (a driver stuck in its shutdown hook): the
+### board must still restart, without the device shutdown.
+setup
+printf '#!/bin/bash\necho "resize2fs $*" >>%s/calls\n' "${T}" >"${T}/bin/resize2fs"
+printf '#!/bin/bash\necho "reboot $*" >>%s/calls\necho $$ >%s/reboot.pid\nexec sleep 300\n' "${T}" "${T}" >"${T}/bin/reboot"
+chmod +x "${T}/bin/resize2fs" "${T}/bin/reboot"
+RESTART_WAIT=1 PATH="${T}/bin:${PATH}" timeout 60 bash "${R}/lib/fs-resize" >"${T}/out" 2>&1 </dev/null &
+RPID=$!
+for _ in $(seq 1 150); do [ -s "${R}/proc/sysrq-trigger" ] && break; sleep 0.1; done
+check "stuck reboot: emergency restart requested (sysrq b)" '[ "$(cat "${R}/proc/sysrq-trigger" 2>/dev/null)" = b ]'
+kill "$(cat "${T}/reboot.pid" 2>/dev/null)" 2>/dev/null; kill "${RPID}" 2>/dev/null; wait "${RPID}" 2>/dev/null; RPID=
 
 exit "${FAILED}"

@@ -16,6 +16,23 @@ uptime_s() {
   cut -d' ' -f1 /proc/uptime
 }
 
+# "reboot" is systemctl here, so "reboot -f" asked systemd for the reboot:
+# systemd-shutdown kills everything, unmounts and only then calls reboot().
+# On cards whose first boot then sat on a frozen screen, nothing after
+# "sync" ever happened. Everything is on the card by now (synced, /flash
+# read-only, STORAGE unmounted), so -ff calls reboot() directly, as busybox
+# "reboot -f" did. If even that has not restarted the board after
+# RESTART_WAIT seconds, a driver is stuck in its shutdown hook (the display
+# is the suspect): restart without shutting devices down. The trigger
+# works with sysrq disabled for the keyboard.
+RESTART_WAIT=${RESTART_WAIT:-20}
+restart_now() {
+  sync
+  ( sleep "$RESTART_WAIT"; echo b >/proc/sysrq-trigger ) &
+  reboot -ff >/dev/null 2>&1
+  wait
+}
+
 StartProgressLog() {
   local rc
   if [ "$1" = "spinner" ]; then
@@ -54,7 +71,7 @@ if [ -e /storage/.please_resize_me ] ; then
     echo "Resizing is not permitted - the system has already been initialised." | tee -a $LOG
     mount -o remount,ro /flash
     StartProgress countdown "Rebooting in 5s... " 5 "NOW"
-    reboot -f
+    restart_now
   fi
 
   # get the disk. /storage on 2nd partition
@@ -142,7 +159,9 @@ if [ -e /storage/.please_resize_me ] ; then
     echo "Partition was not detected - resizing aborted."
     StartProgress countdown "Rebooting in 5s... " 5 "NOW"
   fi
+  echo "[$(uptime_s)] restarting" >>$LOG
+  logsync
   mount -o remount,ro /flash
   [ -n "$PRINTK" ] && echo $PRINTK >/proc/sys/kernel/printk 2>/dev/null
 fi
-reboot -f &>/dev/null
+restart_now
