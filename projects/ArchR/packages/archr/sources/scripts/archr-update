@@ -9,8 +9,8 @@
 # Release channel is read from system.cfg "updates.branch" and maps to
 # the matching mirror tag on github.com/archr-linux/archr-repo:
 #   stable -> repo-stable
-#   next   -> repo-next
-#   dev    -> repo-dev
+#   next   -> repo-next (not published yet: reads stable)
+#   dev    -> repo-dev  (not published yet: reads stable)
 #
 # The mirrorlist that points to those tags is installed by the pacman
 # package (/etc/pacman.d/mirrorlist).
@@ -136,7 +136,8 @@ Usage: ${0##*/} [check [--json]|update [--progress]|info|seed|version]
   seed      Record this image's packages in an empty pacman database.
   version   Print the system's version.
 
-Channel is configured via system.cfg "updates.branch" (stable|next|dev).
+Channel is configured via system.cfg "updates.branch"; only stable is
+published, any other value reads stable.
 EOF
 }
 
