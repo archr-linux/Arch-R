@@ -6,29 +6,21 @@
 PKG_NAME="yabasanshiro-arch"
 PKG_REPLACES="yabasanshiro-sa"
 PKG_LICENSE="GPLv2"
-PKG_SITE="https://github.com/sydarn/yabause"
+PKG_SITE="https://github.com/pirrypirrypirry/yabasanshiro-pirry"
 PKG_URL="${PKG_SITE}.git"
-PKG_VERSION="a40dace1ae0af3ebd45848549fdf396f40e3930f"
-PKG_REV="2"
-PKG_GIT_CLONE_BRANCH="pi4-update"
+# v1.6.2
+PKG_VERSION="ba771f1791bf59b858b2ffdbc25b3cf04a4d8996"
+PKG_REV="3"
 PKG_ARCH="aarch64"
-PKG_DEPENDS_TARGET="toolchain SDL2 boost openal-soft zlib"
-PKG_LONGDESC="Yabause is a Sega Saturn emulator and took over as Yaba Sanshiro"
+# curl is dlopen()ed at run time (libcurl.so.4) for RetroAchievements
+PKG_DEPENDS_TARGET="toolchain SDL2 openal-soft zlib libpng curl"
+PKG_LONGDESC="Yaba Sanshiro Sega Saturn emulator, optimized for RK3326 handhelds (yabasanshiro-pirry)"
 PKG_TOOLCHAIN="cmake-make"
 GET_HANDLER_SUPPORT="git"
 PKG_BUILD_FLAGS="+speed"
 
-if [ ! "${OPENGL}" = "no" ]; then
-  PKG_DEPENDS_TARGET+=" ${OPENGL} glu libglvnd"
-fi
-
 if [ "${OPENGLES_SUPPORT}" = yes ]; then
   PKG_DEPENDS_TARGET+=" ${OPENGLES}"
-fi
-
-if [ "${VULKAN_SUPPORT}" = "yes" ]
-then
-  PKG_DEPENDS_TARGET+=" ${VULKAN}"
 fi
 
 post_unpack() {
@@ -45,36 +37,23 @@ pre_make_target() {
 }
 
 pre_configure_target() {
-  PKG_CMAKE_OPTS_TARGET="${PKG_BUILD}/yabause "
+  # Upstream's documented RK3326 build (README "Building"); -mcpu=cortex-a35
+  # already comes from TARGET_CPU. The fork's own __N2__/ARM7 switches are
+  # not used: its release build does not set them either.
+  CFLAGS+=" -fno-strict-aliasing -D_GNU_SOURCE -Wno-implicit-function-declaration -Wno-incompatible-pointer-types -Wno-int-conversion"
+  CXXFLAGS+=" -fno-strict-aliasing -D_GNU_SOURCE"
+  # nvgCreateGLES3 is defined twice in the bundled nanovg/nanogui code
+  LDFLAGS+=" -Wl,--allow-multiple-definition"
 
-  if [ ! "${OPENGL}" = "no" ]; then
-    PKG_CMAKE_OPTS_TARGET+=" -DUSE_EGL=ON -DUSE_OPENGL=ON"
-  fi
-
-  if [ "${OPENGLES_SUPPORT}" = yes ]; then
-    PKG_CMAKE_OPTS_TARGET+=" -DUSE_EGL=ON -DUSE_OPENGL=OFF"
-  fi
-
-  case ${ARCH} in
-    aarch64)
-      PKG_CMAKE_OPTS_TARGET+=" -DYAB_WANT_ARM7=ON \
-                               -DYAB_WANT_DYNAREC_DEVMIYAX=ON \
-                               -DYAB_PORTS=retro_arena"
-
-      PKG_CMAKE_OPTS_TARGET+=" -DCMAKE_PROJECT_INCLUDE=${PKG_BUILD}/yabause/src/retro_arena/n2.cmake"
-    ;;
-  esac
-
-  PKG_CMAKE_OPTS_TARGET+=" -DCMAKE_SYSTEM_PROCESSOR=x86_64"
-
-  PKG_CMAKE_OPTS_TARGET+=" -DOPENGL_INCLUDE_DIR=${SYSROOT_PREFIX}/usr/include \
-                           -DOPENGL_opengl_LIBRARY=${SYSROOT_PREFIX}/usr/lib \
-                           -DOPENGL_glx_LIBRARY=${SYSROOT_PREFIX}/usr/lib \
-                           -DBoost_INCLUDE_DIR=${SYSROOT_PREFIX}/usr/include \
-                           -DLIBPNG_LIB_DIR=${SYSROOT_PREFIX}/usr/lib \
-                           -Dpng_STATIC_LIBRARIES=${SYSROOT_PREFIX}/usr/lib/libpng16.so \
-                           -DCMAKE_BUILD_TYPE=Release \
-                           -DCMAKE_VERBOSE_MAKEFILE:BOOL=ON"
+  PKG_CMAKE_OPTS_TARGET="${PKG_BUILD}/yabause \
+                         -DCMAKE_BUILD_TYPE=Release \
+                         -DYAB_PORTS=retro_arena \
+                         -DYAB_WANT_DYNAREC_DEVMIYAX=ON \
+                         -DYAB_WANT_VULKAN=OFF \
+                         -DUSE_EGL=ON \
+                         -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
+                         -Dpng_STATIC_LIBRARIES=${SYSROOT_PREFIX}/usr/lib/libpng16.so \
+                         -DCMAKE_VERBOSE_MAKEFILE:BOOL=ON"
 }
 
 makeinstall_target() {

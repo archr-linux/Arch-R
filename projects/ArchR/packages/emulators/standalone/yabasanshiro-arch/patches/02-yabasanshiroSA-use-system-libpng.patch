@@ -1,6 +1,8 @@
---- a/yabause/src/retro_arena/CMakeLists.txt	2022-01-05 15:44:20.891135756 -0600
-+++ b/yabause/src/retro_arena/CMakeLists.txt	2022-01-05 15:44:41.738849860 -0600
-@@ -22,7 +22,7 @@
+diff --git a/yabause/src/retro_arena/CMakeLists.txt b/yabause/src/retro_arena/CMakeLists.txt
+index fcb3e9f..435281b 100644
+--- a/yabause/src/retro_arena/CMakeLists.txt
++++ b/yabause/src/retro_arena/CMakeLists.txt
+@@ -21,7 +21,7 @@ add_subdirectory(pugixml)
  add_subdirectory(nanogui-sdl)
  
  #include( ../glfw/external_zlib.cmake )
@@ -9,3 +11,12 @@
  
  #------------------------------------------------------------------------------
  # nlohmann/json
+@@ -98,7 +98,7 @@ target_link_libraries(yabause-retro-arena yabause  pugixml ${YABAUSE_LIBRARIES}
+ target_link_libraries( yabause-retro-arena ${LIBCHDR_LIBRARIES} )
+ target_link_libraries( yabause-retro-arena ${zlib_STATIC_LIBRARIES} )
+ target_link_libraries( yabause-retro-arena dl pthread )   # RetroAchievements: libcurl via dlopen, login thread
+-add_dependencies(yabause-retro-arena Json png zlib libchdr )
++add_dependencies(yabause-retro-arena Json zlib libchdr )
+ yab_port_success(yabause-retro-arena)
+ set_target_properties(yabause-retro-arena PROPERTIES OUTPUT_NAME yabasanshiro)
+ 
