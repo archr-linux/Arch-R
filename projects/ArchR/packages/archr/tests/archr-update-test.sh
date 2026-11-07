@@ -27,7 +27,9 @@ check() {
 
 bash -n "${SCRIPT}" && echo "ok   bash -n" || { echo "FAIL bash -n"; FAILED=1; }
 
-mkdir -p "${TMP}/bin" "${TMP}/db/local/x-1" "${TMP}/cache" "${TMP}/power/battery" "${TMP}/run"
+mkdir -p "${TMP}/bin" "${TMP}/db/local/x-1" "${TMP}/storage-cache" "${TMP}/power/battery" "${TMP}/run"
+# As on the device: the cache is a symlink into the storage partition.
+ln -s "${TMP}/storage-cache" "${TMP}/cache"
 echo 1 >"${TMP}/db/local/x-1/desc"
 printf 'VERSION="2.1.1"\nBUILD_ID="abc"\n' >"${TMP}/os-release"
 echo "updates.branch=next" >"${TMP}/system.cfg"
@@ -209,6 +211,7 @@ check "the progress file holds the same lines" "$(cat "${TMP}/run/progress")" "$
 check "install holds a sleep, shutdown and keys inhibitor" "$(cut -d' ' -f1-2 "${TMP}/inhibit")" \
   "--what=sleep:shutdown:handle-power-key:handle-suspend-key --mode=block"
 check "pacman output in the log" "$(grep -c '^upgrading linux...' "${TMP}/log/archr-update.log")" 1
+check "a successful install empties the cache" "$(find "${TMP}/storage-cache" -name '*.pkg.tar*' | wc -l | tr -d ' ')" 0
 
 reset
 OUT=$(FAKE_DOWNLOAD_FAIL=retroarch run)
@@ -216,11 +219,13 @@ check "download failure: exit 1" "$?" 1
 check "download failure: reason and pacman line" "$(field reason <<<"${OUT}")|$(field line <<<"${OUT}")|$(field changed <<<"${OUT}")" \
   "download|error: failed retrieving file 'retroarch-1.22.0-1-aarch64.pkg.tar.zst' from example.invalid : Could not resolve host|false"
 check "download failure installs nothing" "$(grep -c 'pacman -Su ' "${TMP}/calls")" 0
+check "an interrupted download stays for the next run" "$(find "${TMP}/storage-cache" -name '*.pkg.tar*' | wc -l | tr -d ' ')" 1
 
 reset
 OUT=$(FAKE_INSTALL_FAIL=1 run)
 check "install failure: reason" "$(field reason <<<"${OUT}")|$(field line <<<"${OUT}")|$(field changed <<<"${OUT}")" \
   "install|error: failed to commit transaction (conflicting files)|true"
+check "a failed install keeps the cache" "$(find "${TMP}/storage-cache" -name '*.pkg.tar*' | wc -l | tr -d ' ')" 2
 reset
 OUT=$(FAKE_FULL=1 run)
 check "install without room: space" "$(field reason <<<"${OUT}")|$(field changed <<<"${OUT}")" "space|false"
