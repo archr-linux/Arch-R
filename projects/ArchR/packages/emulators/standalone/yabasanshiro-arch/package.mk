@@ -64,4 +64,8 @@ makeinstall_target() {
   mkdir -p ${INSTALL}/usr/config/yabasanshiro
   cp ${PKG_DIR}/config/config ${INSTALL}/usr/config/yabasanshiro/.config
   cp -r ${PKG_DIR}/config/devices ${INSTALL}/usr/config/yabasanshiro/
+
+  # GPL-2.0 text and the licenses of the bundled components
+  mkdir -p ${INSTALL}/usr/share/licenses/yabasanshiro-arch
+  cp ${PKG_BUILD}/LICENSE ${PKG_BUILD}/THIRD-PARTY-NOTICES.md ${INSTALL}/usr/share/licenses/yabasanshiro-arch/
 }
