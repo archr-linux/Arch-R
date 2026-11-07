@@ -263,7 +263,20 @@ connect_wifi() {
       # o iwd não aceitar o profile por qualquer motivo, o iwctl pede a
       # passphrase pelo stdin; wifictl não tem TTY, então em vez de um
       # erro o usuário recebe um travamento até o timeout.
-      IWCTL_TIMEOUT=30 iwctl --dont-ask station ${WIFI_DEV} connect "${SSID}" 2>&1
+      # Logo depois de o rádio voltar (rfkill unblock), o primeiro connect
+      # pode falhar com "Operation failed" enquanto o driver se acomoda
+      # (visto com o 8188eu: falhava e a rede salva parecia esquecida).
+      # Uma segunda tentativa, depois de uma pausa e de uma nova varredura,
+      # passa. Só uma: senha errada também dá "Operation failed", e repetir
+      # mais vezes só atrasaria o erro verdadeiro.
+      if ! IWCTL_TIMEOUT=30 iwctl --dont-ask station ${WIFI_DEV} connect "${SSID}" 2>&1 &&
+         ! connected_to_target; then
+        echo "== primeira tentativa falhou, tentando de novo"
+        sleep 3
+        iwctl station ${WIFI_DEV} scan 2>/dev/null
+        sleep 2
+        IWCTL_TIMEOUT=30 iwctl --dont-ask station ${WIFI_DEV} connect "${SSID}" 2>&1
+      fi
     else
       # A rede não apareceu em ~12s de varredura, e o caso provável é
       # rede oculta. Para essas o connect comum não serve: um AP oculto
