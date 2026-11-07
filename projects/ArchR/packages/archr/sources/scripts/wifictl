@@ -18,6 +18,8 @@
 ###                                  ssid<TAB>security<TAB>signal<TAB>connected<TAB>known
 ###                                  (format in /usr/bin/iwd_get-networks)
 ###     wifictl forget <ssid>        drop the saved iwd profile(s) of <ssid>
+###     wifictl boot-off             boot with Wi-Fi saved off: the radio off
+###                                  and the mux to the external port
 ###
 ### Exits 1, with a message on stderr, when there is no WiFi interface
 ### (forget still runs: the profiles live on disk, not on the device).
@@ -42,6 +44,7 @@ DEFAULT_CHAN="6"
 # boot, sleep) alternam disable/enable, o que mantém a contagem certa.
 # MUX_FOUND=1 só quando a placa tem o mux de verdade: o atributo existe
 # em toda porta OTG e lê "unsupported" sem o gpio.
+# A second argument "gpio" switches the lines only, leaving the supply.
 set_usb_wifi_mux() {
   local val="$1" f
   for f in /sys/devices/platform/*/*usb2phy*/usb_switch_gpio \
@@ -50,6 +53,7 @@ set_usb_wifi_mux() {
     case "$(cat "${f}" 2>/dev/null)" in 0|1) MUX_FOUND=1 ;; *) continue ;; esac
     echo "${val}" > "${f}" 2>/dev/null
   done
+  [ "${2}" = "gpio" ] && return 0
   for f in /sys/devices/platform/*/*usb2phy*/usb_switch_ext \
            /sys/devices/platform/*usb2phy*/usb_switch_ext; do
     if [ -e "${f}" ]; then
@@ -494,6 +498,14 @@ case "${1}" in
   disable)
     rfkill block wifi
     set_usb_wifi_mux 1
+    ;;
+  boot-off)
+    # Patch 0026 turns the external port's supply on at probe (and the
+    # lines to the internal adapter): a disable here would take a second
+    # reference that the user's next enable never releases. Switch the
+    # radio and the lines only.
+    rfkill block wifi
+    set_usb_wifi_mux 1 gpio
     ;;
   connect)
     if [ "${WIFI_TYPE}" = "1" ] && \

@@ -63,5 +63,5 @@ elif [ "$(get_setting wifi.enabled)" != "1" ]; then
   # Off in the settings: switch the radio off as well. The kernel brings it
   # up unblocked, so the radio stayed on (status bar: Wi-Fi on) while the
   # launcher's Wi-Fi setting read off.
-  /usr/bin/wifictl disable
+  /usr/bin/wifictl boot-off
 fi
