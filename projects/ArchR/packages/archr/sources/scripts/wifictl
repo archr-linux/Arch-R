@@ -284,6 +284,7 @@ connect_wifi() {
       printf '[Security]\n' > "${IWD_DIR}/.${IWD_NAME}.open.tmp" &&
         mv -f "${IWD_DIR}/.${IWD_NAME}.open.tmp" "${IWD_DIR}/${IWD_NAME}.open"
     fi
+    PROFILE_CHANGED=1
   }
 
   remove_iwd_profile() {
@@ -339,7 +340,13 @@ connect_wifi() {
       # mais vezes só atrasaria o erro verdadeiro.
       # O iwd pode já ter se conectado sozinho (autoconexão ao voltar o
       # rádio): aí não há o que pedir, só a espera abaixo.
-      if connected_to_target; then
+      # Só vale com o perfil intacto: com credencial nova, a associação que
+      # já existe é da antiga e não prova nada. Desconecta e testa a nova.
+      if [ "${PROFILE_CHANGED}" = "1" ] && connected_to_target; then
+        iwctl station ${WIFI_DEV} disconnect 2>&1
+        sleep 1
+      fi
+      if [ "${PROFILE_CHANGED}" != "1" ] && connected_to_target; then
         echo "== já conectado pelo iwd"
       elif ! IWCTL_TIMEOUT=30 iwctl --dont-ask station ${WIFI_DEV} connect "${SSID}" 2>&1 &&
          ! connected_to_target; then
