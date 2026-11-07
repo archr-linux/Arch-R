@@ -90,9 +90,20 @@ then
   done
 fi
 
-if [ ! -e "${CONFIG_DIR}/${GAME}.config" ]
+# The fork names the per-game config after the game without its last extension
+# ("Game.config"); earlier builds used "Game.chd.config". Keep the old settings.
+GAME_CFG="${GAME}"
+case "${GAME}" in
+  ?*.*) GAME_CFG="${GAME%.*}" ;;
+esac
+if [ ! -e "${CONFIG_DIR}/${GAME_CFG}.config" ]
 then
-  cp -f ${SOURCE_DIR}/.config "${CONFIG_DIR}/${GAME}.config"
+  if [ -e "${CONFIG_DIR}/${GAME}.config" ]
+  then
+    cp -f "${CONFIG_DIR}/${GAME}.config" "${CONFIG_DIR}/${GAME_CFG}.config"
+  else
+    cp -f ${SOURCE_DIR}/.config "${CONFIG_DIR}/${GAME_CFG}.config"
+  fi
 fi
 
 #Set the cores to use
