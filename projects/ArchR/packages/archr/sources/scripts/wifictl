@@ -37,18 +37,22 @@ DEFAULT_CHAN="6"
 # externa; usb_switch_ext liga o vbus da porta). Seguir o toggle de WiFi,
 # igual ao SO stock: desabilitar o WiFi libera a porta física pra dongles
 # e acessórios. No-op em placas sem o mux.
+# Só escreve quando o valor muda: o usb_switch_ext chama
+# regulator_enable/disable, que são contados, então um 0 repetido
+# desbalanceia o regulador. MUX_FOUND=1 quando a placa tem o mux.
 set_usb_wifi_mux() {
   local val="$1" f
   for f in /sys/devices/platform/*/*usb2phy*/usb_switch_gpio \
            /sys/devices/platform/*usb2phy*/usb_switch_gpio; do
-    [ -e "${f}" ] && echo "${val}" > "${f}" 2>/dev/null
+    [ -e "${f}" ] || continue
+    MUX_FOUND=1
+    [ "$(cat "${f}" 2>/dev/null)" = "${val}" ] || echo "${val}" > "${f}" 2>/dev/null
   done
   for f in /sys/devices/platform/*/*usb2phy*/usb_switch_ext \
            /sys/devices/platform/*usb2phy*/usb_switch_ext; do
-    if [ -e "${f}" ]; then
-      # porta externa ativa (mux=1) precisa do vbus dela ligado
-      if [ "${val}" = "1" ]; then echo 1 > "${f}" 2>/dev/null; else echo 0 > "${f}" 2>/dev/null; fi
-    fi
+    [ -e "${f}" ] || continue
+    # porta externa ativa (mux=1) precisa do vbus dela ligado
+    [ "$(cat "${f}" 2>/dev/null)" = "${val}" ] || echo "${val}" > "${f}" 2>/dev/null
   done
 }
 
@@ -62,11 +66,15 @@ if [ -z "${WIFI_DEV}" ] || [ ! -d "/sys/class/net/${WIFI_DEV}" ]; then
   if [ "${1}" = "enable" ]; then
     rfkill unblock wifi
     set_usb_wifi_mux 0
-    for i in $(seq 1 10); do
-      WIFI_DEV="$(ls /sys/class/net | grep -m1 '^wl')"
-      [ -n "${WIFI_DEV}" ] && break
-      sleep 1
-    done
+    # Only behind a mux is an adapter on its way back; anywhere else no
+    # interface means no adapter, and resume must not wait for one.
+    if [ "${MUX_FOUND}" = "1" ]; then
+      for i in $(seq 1 10); do
+        WIFI_DEV="$(ls /sys/class/net | grep -m1 '^wl')"
+        [ -n "${WIFI_DEV}" ] && break
+        sleep 1
+      done
+    fi
   fi
   if [ -z "${WIFI_DEV}" ] && [ "${1}" != "forget" ]; then
     echo "wifictl: no WiFi interface" >&2
