@@ -31,11 +31,44 @@ ADHOC_CLIENT_ID=$(get_setting wifi.adhoc.id)
 WIFI_DEV="$(ls /sys/class/net | grep -m1 '^wl')"
 DEFAULT_CHAN="6"
 
+# Alguns clones têm o módulo WiFi USB interno dividindo as linhas de dados
+# da OTG com a porta USB física através de um mux de hardware (patch 0026
+# expõe o gpio como sysfs usb_switch_gpio: 0 = WiFi interno, 1 = porta
+# externa; usb_switch_ext liga o vbus da porta). Seguir o toggle de WiFi,
+# igual ao SO stock: desabilitar o WiFi libera a porta física pra dongles
+# e acessórios. No-op em placas sem o mux.
+set_usb_wifi_mux() {
+  local val="$1" f
+  for f in /sys/devices/platform/*/*usb2phy*/usb_switch_gpio \
+           /sys/devices/platform/*usb2phy*/usb_switch_gpio; do
+    [ -e "${f}" ] && echo "${val}" > "${f}" 2>/dev/null
+  done
+  for f in /sys/devices/platform/*/*usb2phy*/usb_switch_ext \
+           /sys/devices/platform/*usb2phy*/usb_switch_ext; do
+    if [ -e "${f}" ]; then
+      # porta externa ativa (mux=1) precisa do vbus dela ligado
+      if [ "${val}" = "1" ]; then echo 1 > "${f}" 2>/dev/null; else echo 0 > "${f}" 2>/dev/null; fi
+    fi
+  done
+}
+
 # Exit the script if the WiFi device isn't available. Non-zero, so a UI
 # can tell "no adapter" from success; the boot and sleep callers ignore
-# the status.
+# the status. "enable" first undoes what "disable" did: on a board whose
+# internal adapter sits behind the USB mux, Wi-Fi off routes the lines to
+# the external port and the adapter, with its interface, goes away until
+# the mux is switched back.
 if [ -z "${WIFI_DEV}" ] || [ ! -d "/sys/class/net/${WIFI_DEV}" ]; then
-  if [ "${1}" != "forget" ]; then
+  if [ "${1}" = "enable" ]; then
+    rfkill unblock wifi
+    set_usb_wifi_mux 0
+    for i in $(seq 1 10); do
+      WIFI_DEV="$(ls /sys/class/net | grep -m1 '^wl')"
+      [ -n "${WIFI_DEV}" ] && break
+      sleep 1
+    done
+  fi
+  if [ -z "${WIFI_DEV}" ] && [ "${1}" != "forget" ]; then
     echo "wifictl: no WiFi interface" >&2
     exit 1
   fi
@@ -439,26 +472,6 @@ has_ap_mode() {
   fi
 }
 
-# Alguns clones têm o módulo WiFi USB interno dividindo as linhas de dados
-# da OTG com a porta USB física através de um mux de hardware (patch 0026
-# expõe o gpio como sysfs usb_switch_gpio: 0 = WiFi interno, 1 = porta
-# externa; usb_switch_ext liga o vbus da porta). Seguir o toggle de WiFi,
-# igual ao SO stock: desabilitar o WiFi libera a porta física pra dongles
-# e acessórios. No-op em placas sem o mux.
-set_usb_wifi_mux() {
-  local val="$1" f
-  for f in /sys/devices/platform/*/*usb2phy*/usb_switch_gpio \
-           /sys/devices/platform/*usb2phy*/usb_switch_gpio; do
-    [ -e "${f}" ] && echo "${val}" > "${f}" 2>/dev/null
-  done
-  for f in /sys/devices/platform/*/*usb2phy*/usb_switch_ext \
-           /sys/devices/platform/*usb2phy*/usb_switch_ext; do
-    if [ -e "${f}" ]; then
-      # porta externa ativa (mux=1) precisa do vbus dela ligado
-      if [ "${val}" = "1" ]; then echo 1 > "${f}" 2>/dev/null; else echo 0 > "${f}" 2>/dev/null; fi
-    fi
-  done
-}
 
 case "${1}" in
   enable)
