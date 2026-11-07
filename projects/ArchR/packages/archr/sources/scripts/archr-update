@@ -382,8 +382,11 @@ cmd_check_json() {
 # "bytes package": what the targets already have in the cache, finished or
 # partial, and the package being written. pacman 7 downloads into
 # download-*/ under the cache and moves the file up when it is complete.
+# -H: on the device the cache is a symlink into /storage/.pacman/cache,
+# and find does not enter a starting point that is a symlink without it
+# (the download progress sat at 0 % until the end).
 cached_bytes() {
-    find "${PACMAN_CACHE}" -maxdepth 2 -type f -name '*.pkg.tar*' -printf '%f %s\n' 2>/dev/null |
+    find -H "${PACMAN_CACHE}" -maxdepth 2 -type f -name '*.pkg.tar*' -printf '%f %s\n' 2>/dev/null |
         awk -v list="${WORK}/files" '
             BEGIN { while ((getline line < list) > 0) { split(line, f, " "); want[f[1]] = f[2]; pkg[f[1]] = f[3] } }
             { file = $1; sub(/\.part$/, "", file)
@@ -465,6 +468,15 @@ install_lines() {
     SEEN=${lines}
 }
 
+# Installed: the cache lives on the storage partition and nothing else
+# empties it, so every update's packages stayed for good. Only after a
+# successful install; an interrupted download stays and the next run
+# resumes it.
+drop_cache() {
+    find -H "${PACMAN_CACHE}" -maxdepth 1 -type f -name '*.pkg.tar*' -delete 2>/dev/null
+    return 0
+}
+
 run_install() {
     local rc line
     # Past this point nothing stops pacman: not this script's signals, not
@@ -538,6 +550,7 @@ cmd_update_progress() {
     low="$(battery_low)" &&
         fail battery "Battery at ${low}%; connect the charger (needs ${MIN_BATTERY}%)."
     run_install
+    drop_cache
     if [ -n "${NEW_VERSION}" ]; then
         mkdir -p "${UPDATE_STATE}" && echo "${NEW_VERSION}" >"${UPDATE_STATE}/version"
     fi
@@ -568,7 +581,7 @@ cmd_update() {
     take_lock
     write_mirrorlist
     seed_local_db || return 1
-    pacman -Syu --noconfirm
+    pacman -Syu --noconfirm && drop_cache
 }
 
 cmd_info() {
