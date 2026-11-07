@@ -170,7 +170,10 @@ legacy_iwd_name() {
 # failed without running (connect then timed out as a false failure).
 iwctl() {
   pidof iwd >/dev/null || return 1
-  timeout -k 1 "${IWCTL_TIMEOUT:-5}" iwctl "$@"
+  # --foreground keeps iwctl in wifictl's process group: without it GNU
+  # timeout starts a group of its own, and the launcher, which cancels a
+  # connect by killing wifictl's group, left iwctl running.
+  timeout --foreground -k 1 "${IWCTL_TIMEOUT:-5}" iwctl "$@"
 }
 
 # Wait for iwd to start and have a device available
