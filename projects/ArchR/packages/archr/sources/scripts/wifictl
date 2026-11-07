@@ -237,10 +237,15 @@ connect_wifi() {
   # Create iwd network profile for persistent connection
   IWD_DIR="/var/lib/iwd"
   mkdir -p "${IWD_DIR}"
-  # Limpa qualquer perfil antigo para o mesmo SSID antes de regravar
-  # (caso usuário mude entre rede aberta e PSK, ou troque a senha — sem
-  # o rm o iwd pode preferir o profile antigo conflitante).
-  rm -f "${IWD_DIR}/${IWD_NAME}.psk" "${IWD_DIR}/${IWD_NAME}.open" 2>/dev/null
+  # Limpa o perfil do outro tipo (rede que passou de aberta para PSK ou o
+  # contrário; sem o rm o iwd pode preferir o conflitante) e o do nome
+  # antigo. O do mesmo tipo não sai aqui: write_iwd_profile o substitui
+  # inteiro, e só quando a senha mudou.
+  if [ -n "${PSK}" ]; then
+    rm -f "${IWD_DIR}/${IWD_NAME}.open" 2>/dev/null
+  else
+    rm -f "${IWD_DIR}/${IWD_NAME}.psk" 2>/dev/null
+  fi
   if [ "${IWD_NAME_LEGACY}" != "${IWD_NAME}" ]; then
     rm -f "${IWD_DIR}/${IWD_NAME_LEGACY}.psk" "${IWD_DIR}/${IWD_NAME_LEGACY}.open" 2>/dev/null
   fi
@@ -264,9 +269,20 @@ connect_wifi() {
     if [ -n "${PSK}" ]; then
       # umask 077 antes do printf garante que o profile (com a senha em
       # texto) não fique world-readable em /var/lib/iwd.
-      ( umask 077; printf '[Security]\nPassphrase=%s\n' "${PSK}" > "${IWD_DIR}/${IWD_NAME}.psk" )
+      #
+      # Depois da 1ª conexão o iwd regrava o perfil (PreSharedKey, SAE-PT),
+      # mantendo a Passphrase. Com a mesma senha não há o que mudar, e
+      # reescrever durante a autoconexão que o iwd já começou ao voltar o
+      # rádio fazia ele ler o arquivo pela metade ("Error loading") e
+      # desistir da rede. Quando grava, grava ao lado e renomeia: o iwd
+      # nunca vê o perfil incompleto.
+      grep -qxF "Passphrase=${PSK}" "${IWD_DIR}/${IWD_NAME}.psk" 2>/dev/null && return 0
+      ( umask 077; printf '[Security]\nPassphrase=%s\n' "${PSK}" > "${IWD_DIR}/.${IWD_NAME}.psk.tmp" ) &&
+        mv -f "${IWD_DIR}/.${IWD_NAME}.psk.tmp" "${IWD_DIR}/${IWD_NAME}.psk"
     else
-      printf '[Security]\n' > "${IWD_DIR}/${IWD_NAME}.open"
+      [ -f "${IWD_DIR}/${IWD_NAME}.open" ] && return 0
+      printf '[Security]\n' > "${IWD_DIR}/.${IWD_NAME}.open.tmp" &&
+        mv -f "${IWD_DIR}/.${IWD_NAME}.open.tmp" "${IWD_DIR}/${IWD_NAME}.open"
     fi
   }
 
@@ -321,7 +337,11 @@ connect_wifi() {
       # Uma segunda tentativa, depois de uma pausa e de uma nova varredura,
       # passa. Só uma: senha errada também dá "Operation failed", e repetir
       # mais vezes só atrasaria o erro verdadeiro.
-      if ! IWCTL_TIMEOUT=30 iwctl --dont-ask station ${WIFI_DEV} connect "${SSID}" 2>&1 &&
+      # O iwd pode já ter se conectado sozinho (autoconexão ao voltar o
+      # rádio): aí não há o que pedir, só a espera abaixo.
+      if connected_to_target; then
+        echo "== já conectado pelo iwd"
+      elif ! IWCTL_TIMEOUT=30 iwctl --dont-ask station ${WIFI_DEV} connect "${SSID}" 2>&1 &&
          ! connected_to_target; then
         echo "== primeira tentativa falhou, tentando de novo"
         sleep 3
