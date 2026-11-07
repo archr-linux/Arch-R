@@ -101,11 +101,13 @@ REBOOT_KERNEL='^linux(-.*)?$'
 REBOOT_LAUNCHER='^archr-launcher$'
 
 BRANCH="$(get_setting updates.branch 2>/dev/null)"
-# Anything that is not a real channel falls back to stable: the ES
-# settings screen historically stored values like "auto" here, which
-# would point the mirrorlist at a repo tag that does not exist.
+# Only channels with a published repo tag; anything else falls back to
+# stable. The ES settings screen stored values like "auto" here, and the
+# launcher offered next and dev before repo-next/repo-dev existed: both
+# pointed the mirrorlist at a tag that does not exist, and the update
+# could not reach the repository. Add a channel here when its tag ships.
 case "${BRANCH}" in
-    stable|next|dev) ;;
+    stable) ;;
     *) BRANCH="stable" ;;
 esac
 
