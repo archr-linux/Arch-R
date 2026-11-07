@@ -1,5 +1,5 @@
 diff --git a/yabause/src/retro_arena/InputManager.cpp b/yabause/src/retro_arena/InputManager.cpp
-index 3edde4b..550806a 100644
+index 3edde4b..318874f 100644
 --- a/yabause/src/retro_arena/InputManager.cpp
 +++ b/yabause/src/retro_arena/InputManager.cpp
 @@ -528,22 +528,22 @@ int getPlayerJsonFromInputConfig( int joy, InputConfig * inputconfig, json & pla
@@ -29,62 +29,86 @@ index 3edde4b..550806a 100644
    player[guid]["z"] = { { "type", input_types[result.type] },{ "id", result.id },{ "value", result.value } };
  
    inputconfig->getInputByName("lefttrigger", &result);
-@@ -1371,7 +1371,7 @@ void InputManager::writeDeviceConfig(InputConfig* config)
+@@ -1272,7 +1272,7 @@ bool InputManager::loadInputConfig(InputConfig* config)
+      produced a keymapv2.json with id=-1 for all buttons. Read only:
+      writeDeviceConfig() stays on getConfigPath() so the ES file is never overwritten. */
+   if(!fs::exists(path)){
+-    std::string es_path = std::string(getenv("HOME")) + "/.emulationstation/es_input.cfg";
++    std::string es_path = std::string(YAB_HOME) + "/.emulationstation/es_input.cfg";
+     /* ArkOS has no ~/.emulationstation/es_input.cfg; EmulationStation uses
+        /etc/emulationstation/es_input.cfg. The GUID there lacks the SDL checksum,
+        so devices match by name. */
+@@ -1370,8 +1370,8 @@ void InputManager::writeDeviceConfig(InputConfig* config)
+ 
  std::string InputManager::getConfigPath()
  {
-   std::string path = getenv("HOME");
+-  std::string path = getenv("HOME");
 -  path += "/.emulationstation/es_temporaryinput.cfg";
++  std::string path = YAB_HOME;
 +  path += "/yabasanshiro/input.cfg";
    return path;
  }
  
 diff --git a/yabause/src/retro_arena/Preference.cpp b/yabause/src/retro_arena/Preference.cpp
-index 3bcda03..ea554d0 100644
+index 3bcda03..fe2ec16 100644
 --- a/yabause/src/retro_arena/Preference.cpp
 +++ b/yabause/src/retro_arena/Preference.cpp
-@@ -29,7 +29,7 @@ Preference::Preference( const std::string & filename ){
+@@ -28,8 +28,8 @@ Preference::Preference( const std::string & filename ){
+       input_trace_filename = input_trace_filename.substr(0, punkt);
    }
  
-   std::string home_dir = getenv("HOME");
+-  std::string home_dir = getenv("HOME");
 -  home_dir += "/.yabasanshiro/";
++  std::string home_dir = YAB_HOME;
 +  home_dir += "/yabasanshiro/";
  
    this->filename = home_dir + input_trace_filename + ".config";
  
-@@ -87,7 +87,7 @@ void Preference::create_defaults(){
+@@ -85,9 +85,9 @@ void Preference::create_defaults(){
+      the user directory. Only this key is copied, because default.config also
+      holds menu values that do not belong in a per-game config. */
    {
-     const char * hd = getenv("HOME");
+-    const char * hd = getenv("HOME");
++    const char * hd = YAB_HOME;
      if (hd != NULL) {
 -      std::string gpath = std::string(hd) + "/.yabasanshiro/default.config";
 +      std::string gpath = std::string(hd) + "/yabasanshiro/default.config";
        try{
          std::ifstream gin( gpath );
          if (gin.good()) {
-@@ -165,7 +165,7 @@ int Preference::getIntGlobal( const std::string & key , int defaultv ){
+@@ -163,9 +163,9 @@ int Preference::getIntGlobal( const std::string & key , int defaultv ){
+     if (it != j.end() && it->is_boolean()) return it->get<bool>() ? 1 : 0;   /* menu switches store bool */
+   } catch ( json::exception & e ) {}
    try {
-     const char * hd = getenv("HOME");
+-    const char * hd = getenv("HOME");
++    const char * hd = YAB_HOME;
      if (hd != NULL) {
 -      std::ifstream gin( std::string(hd) + "/.yabasanshiro/default.config" );
 +      std::ifstream gin( std::string(hd) + "/yabasanshiro/default.config" );
        if (gin.good()) {
          json global; gin >> global;
          json::iterator it = global.find(key);
-@@ -179,7 +179,7 @@ int Preference::getIntGlobal( const std::string & key , int defaultv ){
+@@ -178,8 +178,8 @@ int Preference::getIntGlobal( const std::string & key , int defaultv ){
+ }
  
  static std::string GlobalPath(){
-   const char * hd = getenv("HOME");
+-  const char * hd = getenv("HOME");
 -  return std::string(hd != NULL ? hd : "") + "/.yabasanshiro/default.config";
++  const char * hd = YAB_HOME;
 +  return std::string(hd != NULL ? hd : "") + "/yabasanshiro/default.config";
  }
  
  int Preference::getIntOnlyGlobal( const std::string & key , int defaultv ){
 diff --git a/yabause/src/retro_arena/RetroAchievements.cpp b/yabause/src/retro_arena/RetroAchievements.cpp
-index e2c433f..b003066 100644
+index e2c433f..82709e7 100644
 --- a/yabause/src/retro_arena/RetroAchievements.cpp
 +++ b/yabause/src/retro_arena/RetroAchievements.cpp
-@@ -169,7 +169,7 @@ std::atomic<int> g_resp_pending(0);
+@@ -167,9 +167,9 @@ std::deque<Response> g_resp_queue;
+ std::atomic<int> g_resp_pending(0);
+ 
  std::string cfg_path() {
-   const char* h = getenv("HOME");
+-  const char* h = getenv("HOME");
++  const char* h = YAB_HOME;
    std::string home = (h && h[0]) ? h : "/home/ark";
 -  return home + "/.yabasanshiro/retroachievements.cfg";
 +  return home + "/yabasanshiro/retroachievements.cfg";
@@ -92,7 +116,7 @@ index e2c433f..b003066 100644
  
  std::string trim(const std::string & s) {
 diff --git a/yabause/src/retro_arena/main.cpp b/yabause/src/retro_arena/main.cpp
-index c4d4390..3501cdd 100644
+index c4d4390..2d1e125 100644
 --- a/yabause/src/retro_arena/main.cpp
 +++ b/yabause/src/retro_arena/main.cpp
 @@ -403,7 +403,7 @@ int yabauseinit()
@@ -100,15 +124,17 @@ index c4d4390..3501cdd 100644
        return k;
      };
 -    std::string game(cdpath), dir = std::string(getenv("HOME") ? getenv("HOME") : ".") + "/.yabasanshiro/cheats/";
-+    std::string game(cdpath), dir = std::string(getenv("HOME") ? getenv("HOME") : ".") + "/yabasanshiro/cheats/";
++    std::string game(cdpath), dir = std::string(YAB_HOME ? YAB_HOME : ".") + "/yabasanshiro/cheats/";
      std::string gk = key(game), best;
      int bestscore = -100;
      const char *regions[] = { "Europe", "USA", "Japan" };
-@@ -480,14 +480,14 @@ int main(int argc, char** argv)
+@@ -479,15 +479,15 @@ int main(int argc, char** argv)
+   //printf("\033[2J");
  
    // Inisialize home directory
-   std::string home_dir = getenv("HOME");
+-  std::string home_dir = getenv("HOME");
 -  home_dir += "/.yabasanshiro/";
++  std::string home_dir = YAB_HOME;
 +  home_dir += "/yabasanshiro/";
    struct stat st = {0};
    if (stat(home_dir.c_str(), &st) == -1) {
