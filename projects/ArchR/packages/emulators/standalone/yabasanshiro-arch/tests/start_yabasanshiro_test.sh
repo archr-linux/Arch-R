@@ -68,11 +68,13 @@ touch "${S}/roms/bios/my bios/saturn_bios.bin"
 USE_HLE=1 run "${S}/roms/saturn/Game A.chd" saturn
 expect "bios arg" "[-r][3][-i][${S}/roms/saturn/Game A.chd][-b][${S}/roms/bios/my bios/saturn_bios.bin]" "$(cat "${TMP}/out")"
 
-# Exit codes: a real failure is passed on, a kill is not a failure.
-STUB_RC=3 bash "${TMP}/start.sh" "${S}/roms/saturn/Game A.chd" saturn >/dev/null 2>&1
-expect "failure passed on" "3" "$?"
-STUB_RC=137 bash "${TMP}/start.sh" "${S}/roms/saturn/Game A.chd" saturn >/dev/null 2>&1
-expect "kill is ok" "0" "$?"
+# Exit codes: only success and the system's own kills (SIGKILL 137 from the
+# exit hotkey, SIGTERM 143 from archr-game-save-exit) are clean; everything
+# else, such as 3, 255 (SDL failure), 139 (segfault) or 134 (abort), is passed on.
+for pair in 0:0 137:0 143:0 3:3 255:255 139:139 134:134; do
+  STUB_RC="${pair%%:*}" bash "${TMP}/start.sh" "${S}/roms/saturn/Game A.chd" saturn >/dev/null 2>&1
+  expect "exit ${pair%%:*}" "${pair##*:}" "$?"
+done
 
 [ "${FAILED}" = 0 ] && echo "start_yabasanshiro_test: all passed"
 exit "${FAILED}"

@@ -148,10 +148,15 @@ mkdir -p "${CONFIG_DIR}/cheats"
 echo "Command: yabasanshiro -r 3 -i ${1} ${BIOS_ARGS[*]}" >>/var/log/exec.log 2>&1
 ${EMUPERF} yabasanshiro -r 3 -i "${1}" "${BIOS_ARGS[@]}" >>/var/log/exec.log 2>&1
 RC=$?
-# 128+ is the launcher killing the emulator (set_kill), not a failure.
-if [ "${RC}" -ne 0 ] && [ "${RC}" -lt 128 ]
-then
-  echo "yabasanshiro exited with ${RC}" >>/var/log/exec.log
-  exit "${RC}"
-fi
-exit 0
+# Only the kills the system itself sends to close the game are a clean end:
+# SIGKILL (137: the exit hotkey runs "killall -9 yabasanshiro" from set_kill, and
+# archr-game-save-exit falls back to it) and SIGTERM (143: archr-game-save-exit's
+# first, polite close). Anything else (255 on an SDL failure, 139 segfault,
+# 134 abort...) is a real failure and is passed on to the launcher.
+case "${RC}" in
+  0|137|143) exit 0 ;;
+  *)
+    echo "yabasanshiro exited with ${RC}" >>/var/log/exec.log
+    exit "${RC}"
+    ;;
+esac
