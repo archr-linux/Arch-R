@@ -108,5 +108,11 @@ else
   unset EMUPERF
 fi
 
-echo "Command: yabasanshiro -r 2 -i "${1}" ${BIOS}" >>/var/log/exec.log 2>&1
-${EMUPERF} yabasanshiro -r 2 -i "${1}" ${BIOS} >>/var/log/exec.log 2>&1 ||:
+# The emulator keeps its files in ${HOME}/yabasanshiro (the patched fork), which
+# is ${CONFIG_DIR}: game configs, keymapv2.json, input.cfg, default.config,
+# cheats/ and retroachievements.cfg. Select opens its menu, Select+Start quits.
+mkdir -p "${CONFIG_DIR}/cheats"
+export HOME="/storage/.config"
+
+echo "Command: yabasanshiro -r 3 -i "${1}" ${BIOS}" >>/var/log/exec.log 2>&1
+${EMUPERF} yabasanshiro -r 3 -i "${1}" ${BIOS} >>/var/log/exec.log 2>&1 ||:
