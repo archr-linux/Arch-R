@@ -137,7 +137,8 @@ OUT=$(run)
 check "check exits 0" "$?" 0
 check "check is one valid JSON line" "$(printf '%s\n' "${OUT}" | python3 -c 'import json,sys; [json.loads(l) for l in sys.stdin]; print(1)' 2>&1)" 1
 check "check os version" "$(field os_version <<<"${OUT}")" 2.1.1
-check "check channel" "$(field channel <<<"${OUT}")" next
+# next has no published repo tag yet: it falls back to stable.
+check "check channel" "$(field channel <<<"${OUT}")" stable
 check "check total" "$(field total <<<"${OUT}")" 3
 check "check download size" "$(field download_size <<<"${OUT}")" 6000
 check "check kernel needs a reboot" "$(field reboot_reason <<<"${OUT}")" kernel
@@ -146,8 +147,8 @@ check "check news keeps quotes and lines" "$(field news <<<"${OUT}")" 'Launcher 
 Kernel novo.'
 check "check packages" "$(field packages <<<"${OUT}")" \
   '[{"name": "linux", "old": "6.12.94-3", "new": "6.12.95-1", "size": 3000}, {"name": "retroarch", "old": "1.21.0-3", "new": "1.22.0-1", "size": 2000}, {"name": "libnew", "old": "", "new": "1.0-1", "size": 1000}]'
-check "mirrorlist follows the channel" "$(grep '^Server' "${TMP}/mirrorlist")" \
-  "Server = https://github.com/archr-linux/archr-repo/releases/download/repo-next"
+check "an unpublished channel reads stable" "$(grep '^Server' "${TMP}/mirrorlist")" \
+  "Server = https://github.com/archr-linux/archr-repo/releases/download/repo-stable"
 check "log written" "$(grep -c 'check: 3 package' "${TMP}/log/archr-update.log")" 1
 
 mv "${TMP}/changelog" "${TMP}/changelog.off"

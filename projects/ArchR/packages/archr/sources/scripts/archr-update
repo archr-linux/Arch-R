@@ -9,8 +9,8 @@
 # Release channel is read from system.cfg "updates.branch" and maps to
 # the matching mirror tag on github.com/archr-linux/archr-repo:
 #   stable -> repo-stable
-#   next   -> repo-next
-#   dev    -> repo-dev
+#   next   -> repo-next (not published yet: reads stable)
+#   dev    -> repo-dev  (not published yet: reads stable)
 #
 # The mirrorlist that points to those tags is installed by the pacman
 # package (/etc/pacman.d/mirrorlist).
@@ -101,11 +101,13 @@ REBOOT_KERNEL='^linux(-.*)?$'
 REBOOT_LAUNCHER='^archr-launcher$'
 
 BRANCH="$(get_setting updates.branch 2>/dev/null)"
-# Anything that is not a real channel falls back to stable: the ES
-# settings screen historically stored values like "auto" here, which
-# would point the mirrorlist at a repo tag that does not exist.
+# Only channels with a published repo tag; anything else falls back to
+# stable. The ES settings screen stored values like "auto" here, and the
+# launcher offered next and dev before repo-next/repo-dev existed: both
+# pointed the mirrorlist at a tag that does not exist, and the update
+# could not reach the repository. Add a channel here when its tag ships.
 case "${BRANCH}" in
-    stable|next|dev) ;;
+    stable) ;;
     *) BRANCH="stable" ;;
 esac
 
@@ -134,7 +136,8 @@ Usage: ${0##*/} [check [--json]|update [--progress]|info|seed|version]
   seed      Record this image's packages in an empty pacman database.
   version   Print the system's version.
 
-Channel is configured via system.cfg "updates.branch" (stable|next|dev).
+Channel is configured via system.cfg "updates.branch"; only stable is
+published, any other value reads stable.
 EOF
 }
 
