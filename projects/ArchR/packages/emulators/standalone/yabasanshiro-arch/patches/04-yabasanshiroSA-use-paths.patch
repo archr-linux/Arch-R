@@ -1,5 +1,5 @@
 diff --git a/yabause/src/retro_arena/InputManager.cpp b/yabause/src/retro_arena/InputManager.cpp
-index 3edde4b..318874f 100644
+index 3edde4b..44e8e19 100644
 --- a/yabause/src/retro_arena/InputManager.cpp
 +++ b/yabause/src/retro_arena/InputManager.cpp
 @@ -528,22 +528,22 @@ int getPlayerJsonFromInputConfig( int joy, InputConfig * inputconfig, json & pla
@@ -34,7 +34,7 @@ index 3edde4b..318874f 100644
       writeDeviceConfig() stays on getConfigPath() so the ES file is never overwritten. */
    if(!fs::exists(path)){
 -    std::string es_path = std::string(getenv("HOME")) + "/.emulationstation/es_input.cfg";
-+    std::string es_path = std::string(YAB_HOME) + "/.emulationstation/es_input.cfg";
++    std::string es_path = std::string(YAB_HOME) + "/emulationstation/es_input.cfg";
      /* ArkOS has no ~/.emulationstation/es_input.cfg; EmulationStation uses
         /etc/emulationstation/es_input.cfg. The GUID there lacks the SDL checksum,
         so devices match by name. */
