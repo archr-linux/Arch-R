@@ -1,0 +1,17 @@
+# Long-running scripts from the archr package keep the old copy open
+# after an update (bash holds the file it started from), so a fix to them
+# only took effect at the next boot: the battery guard kept cutting by
+# the old rule. Reload systemd (nothing else here does: unit changes from
+# an update waited for a reboot too) and restart the running guard. The
+# guard's unit has KillMode=process, so a game save it started survives.
+# pacman reads hooks again at PostTransaction, so this one also runs in
+# the transaction that installs it.
+[Trigger]
+Operation = Upgrade
+Type = Package
+Target = archr
+
+[Action]
+Description = Reloading systemd and restarting Arch R background services...
+When = PostTransaction
+Exec = /bin/sh -c 'systemctl daemon-reload; systemctl try-restart --no-block archr-battery-guard.service; true'

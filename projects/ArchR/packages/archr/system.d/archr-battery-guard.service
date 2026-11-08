@@ -9,6 +9,10 @@ Environment=HOME=/storage
 ExecStart=/usr/bin/archr-battery-guard
 Restart=on-failure
 RestartSec=5
+# A stop or restart ends the guard script only: a game save it started
+# before powering off runs to its end (the next guard sees the battery
+# again and powers off then).
+KillMode=process
 
 [Install]
 WantedBy=multi-user.target
