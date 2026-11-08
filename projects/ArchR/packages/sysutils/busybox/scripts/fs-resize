@@ -19,18 +19,54 @@ uptime_s() {
 # "reboot" is systemctl here, so "reboot -f" asked systemd for the reboot:
 # systemd-shutdown kills everything, unmounts and only then calls reboot().
 # On cards whose first boot then sat on a frozen screen, nothing after
-# "sync" ever happened. Everything is on the card by now (synced, /flash
-# read-only, STORAGE unmounted), so -ff calls reboot() directly, as busybox
-# "reboot -f" did. If even that has not restarted the board after
-# RESTART_WAIT seconds, a driver is stuck in its shutdown hook (the display
-# is the suspect): restart without shutting devices down. The trigger
-# works with sysrq disabled for the keyboard.
+# "sync" ever happened. So -ff calls reboot() directly, as busybox
+# "reboot -f" did, after the filesystems are put away by hand (synced,
+# / and /flash read-only, STORAGE unmounted). Each of those is best effort:
+# none may hold the restart back. If the board has not restarted after
+# RESTART_WAIT seconds (a driver stuck in its shutdown hook, the display is
+# the suspect, or one of those steps hung), sysrq syncs, remounts
+# read-only and restarts without shutting devices down. The timer starts
+# first, so it covers every step. Writing the trigger works with sysrq
+# disabled for the keyboard. SYSRQ_TRIGGER is for the host tests: a test
+# that runs this script must point it at a file, never at the host's.
+: "${SYSRQ_TRIGGER:=/proc/sysrq-trigger}"
 RESTART_WAIT=${RESTART_WAIT:-20}
 restart_now() {
+  ( sleep "$RESTART_WAIT"
+    echo s >"$SYSRQ_TRIGGER"; sleep 1
+    echo u >"$SYSRQ_TRIGGER"; sleep 1
+    echo b >"$SYSRQ_TRIGGER" ) 2>/dev/null &
   sync
-  ( sleep "$RESTART_WAIT"; echo b >/proc/sysrq-trigger ) &
+  mount -o remount,ro / 2>/dev/null
+  if grep -q " /storage " /proc/mounts; then
+    umount /storage 2>/dev/null || umount -l /storage 2>/dev/null
+  fi
+  mount -o remount,ro /flash 2>/dev/null
+  sync
   reboot -ff >/dev/null 2>&1
   wait
+}
+
+# Steps whose logged status must be the real one (StartProgress evals the
+# step in this shell, so a step cannot "exit" with a status of its own).
+# e2fsck: the status also goes to /tmp/fsck-status for the resize below.
+check_fs() {
+  local rc
+  e2fsck -f -p "$1" >>$LOG 2>&1
+  rc=$?
+  echo $rc >/tmp/fsck-status
+  return $rc
+}
+
+# New ext4 UUID and FAT serial: the status is the first that failed.
+new_ids() {
+  local rc rc_fat
+  tune2fs "$1" -U random >>$LOG 2>&1
+  rc=$?
+  fatlabel -i -r "$2" >>$LOG 2>&1
+  rc_fat=$?
+  [ $rc -eq 0 ] && rc=$rc_fat
+  return $rc
 }
 
 StartProgressLog() {
@@ -72,6 +108,8 @@ if [ -e /storage/.please_resize_me ] ; then
     mount -o remount,ro /flash
     StartProgress countdown "Rebooting in 5s... " 5 "NOW"
     restart_now
+    # Never on into the resize of a set-up card, even if no restart came.
+    exit 1
   fi
 
   # get the disk. /storage on 2nd partition
@@ -125,7 +163,7 @@ if [ -e /storage/.please_resize_me ] ; then
     # filesystem with resize2fs would compound the damage. Leave the
     # partition grown but the filesystem untouched; a later boot can
     # retry after a manual fsck.
-    StartProgressLog spinner "Checking file system... " "e2fsck -f -p $PART >>$LOG 2>&1; echo \$? >/tmp/fsck-status"
+    StartProgressLog spinner "Checking file system... " "check_fs $PART"
     FSCK_STATUS=$(cat /tmp/fsck-status 2>/dev/null || echo 0)
     if [ "${FSCK_STATUS:-0}" -le 2 ]; then
       StartProgressLog spinner "Resizing file system... " "resize2fs $PART >>$LOG 2>&1"
@@ -142,7 +180,7 @@ if [ -e /storage/.please_resize_me ] ; then
         StartProgressLog spinner "Resizing file system... " "resize2fs $PART >>$LOG 2>&1"
       fi
     fi
-    StartProgressLog spinner "Regenerating UUIDs...   " "tune2fs $PART -U random >>$LOG 2>&1; fatlabel -i -r $PART1 >>$LOG 2>&1"
+    StartProgressLog spinner "Regenerating UUIDs...   " "new_ids $PART $PART1"
     # The two FAT warnings fatlabel prints here are expected and harmless:
     # the 256MB boot partition ships the same out-of-spec FAT32 layout as
     # the whole RK3326 ecosystem (vendor U-Boots are only tested against
