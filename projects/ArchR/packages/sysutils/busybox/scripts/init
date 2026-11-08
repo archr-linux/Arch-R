@@ -1438,6 +1438,37 @@ fi
 
 debug_msg "Unique identifier for this client: ${MACHINE_UID:-NOT AVAILABLE}"
 
+# Boot trace, opt-in: only while /flash/archr-trace exists, an empty file
+# the user creates on the boot partition from a PC. Each step goes to
+# /flash/boot-trace.log as it starts, synced, because a boot stuck on a
+# frozen screen says nothing on it. /flash is left read-only between
+# lines, as the steps expect. archr-boot-trace.service goes on under
+# systemd and removes the marker. Steps before mount_flash have no /flash.
+# prepare_sysroot moves /flash to /sysroot/flash. A log past 256 KiB moves
+# to boot-trace.log.1 (its last 256 KiB) at the start of a boot, as
+# archr-boot-trace does.
+BOOT_TRACE_DIR=/flash
+BOOT_TRACE_MAX=262144
+boot_trace() {
+  local d=${BOOT_TRACE_DIR}
+  [ -f ${d}/archr-trace ] || return 0
+  mount -o remount,rw ${d} 2>/dev/null || return 0
+  if [ -z "${BOOT_TRACE_STARTED}" ]; then
+    BOOT_TRACE_STARTED=1
+    if [ -f ${d}/boot-trace.log ] && [ "$(wc -c <${d}/boot-trace.log)" -gt ${BOOT_TRACE_MAX} ]; then
+      tail -c ${BOOT_TRACE_MAX} ${d}/boot-trace.log >${d}/boot-trace.log.1 && : >${d}/boot-trace.log
+    fi
+    echo "=== boot $(cat /proc/cmdline)" >>${d}/boot-trace.log
+  fi
+  echo "[$(cut -d' ' -f1 /proc/uptime)] init: $1" >>${d}/boot-trace.log
+  if [ "$1" = "switch_root" ]; then
+    # The kernel's view up to here, in case systemd never gets going.
+    { echo "--- dmesg"; dmesg; echo "--- end of dmesg"; } >>${d}/boot-trace.log 2>&1
+  fi
+  sync -f ${d}/boot-trace.log 2>/dev/null || sync
+  mount -o remount,ro ${d} 2>/dev/null
+}
+
 # main boot sequence
 for BOOT_STEP in \
     load_modules \
@@ -1454,11 +1485,14 @@ for BOOT_STEP in \
     mount_roms \
     prepare_sysroot 
 do
+  boot_trace ${BOOT_STEP}
   ${BOOT_STEP}
   [ -n "${DEBUG}" ] && break_after ${BOOT_STEP}
 done
 
 BOOT_STEP=final
+BOOT_TRACE_DIR=/sysroot/flash
+boot_trace switch_root
 
 # log if booting from usb / removable storage
 STORAGE=$(cat /proc/mounts | grep " /sysroot/storage " 2>/dev/null | awk '{print $1}' | awk -F '/' '{print $3}')

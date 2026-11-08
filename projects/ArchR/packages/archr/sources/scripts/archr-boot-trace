@@ -1,0 +1,180 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026-present ArchR (https://github.com/archr-linux/Arch-R)
+#
+# Boot trace on the boot partition, for a boot that sits on a frozen
+# screen. The screen proves nothing then: it may stop updating while the
+# system goes on underneath. /flash is the one partition any PC reads, so
+# the trace goes to /flash/boot-trace.log, synced at every write.
+#
+# Opt-in only: it runs while /flash/archr-trace exists, an empty file the
+# user creates on the boot partition from a PC. Nothing creates it on its
+# own. The initramfs logs its own steps there first (scripts/init,
+# boot_trace); this carries on under systemd: every few seconds the boot
+# state, the jobs still waiting, the autostart step, the processes stuck in
+# the kernel (D state, with the function they wait in) and the new kernel
+# messages. Once the boot is over, a last summary and the marker goes: one
+# boot is traced.
+#
+# The log is capped: past MAX bytes it moves to boot-trace.log.1 (its last
+# MAX bytes, replacing the old one), so both files together stay under
+# 2 x MAX. /flash is made read-write only for each write and put back
+# read-only if it was, under /run/archr-flash.lock, the lock the clone
+# quirk (Generic EE clone/002-generate_dtbo) holds while it has /flash
+# read-write. A write that fails (another writer remounted /flash
+# read-only meanwhile) is tried once more; one that cannot be made stays
+# pending for the next write.
+#
+# Paths can be redirected for the host test (tests/boot_trace_test.sh).
+
+FLASH=${BOOT_TRACE_FLASH:-/flash}
+STEP=${BOOT_TRACE_STEP:-/storage/.boot_last_step}
+ROUNDS=${BOOT_TRACE_ROUNDS:-60}
+EVERY=${BOOT_TRACE_EVERY:-3}
+MAX=${BOOT_TRACE_MAX:-262144}
+MOUNTS=${BOOT_TRACE_MOUNTS:-/proc/mounts}
+KMSG=${BOOT_TRACE_KMSG:-/dev/kmsg}
+LOCK=${BOOT_TRACE_LOCK:-/run/archr-flash.lock}
+# Tenths of a second to wait for the lock before leaving a write pending.
+LOCK_WAIT=${BOOT_TRACE_LOCK_WAIT:-100}
+MARK=${FLASH}/archr-trace
+LOG=${FLASH}/boot-trace.log
+
+[ -f "${MARK}" ] || exit 0
+WORK=$(mktemp -d "${BOOT_TRACE_RUN:-/run}/archr-boot-trace.XXXXXX") || exit 0
+PEND=${WORK}/pending
+SEQ=${WORK}/kmsg-seq
+: >"${PEND}"
+# Set when a write could not put /flash back read-only; retried at exit.
+LEFT_RW=
+
+on_exit() {
+  [ -n "${LEFT_RW}" ] && with_lock mount -o remount,ro "${FLASH}" 2>/dev/null
+  rm -rf "${WORK}"
+}
+trap on_exit EXIT
+trap 'exit 1' TERM INT HUP
+
+up() {
+  cut -d' ' -f1 /proc/uptime
+}
+
+flash_ro() {
+  awk -v m="${FLASH}" '$2 == m { ro = ($4 ~ /^ro(,|$)/) } END { exit !ro }' "${MOUNTS}" 2>/dev/null
+}
+
+# BusyBox flock has no -w: try every tenth of a second.
+with_lock() {
+  local i rc
+  exec 9>>"${LOCK}" || return 1
+  for ((i = 0; ; i++)); do
+    flock -n 9 && break
+    if [ "${i}" -ge "${LOCK_WAIT}" ]; then
+      exec 9>&-
+      return 1
+    fi
+    sleep 0.1
+  done
+  "$@"
+  rc=$?
+  exec 9>&-
+  return "${rc}"
+}
+
+# Past MAX, the log moves to .1 (its last MAX bytes) and starts again.
+append_pending() {
+  local size
+  size=$(stat -c %s "${LOG}" 2>/dev/null || echo 0)
+  if [ $((size + $(stat -c %s "${PEND}"))) -gt "${MAX}" ] && [ "${size}" -gt 0 ]; then
+    tail -c "${MAX}" "${LOG}" >"${LOG}.1" && : >"${LOG}" || return 1
+  fi
+  cat "${PEND}" >>"${LOG}" && { sync -f "${LOG}" 2>/dev/null || sync; }
+}
+
+remove_mark() {
+  rm -f "${MARK}" && [ ! -e "${MARK}" ] && { sync -f "${FLASH}" 2>/dev/null || sync; }
+}
+
+# $@ writes to /flash, made read-write around it if it is read-only. A
+# second try if it fails: /flash may have gone read-only under the first.
+flash_write() {
+  local try was_ro rc=1
+  for try in 1 2; do
+    was_ro=
+    if flash_ro; then
+      was_ro=1
+      mount -o remount,rw "${FLASH}" 2>/dev/null
+    fi
+    "$@" 2>/dev/null
+    rc=$?
+    if [ -n "${was_ro}" ]; then
+      if mount -o remount,ro "${FLASH}" 2>/dev/null; then LEFT_RW=; else LEFT_RW=1; fi
+    fi
+    [ "${rc}" = 0 ] && break
+  done
+  return "${rc}"
+}
+
+# Writes what is pending; kept for the next write if that fails.
+flush() {
+  [ -s "${PEND}" ] || return 0
+  if [ "$(stat -c %s "${PEND}")" -gt "${MAX}" ]; then
+    tail -c "${MAX}" "${PEND}" >"${PEND}.cut" && mv -f "${PEND}.cut" "${PEND}"
+  fi
+  with_lock flash_write append_pending && : >"${PEND}"
+}
+
+# Kernel records not logged yet, by their sequence number: a count of
+# lines would stop seeing new ones once the ring buffer wraps. Each read
+# of /dev/kmsg returns one record, "prio,seq,usec,flags;text"; lines that
+# start with a space are its key=value dictionary.
+new_kmsg() {
+  local last
+  last=$(cat "${SEQ}" 2>/dev/null)
+  dd if="${KMSG}" iflag=nonblock bs=8192 status=none 2>/dev/null |
+    awk -v last="${last:--1}" -v seqf="${SEQ}" '
+      /^ / { next }
+      {
+        i = index($0, ";"); if (!i) next
+        split(substr($0, 1, i - 1), h, ",")
+        if (h[2] + 0 <= last) next
+        printf "[%12.6f] %s\n", h[3] / 1000000, substr($0, i + 1)
+        last = h[2] + 0; got = 1
+      }
+      END { if (got) print last >seqf }'
+}
+
+round() {
+  echo "--- [$(up)] system: $1"
+  systemctl list-jobs --no-pager --no-legend 2>&1 | head -n 20
+  [ -f "${STEP}" ] && echo "autostart step: $(cat "${STEP}" 2>/dev/null)"
+  echo "ui: $(systemctl is-active sway.service archr-launcher-session.service 2>&1 | paste -sd' ')"
+  ps -eo stat=,pid=,wchan:24=,args= 2>/dev/null | awk '$1 ~ /^D/'
+  new_kmsg
+}
+
+echo "=== [$(up)] systemd" >>"${PEND}"
+flush
+state=
+for _ in $(seq 1 "${ROUNDS}"); do
+  state=$(systemctl is-system-running 2>/dev/null)
+  round "${state}" >>"${PEND}" 2>&1
+  flush
+  case ${state} in
+    running | degraded) break ;;
+  esac
+  sleep "${EVERY}"
+done
+
+{
+  echo "--- [$(up)] summary (system: ${state})"
+  systemctl --failed --no-pager --no-legend 2>&1
+  journalctl -b -p warning --no-pager -o short-monotonic 2>&1 | tail -n 200
+  ps -eo stat,pid,etime,wchan:24,args 2>&1
+  new_kmsg
+  echo "=== end of trace"
+} >>"${PEND}" 2>&1
+# The marker goes only with the trace on the card: a trace that could not
+# be written is taken again on the next boot.
+flush && [ ! -s "${PEND}" ] && with_lock flash_write remove_mark
+exit 0

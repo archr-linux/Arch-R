@@ -3,21 +3,101 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2009-2014 Stephan Raue (stephan@openelec.tv)
 
+# The log is on the boot FAT, the one partition a PC can read when the
+# first boot hangs. vfat keeps writes in the page cache for up to ~30 s and
+# a hung kernel never writes them back, so the log used to stop well before
+# the step that hung. Sync the boot FAT before each step and after it: the
+# log then always ends at the step that was running, with its uptime.
+logsync() {
+  sync -f "$LOG" 2>/dev/null || sync
+}
+
+uptime_s() {
+  cut -d' ' -f1 /proc/uptime
+}
+
+# "reboot" is systemctl here, so "reboot -f" asked systemd for the reboot:
+# systemd-shutdown kills everything, unmounts and only then calls reboot().
+# On cards whose first boot then sat on a frozen screen, nothing after
+# "sync" ever happened. So -ff calls reboot() directly, as busybox
+# "reboot -f" did, after the filesystems are put away by hand (synced,
+# / and /flash read-only, STORAGE unmounted). Each of those is best effort:
+# none may hold the restart back. If the board has not restarted after
+# RESTART_WAIT seconds (a driver stuck in its shutdown hook, the display is
+# the suspect, or one of those steps hung), sysrq syncs, remounts
+# read-only and restarts without shutting devices down. The timer starts
+# first, so it covers every step. Writing the trigger works with sysrq
+# disabled for the keyboard. SYSRQ_TRIGGER is for the host tests: a test
+# that runs this script must point it at a file, never at the host's.
+: "${SYSRQ_TRIGGER:=/proc/sysrq-trigger}"
+RESTART_WAIT=${RESTART_WAIT:-60}
+restart_now() {
+  ( sleep "$RESTART_WAIT"
+    echo s >"$SYSRQ_TRIGGER"; sleep 1
+    echo u >"$SYSRQ_TRIGGER"; sleep 1
+    echo b >"$SYSRQ_TRIGGER" ) 2>/dev/null &
+  sync
+  mount -o remount,ro / 2>/dev/null
+  if grep -q " /storage " /proc/mounts; then
+    umount /storage 2>/dev/null || umount -l /storage 2>/dev/null
+  fi
+  mount -o remount,ro /flash 2>/dev/null
+  sync
+  reboot -ff >/dev/null 2>&1
+  wait
+}
+
+# Steps whose logged status must be the real one (StartProgress evals the
+# step in this shell, so a step cannot "exit" with a status of its own).
+# e2fsck: the status also goes to /tmp/fsck-status for the resize below.
+check_fs() {
+  local rc
+  e2fsck -f -p "$1" >>$LOG 2>&1
+  rc=$?
+  echo $rc >/tmp/fsck-status
+  return $rc
+}
+
+# New ext4 UUID and FAT serial: the status is the first that failed.
+new_ids() {
+  local rc rc_fat
+  tune2fs "$1" -U random >>$LOG 2>&1
+  rc=$?
+  fatlabel -i -r "$2" >>$LOG 2>&1
+  rc_fat=$?
+  [ $rc -eq 0 ] && rc=$rc_fat
+  return $rc
+}
+
 StartProgressLog() {
+  local rc
   if [ "$1" = "spinner" ]; then
-    echo "*** $3" >>$LOG
+    echo "*** [$(uptime_s)] $3" >>$LOG
+    logsync
   fi
   StartProgress "$@"
+  rc=$?
+  if [ "$1" = "spinner" ]; then
+    echo "    [$(uptime_s)] exit $rc" >>$LOG
+    logsync
+  fi
+  return $rc
 }
 
 if [ -e /storage/.please_resize_me ] ; then
   . /usr/lib/archr/functions
 
   hidecursor
+  # The boot runs with the console at log level 1 (scripts/init). While
+  # the card is repartitioned, show kernel errors (mmc timeouts, I/O
+  # errors) on the screen, so a photo of a stuck first boot says why.
+  PRINTK=$(cat /proc/sys/kernel/printk 2>/dev/null)
+  echo "4 4 1 7" >/proc/sys/kernel/printk 2>/dev/null
 
   mount -o remount,rw /flash
   LOG=/flash/fs-resize.log
   date -Iseconds >>$LOG
+  logsync
 
   # this sh** was never intended to be used
   # on already installed and runing system
@@ -27,7 +107,9 @@ if [ -e /storage/.please_resize_me ] ; then
     echo "Resizing is not permitted - the system has already been initialised." | tee -a $LOG
     mount -o remount,ro /flash
     StartProgress countdown "Rebooting in 5s... " 5 "NOW"
-    reboot -f
+    restart_now
+    # Never on into the resize of a set-up card, even if no restart came.
+    exit 1
   fi
 
   # get the disk. /storage on 2nd partition
@@ -81,7 +163,7 @@ if [ -e /storage/.please_resize_me ] ; then
     # filesystem with resize2fs would compound the damage. Leave the
     # partition grown but the filesystem untouched; a later boot can
     # retry after a manual fsck.
-    StartProgressLog spinner "Checking file system... " "e2fsck -f -p $PART >>$LOG 2>&1; echo \$? >/tmp/fsck-status"
+    StartProgressLog spinner "Checking file system... " "check_fs $PART"
     FSCK_STATUS=$(cat /tmp/fsck-status 2>/dev/null || echo 0)
     if [ "${FSCK_STATUS:-0}" -le 2 ]; then
       StartProgressLog spinner "Resizing file system... " "resize2fs $PART >>$LOG 2>&1"
@@ -95,10 +177,15 @@ if [ -e /storage/.please_resize_me ] ; then
         echo "ROMs partition failed; falling back to the old layout" | tee -a $LOG
         roms_has_part "$DISK" 4 && parted -s "$DISK" rm 4 >>$LOG 2>&1
         StartProgressLog spinner "Resizing partition...   " "parted -s -f -m $DISK resizepart $PARTNUM 100% >>$LOG 2>&1"
-        StartProgressLog spinner "Resizing file system... " "resize2fs $PART >>$LOG 2>&1"
+        # Same gate as above: never grow a filesystem e2fsck left broken.
+        if [ "${FSCK_STATUS:-0}" -le 2 ]; then
+          StartProgressLog spinner "Resizing file system... " "resize2fs $PART >>$LOG 2>&1"
+        else
+          echo "e2fsck exited ${FSCK_STATUS}; skipping resize2fs after the fallback too" | tee -a $LOG
+        fi
       fi
     fi
-    StartProgressLog spinner "Regenerating UUIDs...   " "tune2fs $PART -U random >>$LOG 2>&1; fatlabel -i -r $PART1 >>$LOG 2>&1"
+    StartProgressLog spinner "Regenerating UUIDs...   " "new_ids $PART $PART1"
     # The two FAT warnings fatlabel prints here are expected and harmless:
     # the 256MB boot partition ships the same out-of-spec FAT32 layout as
     # the whole RK3326 ecosystem (vendor U-Boots are only tested against
@@ -106,12 +193,18 @@ if [ -e /storage/.please_resize_me ] ; then
     # is the kernel vfat dirty flag, written to the primary sector only
     # while /flash is mounted read-write.
     echo "NOTE: the FAT32 cluster-count and boot-sector-backup warnings above are expected and harmless." >>$LOG
+    # The kernel's view of the run (mmc, ext4, exFAT), for comparing a
+    # good first boot with a bad one.
+    { echo "--- dmesg"; dmesg; echo "--- end of dmesg"; } >>$LOG 2>&1
     StartProgressLog spinner "Syncing to disk...      " "sync >>$LOG 2>&1"
     StartProgress countdown "Rebooting in 5s...     " 5 "NOW"
   else
     echo "Partition was not detected - resizing aborted."
     StartProgress countdown "Rebooting in 5s... " 5 "NOW"
   fi
+  echo "[$(uptime_s)] restarting" >>$LOG
+  logsync
   mount -o remount,ro /flash
+  [ -n "$PRINTK" ] && echo $PRINTK >/proc/sys/kernel/printk 2>/dev/null
 fi
-reboot -f &>/dev/null
+restart_now

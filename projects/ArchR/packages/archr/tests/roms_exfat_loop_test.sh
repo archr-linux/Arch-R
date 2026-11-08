@@ -96,7 +96,25 @@ if [ "$1" = -p ] && [ -f /tmp/cut-after-shrink ]; then rm -f /tmp/cut-after-shri
 exit $rc
 EOF
 chmod +x "${R}/opt/cut/resize2fs"
-inr() { chroot "${R}" /usr/bin/env PATH=/opt/cut:/usr/bin LC_ALL=C "$@"; }
+# fs-resize puts the system away before its restart: / read-only (here the
+# chroot's tmpfs, which the next cards still need) and, as a last resort,
+# sysrq through SYSRQ_TRIGGER. The chroot has the host's real /proc, so the
+# trigger goes to a file in the chroot's /tmp and / stays read-write.
+cat >"${R}/opt/cut/mount" <<'EOF'
+#!/bin/sh
+case " $* " in
+  *" remount,ro / "*) echo "mount $* (stub)" >>/tmp/restart-calls; exit 0 ;;
+esac
+exec /usr/bin/mount "$@"
+EOF
+chmod +x "${R}/opt/cut/mount"
+export SYSRQ_TRIGGER=/tmp/sysrq-trigger
+inr() { chroot "${R}" /usr/bin/env PATH=/opt/cut:/usr/bin LC_ALL=C SYSRQ_TRIGGER=/tmp/sysrq-trigger "$@"; }
+if ! grep -q ': "${SYSRQ_TRIGGER:=/proc/sysrq-trigger}"' "${R}/usr/lib/archr/fs-resize" ||
+  [ "$(grep -c 'sysrq-trigger' "${R}/usr/lib/archr/fs-resize")" != 1 ] ||
+  [ "$(inr sh -c 'command -v mount')" != /opt/cut/mount ]; then
+  echo "fs-resize could reach the host's sysrq or remount the chroot's /; stopping"; exit 2
+fi
 
 ### Cards. $1 image, $2 size in bytes, $3 "new" (as flashed: STORAGE 32 MiB
 ### and .please_resize_me) or "old" (an old card: STORAGE to the end).
@@ -145,7 +163,10 @@ first_boot() {
   make_card "${img}" "${bytes}" new
   l=$(attach "${img}")
   boot_mounts "${l}"
-  inr /usr/lib/archr/fs-resize >"${W}/${name}.fs-resize.out" 2>&1
+  rm -f "${R}/tmp/sysrq-trigger"
+  inr env RESTART_WAIT=0 /usr/lib/archr/fs-resize >"${W}/${name}.fs-resize.out" 2>&1
+  check "${name}: restart's sysrq fallback went to the stub trigger (b), / left alone" \
+    '[ "$(cat "${R}/tmp/sysrq-trigger" 2>/dev/null)" = b ] && grep -q "remount,ro / (stub)" "${R}/tmp/restart-calls"'
   boot_umounts
   detach "${l}"; l=$(attach "${img}")
   FB_LOOP=${l}
