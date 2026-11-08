@@ -237,8 +237,8 @@ EOF
   ### (Energia; archr-battery-guard, archr-game-save-exit).
   enable_service archr-battery-guard.service
 
-  ### Boot trace on /flash while /flash/archr-trace exists (fs-resize
-  ### leaves it for the first full boot): a frozen screen says nothing.
+  ### Boot trace on /flash while /flash/archr-trace exists (opt-in: the
+  ### user creates it from a PC): a frozen screen says nothing.
   enable_service archr-boot-trace.service
 
   ### Launcher modules with network never reach this device's own

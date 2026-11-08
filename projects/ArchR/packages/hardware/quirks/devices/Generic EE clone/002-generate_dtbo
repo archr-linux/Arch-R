@@ -33,17 +33,22 @@ echo "Preparing dtbo. This may take about a minute"
 
 
 # Modifications to be made on firmaware partition
+# /run/archr-flash.lock: archr-boot-trace takes it for each of its writes
+# and would otherwise remount /flash read-only under this.
 if [ -d "${TMPDIR}/flash" ]; then
-  mount -o remount,rw /flash
+  {
+    flock -x 9 || true
+    mount -o remount,rw /flash
 
-  rsync -av ${TMPDIR}/flash/ /flash || true
+    rsync -av ${TMPDIR}/flash/ /flash || true
 
-  # reinstall bootloader to switch console to UART5
-  /usr/share/bootloader/update.sh
+    # reinstall bootloader to switch console to UART5
+    /usr/share/bootloader/update.sh
 
-  # Cleanup and reboot
-  mount -o remount,ro /flash
-  sync
+    # Cleanup and reboot
+    mount -o remount,ro /flash
+    sync
+  } 9>>/run/archr-flash.lock
 fi
 
 [ -f "${DTBOPATH}" ] && reboot

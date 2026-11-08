@@ -153,9 +153,6 @@ if [ -e /storage/.please_resize_me ] ; then
     # The kernel's view of the run (mmc, ext4, exFAT), for comparing a
     # good first boot with a bad one.
     { echo "--- dmesg"; dmesg; echo "--- end of dmesg"; } >>$LOG 2>&1
-    # The first full boot is traced to /flash/boot-trace.log as well
-    # (scripts/init boot_trace, archr-boot-trace), then the marker goes.
-    : >/flash/archr-trace
     StartProgressLog spinner "Syncing to disk...      " "sync >>$LOG 2>&1"
     StartProgress countdown "Rebooting in 5s...     " 5 "NOW"
   else

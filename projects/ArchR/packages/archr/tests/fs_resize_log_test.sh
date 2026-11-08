@@ -92,7 +92,7 @@ check "normal: the log says the restart was reached, after the sync" \
   'LOG | tail -1 | grep -q "restarting" && LOG | grep -A1 "^\*\*\* .*\] sync" | grep -q "exit 0"'
 check "normal: /flash is read-only again before the restart" \
   '[ "$(grep -n "remount,ro" "${T}/calls" | tail -1 | cut -d: -f1)" -lt "$(grep -n "^reboot" "${T}/calls" | cut -d: -f1)" ]'
-check "normal: the first full boot will be traced (/flash/archr-trace)" '[ -f "${R}/flash/archr-trace" ]'
+check "normal: the boot trace stays opt-in (no /flash/archr-trace)" '[ ! -e "${R}/flash/archr-trace" ]'
 check "normal: kernel messages of the run land in the log" 'LOG | grep -q "stub kernel line"'
 check "normal: console log level restored" '[ "$(cat "${R}/proc/sys/kernel/printk")" = "1 4 1 7" ]'
 check "normal: steps carry the uptime they started at" 'LOG | grep -q "^\*\*\* \[12.34\] resize2fs"'
