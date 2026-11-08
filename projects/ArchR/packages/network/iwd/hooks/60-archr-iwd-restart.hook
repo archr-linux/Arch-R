@@ -1,0 +1,14 @@
+# iwd reads main.conf only when it starts: an update that changes it (or
+# iwd itself) takes effect once iwd restarts. Restart it after the
+# transaction when it is running; it rejoins the saved network on its own
+# within seconds. pacman reads hooks again at PostTransaction, so this one
+# also runs in the transaction that installs it.
+[Trigger]
+Operation = Upgrade
+Type = Package
+Target = iwd
+
+[Action]
+Description = Restarting iwd to load its new configuration...
+When = PostTransaction
+Exec = /bin/sh -c 'systemctl -q is-active iwd.service && systemctl try-restart --no-block iwd.service || true'
