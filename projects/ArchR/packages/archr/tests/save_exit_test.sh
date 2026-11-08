@@ -432,17 +432,29 @@ check "80% at 3.35 V (at the threshold) for 10 readings: nothing" "$(cat "${TMP}
 volts 3360000
 ROUNDS=10 guard
 check "80% at 3.36 V for 10 readings: nothing" "$(cat "${TMP}/power")" ""
-# The window is time, not readings: 4 readings 20 s apart hold for 60 s.
+# The window is time and readings: 5 readings 15 s apart hold for 60 s.
 volts 3340000
-INTERVAL=20 ROUNDS=4 guard
-check "80% at 3.34 V, 4 readings over 60 s: power off" "$(tr '\n' '|' <"${TMP}/power")" "off|"
-INTERVAL=20 ROUNDS=3 guard
-check "80% at 3.34 V, 3 readings over 40 s: nothing" "$(cat "${TMP}/power")" ""
-# ... and one reading is never enough, even with no window.
-CUT_WINDOW=0 ROUNDS=1 guard
-check "a single reading under the cut, no window: nothing" "$(cat "${TMP}/power")" ""
-CUT_WINDOW=0 ROUNDS=2 guard
-check "two readings under the cut, no window: power off" "$(tr '\n' '|' <"${TMP}/power")" "off|"
+INTERVAL=15 ROUNDS=5 guard
+check "80% at 3.34 V, 5 readings over 60 s: power off" "$(tr '\n' '|' <"${TMP}/power")" "off|"
+INTERVAL=15 ROUNDS=4 guard
+check "80% at 3.34 V, 4 readings over 45 s: nothing" "$(cat "${TMP}/power")" ""
+INTERVAL=30 ROUNDS=4 guard
+check "80% at 3.34 V, 4 readings over 90 s: nothing" "$(cat "${TMP}/power")" ""
+# ... with no window, 5 readings still.
+CUT_WINDOW=0 ROUNDS=4 guard
+check "4 readings under the cut, no window: nothing" "$(cat "${TMP}/power")" ""
+CUT_WINDOW=0 ROUNDS=5 guard
+check "5 readings under the cut, no window: power off" "$(tr '\n' '|' <"${TMP}/power")" "off|"
+# Discarded readings do not complete the window by themselves.
+seq "voltage_avg 2500000" - - - - - "voltage_avg 3340000"
+ROUNDS=8 guard
+check "3.34 V, 6 invalid readings over 60 s, 3.34 V: nothing" "$(cat "${TMP}/power")" ""
+battery 2 Discharging
+volts 3390000
+seq "voltage_avg 2500000" - - - - - "voltage_avg 3390000"
+ROUNDS=8 guard
+check "2% at 3.39 V, 6 invalid readings over 60 s, 3.39 V: nothing" "$(cat "${TMP}/power")" ""
+battery 80 Discharging
 volts 3300000
 battery 80 Charging
 ROUNDS=8 guard

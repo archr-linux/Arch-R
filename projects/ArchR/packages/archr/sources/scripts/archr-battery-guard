@@ -24,8 +24,9 @@
 # design minimum is the empty point at rest, and these packs sag 200-300 mV
 # under load (Wi-Fi, CPU) at 30-50%. So the cut is under the design minimum
 # - CUT_DROP, held for CUT_WINDOW seconds; a reading at or over it starts
-# the count over. Held: at least two readings, the first and the last
-# CUT_WINDOW apart on the monotonic clock (uptime), none of them over.
+# the count over. Held: at least CUT_MIN_READINGS readings under it, the
+# first and the last CUT_WINDOW apart on the monotonic clock (uptime), none
+# over it; discarded readings never complete it.
 # Voltages outside 2.7-4.45 V, or unreadable, are discarded (2.7-3.0 V is a
 # real, deep discharge), and so is an unreadable level for the percentage:
 # they neither count nor start it over, and during a countdown they keep it
@@ -51,6 +52,7 @@
 : "${LOW_DROP:=100000}" # microvolts under the design minimum (percentage)
 : "${CUT_DROP:=150000}" # microvolts under the design minimum
 : "${CUT_WINDOW:=60}" # seconds a low voltage must hold
+: "${CUT_MIN_READINGS:=5}" # low readings it takes, at the least
 : "${INTERVAL:=10}"
 : "${UPTIME:=/proc/uptime}"
 # Host tests replace the wait between readings (and their clock).
@@ -126,7 +128,7 @@ now() {
 
 # Whether a count ($1 readings since $2) has held for the window.
 held() {
-  [ "$1" -ge 2 ] && [ $(($(now) - $2)) -ge "${CUT_WINDOW}" ]
+  [ "$1" -ge "${CUT_MIN_READINGS}" ] && [ $(($(now) - $2)) -ge "${CUT_WINDOW}" ]
 }
 
 game_running() {
