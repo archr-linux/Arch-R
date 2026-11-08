@@ -262,9 +262,9 @@ guard() {
 battery() { echo "$1" >"${BAT}/capacity"; echo "$2" >"${BAT}/status"; }
 # Volts, in microvolts as the kernel says them, and the design minimum.
 volts() { echo "$1" >"${BAT}/voltage_avg"; echo "${2-3500000}" >"${BAT}/voltage_min_design"; }
-# A pack that is low (under the design minimum - 50 mV): the percentage
+# A pack that is low (under the design minimum - 100 mV): the percentage
 # counts, for 6 readings in a row.
-volts 3400000
+volts 3380000
 
 battery 50 Discharging
 guard
@@ -312,15 +312,15 @@ volts 3850000
 guard
 check "0% at 3.85 V: the gauge is wrong, nothing" "$(cat "${TMP}/osd" "${TMP}/power")" ""
 battery 3 Discharging
-volts 3460000
+volts 3410000
 ROUNDS=10 guard
-check "3% at 3.46 V, over the design minimum - 50 mV: nothing" "$(cat "${TMP}/osd" "${TMP}/power")" ""
-volts 3450000
+check "3% at 3.41 V, over the design minimum - 100 mV: nothing" "$(cat "${TMP}/osd" "${TMP}/power")" ""
+volts 3400000
 ROUNDS=10 guard
-check "3% at 3.45 V (at the threshold): nothing" "$(cat "${TMP}/osd" "${TMP}/power")" ""
-volts 3440000
+check "3% at 3.40 V (at the threshold): nothing" "$(cat "${TMP}/osd" "${TMP}/power")" ""
+volts 3390000
 guard
-check "3% at 3.44 V: the pack is low, power off" "$(tr '\n' '|' <"${TMP}/power")" "off|"
+check "3% at 3.39 V: the pack is low, power off" "$(tr '\n' '|' <"${TMP}/power")" "off|"
 battery 9 Discharging
 volts 3900000
 guard
@@ -330,7 +330,7 @@ guard
 check "9% at 3.60 V: the warning" "$(cat "${TMP}/osd")" "send battery-low 9"
 # The voltage recovers during the countdown.
 battery 3 Discharging
-volts 3400000
+volts 3380000
 (sleep 1.5; volts 3800000) &
 COUNTDOWN=4 guard
 check "a voltage that recovers during the countdown cancels it" "$(cat "${TMP}/power")" ""
@@ -338,7 +338,7 @@ check "a voltage that recovers during the countdown cancels it" "$(cat "${TMP}/p
 printf '#!/bin/sh\necho "save $*" >>"%s/power"\necho 3800000 >"%s/voltage_avg"\n' "${TMP}" "${BAT}" >"${TMP}/bin/save"
 emulator fakegame ":"
 game "${ROM}" snes retroarch snes9x
-volts 3400000
+volts 3380000
 guard
 pkill -f "${TMP}/bin/fakegame"; EMU=
 check "a voltage that recovers during the save: saved, but no power off" "$(tr '\n' '|' <"${TMP}/power")" "save battery|"
@@ -347,7 +347,7 @@ printf '#!/bin/sh\necho "save $*" >>"%s/power"\necho 40 >"%s/capacity"\n' "${TMP
 emulator fakegame ":"
 game "${ROM}" snes retroarch snes9x
 battery 2 Discharging
-volts 3400000
+volts 3380000
 guard
 pkill -f "${TMP}/bin/fakegame"; EMU=
 check "a level back over the critical one after the save: saved, but no power off" "$(tr '\n' '|' <"${TMP}/power")" "save battery|"
@@ -373,27 +373,27 @@ battery 0 Discharging
 volts 3900000
 ROUNDS=10 guard
 check "0% at 3.90 V for 10 readings: nothing" "$(cat "${TMP}/osd" "${TMP}/power")" ""
-# ... nor on a half pack that sags under load (over the design minimum - 50 mV).
+# ... nor on a half pack that sags under load (over the design minimum - 100 mV).
 volts 3490000
 ROUNDS=10 guard
 check "0% at 3.49 V under load for 10 readings: nothing" "$(cat "${TMP}/osd" "${TMP}/power")" ""
 # The critical level counts with the voltage low for 6 readings in a row.
 battery 2 Discharging
-volts 3440000
+volts 3390000
 ROUNDS=6 guard
-check "2% at 3.44 V for 6 readings: power off" "$(tr '\n' '|' <"${TMP}/power")" "off|"
-check "2% at 3.44 V: the card says 2%" "$(tr '\n' '|' <"${TMP}/osd")" "send battery 2 2 2 menu|send battery 2 1 2 menu|"
-check "2% at 3.44 V: the log says the percentage, the threshold and the readings" "$(cat "${TMP}/log")" \
-  "archr-battery-guard: battery at 2% and under 3450000 uV for 6 readings (3440000 3440000 3440000 3440000 3440000 3440000 uV) (now 3440000 uV), powering off"
+check "2% at 3.39 V for 6 readings: power off" "$(tr '\n' '|' <"${TMP}/power")" "off|"
+check "2% at 3.39 V: the card says 2%" "$(tr '\n' '|' <"${TMP}/osd")" "send battery 2 2 2 menu|send battery 2 1 2 menu|"
+check "2% at 3.39 V: the log says the percentage, the threshold and the readings" "$(cat "${TMP}/log")" \
+  "archr-battery-guard: battery at 2% and under 3400000 uV for 6 readings (3390000 3390000 3390000 3390000 3390000 3390000 uV) (now 3390000 uV), powering off"
 ROUNDS=5 guard
-check "2% at 3.44 V for 5 readings: nothing" "$(cat "${TMP}/power")" ""
-(sleep 4.5; volts 3460000) &
+check "2% at 3.39 V for 5 readings: nothing" "$(cat "${TMP}/power")" ""
+(sleep 4.5; volts 3410000) &
 INTERVAL=1 ROUNDS=6 guard
-check "2% at 3.44 V x5, then 3.46 V: nothing" "$(cat "${TMP}/power")" ""
-volts 3440000
-(sleep 4.5; volts 3460000; sleep 1; volts 3440000) &
+check "2% at 3.39 V x5, then 3.41 V: nothing" "$(cat "${TMP}/power")" ""
+volts 3390000
+(sleep 4.5; volts 3410000; sleep 1; volts 3390000) &
 INTERVAL=1 ROUNDS=11 guard
-check "2% at 3.44 V x5, 3.46 V, 3.44 V x5: the count starts over, nothing" "$(cat "${TMP}/power")" ""
+check "2% at 3.39 V x5, 3.41 V, 3.39 V x5: the count starts over, nothing" "$(cat "${TMP}/power")" ""
 
 # The voltage cuts by itself, whatever the percentage says: under the design
 # minimum - 150 mV (3.35 V here) for 6 readings in a row.
@@ -484,7 +484,7 @@ rm -f "${BAT}/voltage_min_design"
 echo 3240000 >"${BAT}/voltage_avg"
 ROUNDS=6 guard
 check "no design minimum, 3.24 V: power off" "$(tr '\n' '|' <"${TMP}/power")" "off|"
-volts 3400000
+volts 3380000
 battery 3 Discharging
 guard "power.battery.critical=0" "power.battery.low=0"
 check "both off: nothing" "$(cat "${TMP}/osd" "${TMP}/power")" ""

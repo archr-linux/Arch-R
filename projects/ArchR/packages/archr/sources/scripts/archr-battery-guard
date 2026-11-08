@@ -14,7 +14,10 @@
 # the level at or under the critical one with the voltage under the design
 # minimum - LOW_DROP, for CUT_READINGS readings in a row (a half pack sags
 # to 3.49 V under load), and still so at every step of the countdown and
-# just before the power off. A voltage that recovers cancels.
+# just before the power off. A voltage that recovers cancels. The trade-off:
+# a 0% pack rests at 3.574 V (OCV), over the threshold, so the guard
+# acts under load, or once the voltage at rest falls under it; LOW_DROP
+# keeps a stuck gauge on a half pack under sustained load from powering off.
 # And the voltage cuts by itself, whatever the percentage says (an old pack
 # must not die unsaved), but only for a pack that is empty under load: the
 # design minimum is the empty point at rest, and these packs sag 200-300 mV
@@ -42,7 +45,7 @@
 : "${GRIM:=grim}"
 : "${OSD:=archr-osd}"
 : "${SOFT_MARGIN:=150000}" # microvolts over the design minimum (warning)
-: "${LOW_DROP:=50000}" # microvolts under the design minimum (percentage)
+: "${LOW_DROP:=100000}" # microvolts under the design minimum (percentage)
 : "${CUT_DROP:=150000}" # microvolts under the design minimum
 : "${CUT_READINGS:=6}"
 : "${INTERVAL:=10}"
