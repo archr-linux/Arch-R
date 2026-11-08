@@ -12,9 +12,10 @@
 # that is not empty (issue 50), so it never acts alone. The warning needs
 # the voltage under the design minimum + SOFT_MARGIN; the countdown needs
 # the level at or under the critical one with the voltage under the design
-# minimum - LOW_DROP, for CUT_READINGS readings in a row (a half pack sags
-# to 3.49 V under load), and still so at every step of the countdown and
-# just before the power off. A voltage that recovers cancels. The trade-off:
+# minimum - LOW_DROP, held for CUT_WINDOW seconds (a half pack sags to
+# 3.49 V under load), and still so at every step of the countdown and
+# just before the power off, where a level back over the critical one
+# cancels too. A voltage that recovers cancels. The trade-off:
 # a 0% pack rests at 3.574 V (OCV), over the threshold, so the guard
 # acts under load, or once the voltage at rest falls under it; LOW_DROP
 # keeps a stuck gauge on a half pack under sustained load from powering off.
@@ -22,13 +23,15 @@
 # must not die unsaved), but only for a pack that is empty under load: the
 # design minimum is the empty point at rest, and these packs sag 200-300 mV
 # under load (Wi-Fi, CPU) at 30-50%. So the cut is under the design minimum
-# - CUT_DROP for CUT_READINGS readings in a row (a minute); a reading at or
-# over it starts the count over. Voltages outside 2.7-4.45 V, or unreadable,
-# are discarded (2.7-3.0 V is a real, deep discharge): they neither count
-# nor start it over, and during a countdown they keep it going, only a
-# recovered voltage cancels. A design minimum outside 3.3-3.5 V (or missing)
-# is taken as 3.4 V. The card of the cut says 0%: the pack is empty, the
-# gauge's percentage is not the reason.
+# - CUT_DROP, held for CUT_WINDOW seconds; a reading at or over it starts
+# the count over. Held: at least two readings, the first and the last
+# CUT_WINDOW apart on the monotonic clock (uptime), none of them over.
+# Voltages outside 2.7-4.45 V, or unreadable, are discarded (2.7-3.0 V is a
+# real, deep discharge), and so is an unreadable level for the percentage:
+# they neither count nor start it over, and during a countdown they keep it
+# going, only a recovered voltage cancels. A design minimum outside
+# 3.3-3.5 V (or missing) is taken as 3.4 V. The card of the cut says 0%:
+# the pack is empty, the gauge's percentage is not the reason.
 # For both, a reading at or over the threshold (or a level over the critical
 # one) starts the count over. A charger cancels the countdown, and so does a
 # level that rose during it; with a charger nothing happens at all. The
@@ -47,8 +50,11 @@
 : "${SOFT_MARGIN:=150000}" # microvolts over the design minimum (warning)
 : "${LOW_DROP:=100000}" # microvolts under the design minimum (percentage)
 : "${CUT_DROP:=150000}" # microvolts under the design minimum
-: "${CUT_READINGS:=6}"
+: "${CUT_WINDOW:=60}" # seconds a low voltage must hold
 : "${INTERVAL:=10}"
+: "${UPTIME:=/proc/uptime}"
+# Host tests replace the wait between readings (and their clock).
+: "${SLEEP:=sleep}"
 : "${COUNTDOWN:=8}"
 # Host tests stop after this many readings.
 : "${ROUNDS:=0}"
@@ -108,6 +114,19 @@ level_still() {
   local now
   now=$(level)
   [ "$1" != percent ] || ! [[ "${now}" =~ ^[0-9]+$ ]] || [ "${now}" -le "${CRITICAL}" ]
+}
+
+# Seconds since boot.
+now() {
+  local up rest
+  read -r up rest <"${UPTIME}" 2>/dev/null
+  up=${up%%.*}
+  [[ "${up}" =~ ^[0-9]+$ ]] && echo "${up}" || echo "${SECONDS}"
+}
+
+# Whether a count ($1 readings since $2) has held for the window.
+held() {
+  [ "$1" -ge 2 ] && [ $(($(now) - $2)) -ge "${CUT_WINDOW}" ]
 }
 
 game_running() {
@@ -194,7 +213,7 @@ while :; do
       :
     elif [ -n "${VOLT}" ] && [ "${VOLT}" -lt "${LOWOFF}" ]; then
       # The first reading under the limit: a later rise above it cancels.
-      [ "${BELOW}" -eq 0 ] && FIRST=${LEVEL}
+      [ "${BELOW}" -eq 0 ] && FIRST=${LEVEL} BELOW_T=$(now)
       BELOW=$((BELOW + 1)) LOWREADS="${LOWREADS:+${LOWREADS} }${VOLT}"
     elif [ -n "${VOLT}" ]; then
       BELOW=0 LOWREADS=""
@@ -204,19 +223,20 @@ while :; do
     if [ "${CRITICAL}" -eq 0 ]; then
       CUT=0 READS=""
     elif [ -n "${VOLT}" ] && [ "${VOLT}" -lt "${CUTOFF}" ]; then
+      [ "${CUT}" -eq 0 ] && CUT_T=$(now)
       CUT=$((CUT + 1)) READS="${READS:+${READS} }${VOLT}"
     elif [ -n "${VOLT}" ]; then
       CUT=0 READS=""
     fi
     MODE=""
-    [ "${BELOW}" -ge "${CUT_READINGS}" ] && MODE=percent
-    [ "${CUT}" -ge "${CUT_READINGS}" ] && MODE=volts
+    [ "${BELOW}" -gt 0 ] && held "${BELOW}" "${BELOW_T}" && MODE=percent
+    [ "${CUT}" -gt 0 ] && held "${CUT}" "${CUT_T}" && MODE=volts
     if [ -n "${MODE}" ]; then
       if [ "${MODE}" = volts ]; then
-        WHY="battery voltage under ${CUTOFF} uV for ${CUT} readings (${READS} uV; gauge at ${LEVEL:-?}%)"
+        WHY="battery voltage under ${CUTOFF} uV for $(($(now) - CUT_T)) s, ${CUT} readings (${READS} uV; gauge at ${LEVEL:-?}%)"
         FIRST=0
       else
-        WHY="battery at ${FIRST}% and under ${LOWOFF} uV for ${BELOW} readings (${LOWREADS} uV)"
+        WHY="battery at ${FIRST}% and under ${LOWOFF} uV for $(($(now) - BELOW_T)) s, ${BELOW} readings (${LOWREADS} uV)"
       fi
       power_off "${FIRST}" "${MODE}" "${WHY}" && exit 0
       BELOW=0 LOWREADS=""
@@ -230,5 +250,5 @@ while :; do
   fi
   ROUND=$((ROUND + 1))
   [ "${ROUNDS}" -gt 0 ] && [ "${ROUND}" -ge "${ROUNDS}" ] && exit 0
-  sleep "${INTERVAL}"
+  ${SLEEP} "${INTERVAL}"
 done
