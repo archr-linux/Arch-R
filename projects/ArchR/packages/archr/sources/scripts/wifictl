@@ -18,6 +18,8 @@
 ###                                  ssid<TAB>security<TAB>signal<TAB>connected<TAB>known
 ###                                  (format in /usr/bin/iwd_get-networks)
 ###     wifictl forget <ssid>        drop the saved iwd profile(s) of <ssid>
+###     wifictl boot-off             boot with Wi-Fi saved off: the radio off
+###                                  and the mux to the external port
 ###
 ### Exits 1, with a message on stderr, when there is no WiFi interface
 ### (forget still runs: the profiles live on disk, not on the device).
@@ -31,11 +33,58 @@ ADHOC_CLIENT_ID=$(get_setting wifi.adhoc.id)
 WIFI_DEV="$(ls /sys/class/net | grep -m1 '^wl')"
 DEFAULT_CHAN="6"
 
+# Alguns clones têm o módulo WiFi USB interno dividindo as linhas de dados
+# da OTG com a porta USB física através de um mux de hardware (patch 0026
+# expõe o gpio como sysfs usb_switch_gpio: 0 = WiFi interno, 1 = porta
+# externa; usb_switch_ext liga o vbus da porta). Seguir o toggle de WiFi,
+# igual ao SO stock: desabilitar o WiFi libera a porta física pra dongles
+# e acessórios. No-op em placas sem o mux.
+# Cada chamada escreve uma vez: o usb_switch_ext chama
+# regulator_enable/disable, que são contados, e os chamadores (toggle,
+# boot, sleep) alternam disable/enable, o que mantém a contagem certa.
+# MUX_FOUND=1 só quando a placa tem o mux de verdade: o atributo existe
+# em toda porta OTG e lê "unsupported" sem o gpio.
+# A second argument "gpio" switches the lines only, leaving the supply.
+set_usb_wifi_mux() {
+  local val="$1" f
+  for f in /sys/devices/platform/*/*usb2phy*/usb_switch_gpio \
+           /sys/devices/platform/*usb2phy*/usb_switch_gpio; do
+    [ -e "${f}" ] || continue
+    case "$(cat "${f}" 2>/dev/null)" in 0|1) MUX_FOUND=1 ;; *) continue ;; esac
+    echo "${val}" > "${f}" 2>/dev/null
+  done
+  [ "${2}" = "gpio" ] && return 0
+  for f in /sys/devices/platform/*/*usb2phy*/usb_switch_ext \
+           /sys/devices/platform/*usb2phy*/usb_switch_ext; do
+    if [ -e "${f}" ]; then
+      # porta externa ativa (mux=1) precisa do vbus dela ligado
+      if [ "${val}" = "1" ]; then echo 1 > "${f}" 2>/dev/null; else echo 0 > "${f}" 2>/dev/null; fi
+    fi
+  done
+}
+
 # Exit the script if the WiFi device isn't available. Non-zero, so a UI
 # can tell "no adapter" from success; the boot and sleep callers ignore
-# the status.
+# the status. "enable" first undoes what "disable" did: on a board whose
+# internal adapter sits behind the USB mux, Wi-Fi off routes the lines to
+# the external port and the adapter, with its interface, goes away until
+# the mux is switched back.
 if [ -z "${WIFI_DEV}" ] || [ ! -d "/sys/class/net/${WIFI_DEV}" ]; then
-  if [ "${1}" != "forget" ]; then
+  if [ "${1}" = "enable" ]; then
+    rfkill unblock wifi
+    set_usb_wifi_mux 0
+    MUX_RESTORED=1
+    # Only behind a mux is an adapter on its way back; anywhere else no
+    # interface means no adapter, and resume must not wait for one.
+    if [ "${MUX_FOUND}" = "1" ]; then
+      for i in $(seq 1 10); do
+        WIFI_DEV="$(ls /sys/class/net | grep -m1 '^wl')"
+        [ -n "${WIFI_DEV}" ] && break
+        sleep 1
+      done
+    fi
+  fi
+  if [ -z "${WIFI_DEV}" ] && [ "${1}" != "forget" ]; then
     echo "wifictl: no WiFi interface" >&2
     exit 1
   fi
@@ -121,7 +170,10 @@ legacy_iwd_name() {
 # failed without running (connect then timed out as a false failure).
 iwctl() {
   pidof iwd >/dev/null || return 1
-  timeout -k 1 "${IWCTL_TIMEOUT:-5}" iwctl "$@"
+  # --foreground keeps iwctl in wifictl's process group: without it GNU
+  # timeout starts a group of its own, and the launcher, which cancels a
+  # connect by killing wifictl's group, left iwctl running.
+  timeout --foreground -k 1 "${IWCTL_TIMEOUT:-5}" iwctl "$@"
 }
 
 # Wait for iwd to start and have a device available
@@ -185,10 +237,15 @@ connect_wifi() {
   # Create iwd network profile for persistent connection
   IWD_DIR="/var/lib/iwd"
   mkdir -p "${IWD_DIR}"
-  # Limpa qualquer perfil antigo para o mesmo SSID antes de regravar
-  # (caso usuário mude entre rede aberta e PSK, ou troque a senha — sem
-  # o rm o iwd pode preferir o profile antigo conflitante).
-  rm -f "${IWD_DIR}/${IWD_NAME}.psk" "${IWD_DIR}/${IWD_NAME}.open" 2>/dev/null
+  # Limpa o perfil do outro tipo (rede que passou de aberta para PSK ou o
+  # contrário; sem o rm o iwd pode preferir o conflitante) e o do nome
+  # antigo. O do mesmo tipo não sai aqui: write_iwd_profile o substitui
+  # inteiro, e só quando a senha mudou.
+  if [ -n "${PSK}" ]; then
+    rm -f "${IWD_DIR}/${IWD_NAME}.open" 2>/dev/null
+  else
+    rm -f "${IWD_DIR}/${IWD_NAME}.psk" 2>/dev/null
+  fi
   if [ "${IWD_NAME_LEGACY}" != "${IWD_NAME}" ]; then
     rm -f "${IWD_DIR}/${IWD_NAME_LEGACY}.psk" "${IWD_DIR}/${IWD_NAME_LEGACY}.open" 2>/dev/null
   fi
@@ -212,10 +269,22 @@ connect_wifi() {
     if [ -n "${PSK}" ]; then
       # umask 077 antes do printf garante que o profile (com a senha em
       # texto) não fique world-readable em /var/lib/iwd.
-      ( umask 077; printf '[Security]\nPassphrase=%s\n' "${PSK}" > "${IWD_DIR}/${IWD_NAME}.psk" )
+      #
+      # Depois da 1ª conexão o iwd regrava o perfil (PreSharedKey, SAE-PT),
+      # mantendo a Passphrase. Com a mesma senha não há o que mudar, e
+      # reescrever durante a autoconexão que o iwd já começou ao voltar o
+      # rádio fazia ele ler o arquivo pela metade ("Error loading") e
+      # desistir da rede. Quando grava, grava ao lado e renomeia: o iwd
+      # nunca vê o perfil incompleto.
+      grep -qxF "Passphrase=${PSK}" "${IWD_DIR}/${IWD_NAME}.psk" 2>/dev/null && return 0
+      ( umask 077; printf '[Security]\nPassphrase=%s\n' "${PSK}" > "${IWD_DIR}/.${IWD_NAME}.psk.tmp" ) &&
+        mv -f "${IWD_DIR}/.${IWD_NAME}.psk.tmp" "${IWD_DIR}/${IWD_NAME}.psk"
     else
-      printf '[Security]\n' > "${IWD_DIR}/${IWD_NAME}.open"
+      [ -f "${IWD_DIR}/${IWD_NAME}.open" ] && return 0
+      printf '[Security]\n' > "${IWD_DIR}/.${IWD_NAME}.open.tmp" &&
+        mv -f "${IWD_DIR}/.${IWD_NAME}.open.tmp" "${IWD_DIR}/${IWD_NAME}.open"
     fi
+    PROFILE_CHANGED=1
   }
 
   remove_iwd_profile() {
@@ -263,7 +332,32 @@ connect_wifi() {
       # o iwd não aceitar o profile por qualquer motivo, o iwctl pede a
       # passphrase pelo stdin; wifictl não tem TTY, então em vez de um
       # erro o usuário recebe um travamento até o timeout.
-      IWCTL_TIMEOUT=30 iwctl --dont-ask station ${WIFI_DEV} connect "${SSID}" 2>&1
+      # Logo depois de o rádio voltar (rfkill unblock), o primeiro connect
+      # pode falhar com "Operation failed" enquanto o driver se acomoda
+      # (visto com o 8188eu: falhava e a rede salva parecia esquecida).
+      # Uma segunda tentativa, depois de uma pausa e de uma nova varredura,
+      # passa. Só uma: senha errada também dá "Operation failed", e repetir
+      # mais vezes só atrasaria o erro verdadeiro.
+      # O iwd pode já ter se conectado sozinho (autoconexão ao voltar o
+      # rádio): aí não há o que pedir, só a espera abaixo.
+      # Só vale com o perfil intacto: com credencial nova, uma associação
+      # que já existe, ou que a autoconexão ainda está fazendo, usa a antiga
+      # e não prova nada. Interrompe em qualquer estado (desconectada, o
+      # disconnect só responde que não havia nada) e testa a nova.
+      if [ "${PROFILE_CHANGED}" = "1" ]; then
+        iwctl station ${WIFI_DEV} disconnect >/dev/null 2>&1
+        sleep 1
+      fi
+      if [ "${PROFILE_CHANGED}" != "1" ] && connected_to_target; then
+        echo "== já conectado pelo iwd"
+      elif ! IWCTL_TIMEOUT=30 iwctl --dont-ask station ${WIFI_DEV} connect "${SSID}" 2>&1 &&
+         ! connected_to_target; then
+        echo "== primeira tentativa falhou, tentando de novo"
+        sleep 3
+        iwctl station ${WIFI_DEV} scan 2>/dev/null
+        sleep 2
+        IWCTL_TIMEOUT=30 iwctl --dont-ask station ${WIFI_DEV} connect "${SSID}" 2>&1
+      fi
     else
       # A rede não apareceu em ~12s de varredura, e o caso provável é
       # rede oculta. Para essas o connect comum não serve: um AP oculto
@@ -426,35 +520,24 @@ has_ap_mode() {
   fi
 }
 
-# Alguns clones têm o módulo WiFi USB interno dividindo as linhas de dados
-# da OTG com a porta USB física através de um mux de hardware (patch 0026
-# expõe o gpio como sysfs usb_switch_gpio: 0 = WiFi interno, 1 = porta
-# externa; usb_switch_ext liga o vbus da porta). Seguir o toggle de WiFi,
-# igual ao SO stock: desabilitar o WiFi libera a porta física pra dongles
-# e acessórios. No-op em placas sem o mux.
-set_usb_wifi_mux() {
-  local val="$1" f
-  for f in /sys/devices/platform/*/*usb2phy*/usb_switch_gpio \
-           /sys/devices/platform/*usb2phy*/usb_switch_gpio; do
-    [ -e "${f}" ] && echo "${val}" > "${f}" 2>/dev/null
-  done
-  for f in /sys/devices/platform/*/*usb2phy*/usb_switch_ext \
-           /sys/devices/platform/*usb2phy*/usb_switch_ext; do
-    if [ -e "${f}" ]; then
-      # porta externa ativa (mux=1) precisa do vbus dela ligado
-      if [ "${val}" = "1" ]; then echo 1 > "${f}" 2>/dev/null; else echo 0 > "${f}" 2>/dev/null; fi
-    fi
-  done
-}
 
 case "${1}" in
   enable)
     rfkill unblock wifi
-    set_usb_wifi_mux 0
+    # Already switched back above when the adapter was missing: once only.
+    [ "${MUX_RESTORED}" = "1" ] || set_usb_wifi_mux 0
     ;;
   disable)
     rfkill block wifi
     set_usb_wifi_mux 1
+    ;;
+  boot-off)
+    # Patch 0026 turns the external port's supply on at probe (and the
+    # lines to the internal adapter): a disable here would take a second
+    # reference that the user's next enable never releases. Switch the
+    # radio and the lines only.
+    rfkill block wifi
+    set_usb_wifi_mux 1 gpio
     ;;
   connect)
     if [ "${WIFI_TYPE}" = "1" ] && \

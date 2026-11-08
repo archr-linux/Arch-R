@@ -3,5 +3,5 @@
   "Resolution": 3,
   "Rotate screen": false,
   "Rotate screen resolution": 0,
-  "Use compute shader": false
+  "Use compute shader": true
 }

@@ -1,6 +1,16 @@
---- a/yabause/src/retro_arena/CMakeLists.txt	2022-01-05 15:44:20.891135756 -0600
-+++ b/yabause/src/retro_arena/CMakeLists.txt	2022-01-05 15:44:41.738849860 -0600
-@@ -22,7 +22,7 @@
+diff --git a/yabause/src/retro_arena/CMakeLists.txt b/yabause/src/retro_arena/CMakeLists.txt
+index fcb3e9f..b122cd2 100644
+--- a/yabause/src/retro_arena/CMakeLists.txt
++++ b/yabause/src/retro_arena/CMakeLists.txt
+@@ -1,6 +1,7 @@
+ project(yabause-retro-arena)
+ 
+ add_definitions( -D__RETORO_ARENA__ )
++add_definitions( -DYAB_HOME=\"/storage/.config\" )
+ 
+ yab_port_start()
+ 
+@@ -21,7 +22,7 @@ add_subdirectory(pugixml)
  add_subdirectory(nanogui-sdl)
  
  #include( ../glfw/external_zlib.cmake )
@@ -9,3 +19,21 @@
  
  #------------------------------------------------------------------------------
  # nlohmann/json
+@@ -34,7 +35,7 @@ ExternalProject_Add(
+      # For shallow git clone (without downloading whole history)
+      #GIT_SHALLOW 1
+      # For point at certain tag
+-     GIT_TAG v3.2.0
++     GIT_TAG 359f98d14065bf4e53eeb274f5987fd08f16e5bf
+      #disables auto update on every build
+      UPDATE_DISCONNECTED 1
+      #disable following
+@@ -98,7 +99,7 @@ target_link_libraries(yabause-retro-arena yabause  pugixml ${YABAUSE_LIBRARIES}
+ target_link_libraries( yabause-retro-arena ${LIBCHDR_LIBRARIES} )
+ target_link_libraries( yabause-retro-arena ${zlib_STATIC_LIBRARIES} )
+ target_link_libraries( yabause-retro-arena dl pthread )   # RetroAchievements: libcurl via dlopen, login thread
+-add_dependencies(yabause-retro-arena Json png zlib libchdr )
++add_dependencies(yabause-retro-arena Json zlib libchdr )
+ yab_port_success(yabause-retro-arena)
+ set_target_properties(yabause-retro-arena PROPERTIES OUTPUT_NAME yabasanshiro)
+ 
