@@ -342,6 +342,22 @@ volts 3400000
 guard
 pkill -f "${TMP}/bin/fakegame"; EMU=
 check "a voltage that recovers during the save: saved, but no power off" "$(tr '\n' '|' <"${TMP}/power")" "save battery|"
+# ... or the gauge, back over the critical level after the save.
+printf '#!/bin/sh\necho "save $*" >>"%s/power"\necho 40 >"%s/capacity"\n' "${TMP}" "${BAT}" >"${TMP}/bin/save"
+emulator fakegame ":"
+game "${ROM}" snes retroarch snes9x
+battery 2 Discharging
+volts 3400000
+guard
+pkill -f "${TMP}/bin/fakegame"; EMU=
+check "a level back over the critical one after the save: saved, but no power off" "$(tr '\n' '|' <"${TMP}/power")" "save battery|"
+printf '#!/bin/sh\necho "save $*" >>"%s/power"\necho 3 >"%s/capacity"\n' "${TMP}" "${BAT}" >"${TMP}/bin/save"
+emulator fakegame ":"
+game "${ROM}" snes retroarch snes9x
+battery 2 Discharging
+guard
+pkill -f "${TMP}/bin/fakegame"; EMU=
+check "a level still at the critical one after the save: power off" "$(tr '\n' '|' <"${TMP}/power")" "save battery|off|"
 printf '#!/bin/sh\necho "save $* $(cat "$PICTURE_FROM" 2>/dev/null)" >>"%s/power"\n' "${TMP}" >"${TMP}/bin/save"
 
 # A pack at 40% that sags under load (Wi-Fi, CPU) to 3.49 V, under the

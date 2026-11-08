@@ -99,6 +99,14 @@ still() {
   [ -z "$(volts)" ] || volt_under "${margin}"
 }
 
+# For the percentage, whether the level is still at or under the critical
+# one; an unreadable level keeps it.
+level_still() {
+  local now
+  now=$(level)
+  [ "$1" != percent ] || ! [[ "${now}" =~ ^[0-9]+$ ]] || [ "${now}" -le "${CRITICAL}" ]
+}
+
 game_running() {
   local rom="" pid=""
   [ -r "${CURRENT_GAME}" ] && { IFS= read -r rom; IFS= read -r pid; } <"${CURRENT_GAME}"
@@ -138,8 +146,9 @@ power_off() {
     echo "archr-battery-guard: ${why} (now $(volts) uV), powering off"
     [ "${game}" = game ] && PICTURE_FROM="${shot}" "${SAVE_EXIT}" battery
     rm -f "${shot}"
-    # The save took time: a charger or a recovered voltage still cancels.
-    if ! charging && still "${mode}"; then
+    # The save took time: a charger, a recovered voltage or (for the
+    # percentage) a level back over the critical one still cancels.
+    if ! charging && still "${mode}" && level_still "${mode}"; then
       ${POWEROFF}
       return 0
     fi
