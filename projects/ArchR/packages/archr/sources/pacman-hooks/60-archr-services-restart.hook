@@ -14,4 +14,4 @@ Target = archr
 [Action]
 Description = Restarting Arch R background services...
 When = PostTransaction
-Exec = /bin/sh -c 'pgrep -f archr-game-save-exit >/dev/null || systemctl try-restart --no-block archr-battery-guard.service; true'
+Exec = /usr/bin/archr-guard-restart

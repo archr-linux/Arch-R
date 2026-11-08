@@ -1,0 +1,21 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ArchR (https://github.com/archr-linux/Arch-R)
+#
+# Restarts a running battery guard so an update's new copy takes effect
+# (bash keeps the file it started from). Not while the guard is saving and
+# closing a game before a power off: the restart would kill that save with
+# the guard's unit. Called by the 60-archr-services-restart pacman hook.
+
+UNIT=archr-battery-guard.service
+CG=$(systemctl show -P ControlGroup "${UNIT}" 2>/dev/null)
+[ -n "${CG}" ] || exit 0
+for procs in "/sys/fs/cgroup${CG}/cgroup.procs" "/sys/fs/cgroup/unified${CG}/cgroup.procs" \
+             "/sys/fs/cgroup/systemd${CG}/cgroup.procs"; do
+  [ -r "${procs}" ] || continue
+  while read -r pid; do
+    grep -q game-save-exit "/proc/${pid}/cmdline" 2>/dev/null && exit 0
+  done <"${procs}"
+done
+systemctl try-restart --no-block "${UNIT}"
+exit 0
