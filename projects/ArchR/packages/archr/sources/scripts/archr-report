@@ -137,7 +137,8 @@ grab armazenamento.txt /proc/mounts
     /sys/devices/system/cpu/cpufreq/policy*/scaling_max_freq
   readings /sys/class/devfreq/*/cur_freq /sys/class/devfreq/*/governor
   readings /sys/class/power_supply/*/status /sys/class/power_supply/*/capacity \
-    /sys/class/power_supply/*/current_now /sys/class/power_supply/*/voltage_now
+    /sys/class/power_supply/*/current_now /sys/class/power_supply/*/voltage_now \
+    /sys/class/power_supply/*/current_avg /sys/class/power_supply/*/voltage_avg
 } >"${DIR}/temperaturas.txt" 2>/dev/null
 
 # emulators and cores
