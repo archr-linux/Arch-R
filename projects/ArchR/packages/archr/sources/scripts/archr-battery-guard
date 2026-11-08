@@ -117,7 +117,7 @@ confirm() {
     verdict "$1"
     rc=$?
     [ "${rc}" -ne 2 ] && return "${rc}"
-    sleep 1
+    [ "${tries}" -lt "${COUNTDOWN}" ] && sleep 1
   done
   return 1
 }
