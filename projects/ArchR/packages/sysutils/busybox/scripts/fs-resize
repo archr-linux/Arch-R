@@ -30,7 +30,7 @@ uptime_s() {
 # disabled for the keyboard. SYSRQ_TRIGGER is for the host tests: a test
 # that runs this script must point it at a file, never at the host's.
 : "${SYSRQ_TRIGGER:=/proc/sysrq-trigger}"
-RESTART_WAIT=${RESTART_WAIT:-20}
+RESTART_WAIT=${RESTART_WAIT:-60}
 restart_now() {
   ( sleep "$RESTART_WAIT"
     echo s >"$SYSRQ_TRIGGER"; sleep 1
