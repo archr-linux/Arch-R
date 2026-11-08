@@ -6,6 +6,8 @@
 PKG_VERSION="3.12"
 PKG_SHA256="d89a5e45c7180170e19be828f9e944a768c593758094fc57a358d0e7c4cb1a49"
 PKG_URL="https://www.kernel.org/pub/linux/network/wireless/iwd-${PKG_VERSION}.tar.xz"
+# 2: DisableRoamingScan in main.conf (issue #51).
+PKG_REV="2"
 
 pre_configure_target() {
   export LIBS="-lncurses -ltinfo"
