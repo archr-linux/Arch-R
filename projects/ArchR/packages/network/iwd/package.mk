@@ -19,6 +19,9 @@ post_makeinstall_target() {
   mkdir -p ${INSTALL}/etc/iwd
     cp -P ${PKG_DIR}/sources/main.conf ${INSTALL}/etc/iwd
 
+  mkdir -p ${INSTALL}/etc/pacman.d/hooks
+    cp ${PKG_DIR}/hooks/60-archr-iwd-restart.hook ${INSTALL}/etc/pacman.d/hooks/
+
   mkdir -p ${INSTALL}/usr/bin
     cp -P ${PKG_DIR}/scripts/iwd_get-networks ${INSTALL}/usr/bin
 
