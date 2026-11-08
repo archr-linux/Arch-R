@@ -79,6 +79,8 @@ sudo dd if=ArchR-R36S-*.img of=/dev/sdX bs=4M status=progress
 sync
 ```
 
+**microSD card: 32 GB or larger is recommended.** The first boot gives the system its own partitions and puts the ROMs on an exFAT partition (`ARCHR_ROMS`) that opens on any computer. Cards of 16 GB or less have no room for it and keep the older layout, with the ROMs inside the ext4 `STORAGE` partition: everything works, but the ROMs are only reachable from a PC over the network (Samba/SSH). 8 GB is the minimum.
+
 Always verify the download against the published `SHA256SUMS` before flashing. Insert the SD card and power on; the correct board DTB is selected automatically.
 
 ## Updates
