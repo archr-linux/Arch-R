@@ -431,6 +431,13 @@ volts 3300000
 (sleep 2.5; volts 2500000; sleep 1; volts 3300000) &
 INTERVAL=1 ROUNDS=7 guard
 check "the cut: 3.30 V x3, an invalid reading, 3.30 V x3: power off" "$(tr '\n' '|' <"${TMP}/power")" "off|"
+# ... with the level unreadable too.
+rm -f "${BAT}/capacity"
+volts 3300000
+(sleep 2.5; volts 2500000; sleep 1; volts 3300000) &
+INTERVAL=1 ROUNDS=7 guard
+check "no level: 3.30 V x3, an invalid reading, 3.30 V x3: power off" "$(tr '\n' '|' <"${TMP}/power")" "off|"
+battery 40 Discharging
 volts 3300000
 (sleep 6.5; volts 3700000) &
 INTERVAL=1 COUNTDOWN=4 ROUNDS=6 guard

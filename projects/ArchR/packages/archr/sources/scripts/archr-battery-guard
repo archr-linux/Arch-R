@@ -169,7 +169,7 @@ LOWREADS=""
 ROUND=0
 while :; do
   LEVEL=$(level)
-  if ! charging && { [[ "${LEVEL}" =~ ^[0-9]+$ ]] || [ -n "$(volts)" ]; }; then
+  if ! charging; then
     LOW=$(percent power.battery.low 10)
     CRITICAL=$(percent power.battery.critical 3)
     # The warning counts only with the voltage low too.
@@ -182,13 +182,16 @@ while :; do
       ${OSD} send battery-low "${LEVEL}" 2>/dev/null
       WARNED=1
     fi
-    # A discarded voltage leaves both counts as they are.
+    # A discarded voltage (or an unreadable level, for the percentage)
+    # leaves both counts as they are.
     VOLT=$(volts)
     LOWOFF=$(($(design_min) - LOW_DROP))
     CUTOFF=$(($(design_min) - CUT_DROP))
     # The critical level, with the voltage low for as long as the cut's.
-    if [ "${CRITICAL}" -eq 0 ] || ! [[ "${LEVEL}" =~ ^[0-9]+$ ]] || [ "${LEVEL}" -gt "${CRITICAL}" ]; then
+    if [ "${CRITICAL}" -eq 0 ] || { [[ "${LEVEL}" =~ ^[0-9]+$ ]] && [ "${LEVEL}" -gt "${CRITICAL}" ]; }; then
       BELOW=0 LOWREADS=""
+    elif ! [[ "${LEVEL}" =~ ^[0-9]+$ ]]; then
+      :
     elif [ -n "${VOLT}" ] && [ "${VOLT}" -lt "${LOWOFF}" ]; then
       # The first reading under the limit: a later rise above it cancels.
       [ "${BELOW}" -eq 0 ] && FIRST=${LEVEL}
@@ -220,7 +223,7 @@ while :; do
       CUT=0 READS=""
     fi
   else
-    # A charger (or no reading): the next discharge warns again.
+    # A charger: the next discharge warns again.
     WARNED=0
     BELOW=0 LOWREADS=""
     CUT=0 READS=""
