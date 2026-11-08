@@ -177,7 +177,12 @@ if [ -e /storage/.please_resize_me ] ; then
         echo "ROMs partition failed; falling back to the old layout" | tee -a $LOG
         roms_has_part "$DISK" 4 && parted -s "$DISK" rm 4 >>$LOG 2>&1
         StartProgressLog spinner "Resizing partition...   " "parted -s -f -m $DISK resizepart $PARTNUM 100% >>$LOG 2>&1"
-        StartProgressLog spinner "Resizing file system... " "resize2fs $PART >>$LOG 2>&1"
+        # Same gate as above: never grow a filesystem e2fsck left broken.
+        if [ "${FSCK_STATUS:-0}" -le 2 ]; then
+          StartProgressLog spinner "Resizing file system... " "resize2fs $PART >>$LOG 2>&1"
+        else
+          echo "e2fsck exited ${FSCK_STATUS}; skipping resize2fs after the fallback too" | tee -a $LOG
+        fi
       fi
     fi
     StartProgressLog spinner "Regenerating UUIDs...   " "new_ids $PART $PART1"

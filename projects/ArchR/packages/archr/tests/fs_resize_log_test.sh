@@ -160,7 +160,10 @@ RPGID=
 setup
 run FSCK_RC=4 TUNE_RC=3
 check "fsck fails: the step logs exit 4, not 0" '[ "$(step_status "(check_fs|e2fsck)")" = 4 ]'
-# (Its ROMs fallback, which this harness always takes, still grows it.)
+check "fsck fails: roms_create failed here (no partition 4 appears), the fallback is taken" \
+  'LOG | grep -q "ROMs partition failed; falling back to the old layout"'
+check "fsck fails: the fallback does not grow the broken filesystem either (no resize2fs at all)" \
+  '! grep -q "^resize2fs" "${T}/calls" && LOG | grep -q "e2fsck exited 4; skipping resize2fs after the fallback too"'
 check "fsck fails: the resize right after it is skipped" \
   'LOG | grep -A2 -E "^\*\*\* \[[0-9.]+\] (check_fs|e2fsck)" | grep -q "e2fsck exited 4; skipping resize2fs"'
 check "tune2fs fails: the UUID step logs its status (3), fatlabel still ran" \
