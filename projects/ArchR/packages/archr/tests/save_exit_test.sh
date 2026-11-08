@@ -249,12 +249,10 @@ printf '#!/bin/sh\necho "$*" >>"%s/osd"\n' "${TMP}" >"${TMP}/bin/osd"
 # The save gets the picture taken before the card.
 printf '#!/bin/sh\necho "save $* $(cat "$PICTURE_FROM" 2>/dev/null)" >>"%s/power"\n' "${TMP}" >"${TMP}/bin/save"
 printf '#!/bin/sh\necho off >>"%s/power"\n' "${TMP}" >"${TMP}/bin/off"
-# The wait between readings: the clock moves on by the interval, and the
-# next line of the sequence ("file value", or "-" for no change) is applied.
+# The wait between readings: the next line of the sequence ("file value",
+# or "-" for no change) is applied.
 cat >"${TMP}/bin/tick" <<TICK
 #!/bin/bash
-read -r up _ <"${TMP}/uptime"; up=\${up%%.*}
-echo "\$((up + \$1)) 0" >"${TMP}/uptime"
 [ -s "${TMP}/seq" ] || exit 0
 read -r file value <"${TMP}/seq"
 sed -i 1d "${TMP}/seq"
@@ -265,11 +263,10 @@ guard() {
   rm -f "${TMP}/osd" "${TMP}/power"
   touch "${TMP}/osd" "${TMP}/power"
   printf '%s\n' "$@" >"${TMP}/system.cfg"
-  echo "1000.00 0" >"${TMP}/uptime"
   BATTERY_GUARD_PROFILE="${TMP}/profile" BATTERY="${BAT}" OSD="${TMP}/bin/osd" \
     SAVE_EXIT="${TMP}/bin/save" POWEROFF="${TMP}/bin/off" GRIM="${TMP}/bin/grim" \
-    SLEEP="${TMP}/bin/tick" UPTIME="${TMP}/uptime" CUT_WINDOW="${CUT_WINDOW:-60}" \
-    INTERVAL="${INTERVAL:-10}" COUNTDOWN="${COUNTDOWN:-2}" ROUNDS="${ROUNDS:-7}" \
+    SLEEP="${TMP}/bin/tick" INTERVAL="${INTERVAL:-10}" \
+    COUNTDOWN="${COUNTDOWN:-2}" ROUNDS="${ROUNDS:-6}" \
     bash "${SCRIPTS}/archr-battery-guard" >"${TMP}/log" 2>&1
   rm -f "${TMP}/seq"
 }
@@ -279,7 +276,7 @@ battery() { echo "$1" >"${BAT}/capacity"; echo "$2" >"${BAT}/status"; }
 # Volts, in microvolts as the kernel says them, and the design minimum.
 volts() { echo "$1" >"${BAT}/voltage_avg"; echo "${2-3500000}" >"${BAT}/voltage_min_design"; }
 # A pack that is low (under the design minimum - 100 mV): the percentage
-# counts, held for a minute (7 readings, 10 s apart).
+# counts, for 6 readings in a row.
 volts 3380000
 
 battery 50 Discharging
@@ -393,16 +390,16 @@ check "0% at 3.90 V for 10 readings: nothing" "$(cat "${TMP}/osd" "${TMP}/power"
 volts 3490000
 ROUNDS=10 guard
 check "0% at 3.49 V under load for 10 readings: nothing" "$(cat "${TMP}/osd" "${TMP}/power")" ""
-# The critical level counts with the voltage low for a minute.
+# The critical level counts with the voltage low for 6 readings in a row.
 battery 2 Discharging
 volts 3390000
-ROUNDS=7 guard
-check "2% at 3.39 V for 60 s (7 readings): power off" "$(tr '\n' '|' <"${TMP}/power")" "off|"
+ROUNDS=6 guard
+check "2% at 3.39 V for 6 readings: power off" "$(tr '\n' '|' <"${TMP}/power")" "off|"
 check "2% at 3.39 V: the card says 2%" "$(tr '\n' '|' <"${TMP}/osd")" "send battery 2 2 2 menu|send battery 2 1 2 menu|"
 check "2% at 3.39 V: the log says the percentage, the threshold and the readings" "$(cat "${TMP}/log")" \
-  "archr-battery-guard: battery at 2% and under 3400000 uV for 60 s, 7 readings (3390000 3390000 3390000 3390000 3390000 3390000 3390000 uV) (now 3390000 uV), powering off"
-ROUNDS=6 guard
-check "2% at 3.39 V for 50 s (6 readings): nothing" "$(cat "${TMP}/power")" ""
+  "archr-battery-guard: battery at 2% and under 3400000 uV for 6 readings (3390000 3390000 3390000 3390000 3390000 3390000 uV) (now 3390000 uV), powering off"
+ROUNDS=5 guard
+check "2% at 3.39 V for 5 readings: nothing" "$(cat "${TMP}/power")" ""
 seq - - - - "voltage_avg 3410000" "voltage_avg 3390000"
 ROUNDS=7 guard
 check "2% at 3.39 V x5, then 3.41 V, then 3.39 V: nothing" "$(cat "${TMP}/power")" ""
@@ -412,48 +409,60 @@ ROUNDS=11 guard
 check "2% at 3.39 V x5, 3.41 V, 3.39 V x5: the count starts over, nothing" "$(cat "${TMP}/power")" ""
 
 # The voltage cuts by itself, whatever the percentage says: under the design
-# minimum - 150 mV (3.35 V here) for a minute.
+# minimum - 150 mV (3.35 V here) for 6 readings in a row.
 battery 40 Discharging
 volts 3300000
-ROUNDS=7 guard
-check "40% at 3.30 V for 60 s (7 readings): power off" "$(tr '\n' '|' <"${TMP}/power")" "off|"
+ROUNDS=6 guard
+check "40% at 3.30 V for 6 readings: power off" "$(tr '\n' '|' <"${TMP}/power")" "off|"
 check "the cut's card says the pack is empty (0%)" "$(tr '\n' '|' <"${TMP}/osd")" "send battery 0 2 2 menu|send battery 0 1 2 menu|"
 check "the cut's log says the threshold and the readings" "$(cat "${TMP}/log")" \
-  "archr-battery-guard: battery voltage under 3350000 uV for 60 s, 7 readings (3300000 3300000 3300000 3300000 3300000 3300000 3300000 uV; gauge at 40%) (now 3300000 uV), powering off"
-ROUNDS=6 guard
-check "40% at 3.30 V for 50 s (6 readings): nothing" "$(cat "${TMP}/power")" ""
+  "archr-battery-guard: battery voltage under 3350000 uV for 6 readings (3300000 3300000 3300000 3300000 3300000 3300000 uV; gauge at 40%) (now 3300000 uV), powering off"
+ROUNDS=5 guard
+check "40% at 3.30 V for 5 readings: nothing" "$(cat "${TMP}/power")" ""
 battery 80 Discharging
 volts 3340000
-ROUNDS=7 guard
-check "80% at 3.34 V for 60 s: power off" "$(tr '\n' '|' <"${TMP}/power")" "off|"
+ROUNDS=6 guard
+check "80% at 3.34 V for 6 readings: power off" "$(tr '\n' '|' <"${TMP}/power")" "off|"
 volts 3350000
 ROUNDS=10 guard
 check "80% at 3.35 V (at the threshold) for 10 readings: nothing" "$(cat "${TMP}/power")" ""
 volts 3360000
 ROUNDS=10 guard
 check "80% at 3.36 V for 10 readings: nothing" "$(cat "${TMP}/power")" ""
-# The window is time and readings: 5 readings 15 s apart hold for 60 s.
+# Counts are readings, not time: a resume after a long suspend (the wait
+# took hours) does not complete them.
 volts 3340000
-INTERVAL=15 ROUNDS=5 guard
-check "80% at 3.34 V, 5 readings over 60 s: power off" "$(tr '\n' '|' <"${TMP}/power")" "off|"
-INTERVAL=15 ROUNDS=4 guard
-check "80% at 3.34 V, 4 readings over 45 s: nothing" "$(cat "${TMP}/power")" ""
-INTERVAL=30 ROUNDS=4 guard
-check "80% at 3.34 V, 4 readings over 90 s: nothing" "$(cat "${TMP}/power")" ""
-# ... with no window, 5 readings still.
-CUT_WINDOW=0 ROUNDS=4 guard
-check "4 readings under the cut, no window: nothing" "$(cat "${TMP}/power")" ""
-CUT_WINDOW=0 ROUNDS=5 guard
-check "5 readings under the cut, no window: power off" "$(tr '\n' '|' <"${TMP}/power")" "off|"
+INTERVAL=36000 ROUNDS=5 guard
+check "80% at 3.34 V, 5 readings hours apart: nothing" "$(cat "${TMP}/power")" ""
+INTERVAL=1 ROUNDS=6 guard
+check "80% at 3.34 V, 6 readings a second apart: power off" "$(tr '\n' '|' <"${TMP}/power")" "off|"
+# An invalid reading decides nothing: 5 lows, then invalid ones (repro a),
+# and the power off comes only with one more valid low.
+seq - - - - "voltage_avg 2500000" -
+ROUNDS=7 guard
+check "3.34 V x5, then 2 invalid readings: nothing" "$(cat "${TMP}/power")" ""
+volts 3340000
+seq - - - - "voltage_avg 2500000" - "voltage_avg 3340000"
+ROUNDS=8 guard
+check "3.34 V x5, 2 invalid, 3.34 V: power off" "$(tr '\n' '|' <"${TMP}/power")" "off|"
+# A valid voltage that recovered resets the percentage, even with the level
+# unreadable (repro b): 2% x3, "abc", 3.8 V, 3.39 V, 2% again.
+battery 2 Discharging
+volts 3390000
+seq - - "capacity abc" "voltage_avg 3800000" "voltage_avg 3390000" "capacity 2"
+ROUNDS=7 guard
+check "2% at 3.39 V x3, level abc, 3.8 V, 3.39 V, 2%: nothing" "$(cat "${TMP}/power")" ""
+battery 80 Discharging
+volts 3340000
 # Discarded readings do not complete the window by themselves.
 seq "voltage_avg 2500000" - - - - - "voltage_avg 3340000"
 ROUNDS=8 guard
-check "3.34 V, 6 invalid readings over 60 s, 3.34 V: nothing" "$(cat "${TMP}/power")" ""
+check "3.34 V, 6 invalid readings, 3.34 V: nothing" "$(cat "${TMP}/power")" ""
 battery 2 Discharging
 volts 3390000
 seq "voltage_avg 2500000" - - - - - "voltage_avg 3390000"
 ROUNDS=8 guard
-check "2% at 3.39 V, 6 invalid readings over 60 s, 3.39 V: nothing" "$(cat "${TMP}/power")" ""
+check "2% at 3.39 V, 6 invalid readings, 3.39 V: nothing" "$(cat "${TMP}/power")" ""
 battery 80 Discharging
 volts 3300000
 battery 80 Charging
@@ -485,14 +494,18 @@ check "the cut: a voltage that recovers during the countdown cancels it" "$(cat 
 battery 35 Discharging
 volts 3300000
 (sleep 1.5; volts 2950000) &
-COUNTDOWN=4 ROUNDS=7 guard
+COUNTDOWN=4 ROUNDS=6 guard
 check "35% at 3.30 V, then 2.95 V during the countdown: power off" "$(tr '\n' '|' <"${TMP}/power")" "off|"
 volts 3300000
+(sleep 1.5; volts 2500000; sleep 1.5; volts 3300000) &
+COUNTDOWN=4 ROUNDS=6 guard
+check "... readings under 2.7 V during the countdown wait: then power off" "$(tr '\n' '|' <"${TMP}/power")" "off|"
+volts 3300000
 (sleep 1.5; volts 2500000) &
-COUNTDOWN=4 ROUNDS=7 guard
-check "... a reading under 2.7 V during the countdown is dropped: still power off" "$(tr '\n' '|' <"${TMP}/power")" "off|"
+COUNTDOWN=4 ROUNDS=6 guard
+check "... no valid reading again during the countdown: no power off" "$(cat "${TMP}/power")" ""
 volts 2950000
-ROUNDS=7 guard
+ROUNDS=6 guard
 check "2.95 V from the start: the cut" "$(tr '\n' '|' <"${TMP}/power")" "off|"
 volts 3300000
 ROUNDS=8 guard "power.battery.critical=0"
@@ -513,10 +526,10 @@ check "no voltage file: nothing" "$(cat "${TMP}/osd" "${TMP}/power")" ""
 battery 80 Discharging
 for min in 2000000 4200000 abc ""; do
   volts 3240000 "${min}"
-  ROUNDS=7 guard
+  ROUNDS=6 guard
   check "design minimum '${min}', 3.24 V (under 3.25): power off" "$(tr '\n' '|' <"${TMP}/power")" "off|"
   volts 3260000 "${min}"
-  ROUNDS=7 guard
+  ROUNDS=6 guard
   check "design minimum '${min}', 3.26 V (over 3.25): nothing" "$(cat "${TMP}/power")" ""
 done
 # A design minimum in range is used as it is: 3.3 V, the cut at 3.15 V.
@@ -524,11 +537,11 @@ volts 3160000 3300000
 ROUNDS=8 guard
 check "design minimum 3.3 V, 3.16 V: nothing" "$(cat "${TMP}/power")" ""
 volts 3140000 3300000
-ROUNDS=7 guard
+ROUNDS=6 guard
 check "design minimum 3.3 V, 3.14 V: power off" "$(tr '\n' '|' <"${TMP}/power")" "off|"
 rm -f "${BAT}/voltage_min_design"
 echo 3240000 >"${BAT}/voltage_avg"
-ROUNDS=7 guard
+ROUNDS=6 guard
 check "no design minimum, 3.24 V: power off" "$(tr '\n' '|' <"${TMP}/power")" "off|"
 volts 3380000
 battery 3 Discharging
