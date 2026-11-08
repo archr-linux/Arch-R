@@ -339,43 +339,72 @@ pkill -f "${TMP}/bin/fakegame"; EMU=
 check "a voltage that recovers during the save: saved, but no power off" "$(tr '\n' '|' <"${TMP}/power")" "save battery|"
 printf '#!/bin/sh\necho "save $* $(cat "$PICTURE_FROM" 2>/dev/null)" >>"%s/power"\n' "${TMP}" >"${TMP}/bin/save"
 
-# The voltage cuts by itself, whatever the percentage says.
-battery 80 Discharging
-volts 3540000
+# A pack at 40% that sags under load (Wi-Fi, CPU) to 3.49 V, under the
+# design minimum: it is not empty (the R36S of 2026-11-07 powered off here).
+battery 40 Discharging
+volts 3490000
 ROUNDS=3 guard
-check "80% at 3.54 V for 3 readings: power off" "$(tr '\n' '|' <"${TMP}/power")" "off|"
-ROUNDS=2 guard
-check "80% at 3.54 V for 2 readings: nothing" "$(cat "${TMP}/power")" ""
-volts 3560000
+check "40% at 3.49 V under load for 3 readings: nothing" "$(cat "${TMP}/osd" "${TMP}/power")" ""
+ROUNDS=10 guard
+check "40% at 3.49 V under load for 10 readings: nothing" "$(cat "${TMP}/osd" "${TMP}/power")" ""
+# The gauge at 0% on a charged pack (issue 50), for a long time: nothing.
+battery 0 Discharging
+volts 3900000
+ROUNDS=10 guard
+check "0% at 3.90 V for 10 readings: nothing" "$(cat "${TMP}/osd" "${TMP}/power")" ""
+
+# The voltage cuts by itself, whatever the percentage says: under the design
+# minimum - 150 mV (3.35 V here) for 6 readings in a row.
+battery 40 Discharging
+volts 3300000
+ROUNDS=6 guard
+check "40% at 3.30 V for 6 readings: power off" "$(tr '\n' '|' <"${TMP}/power")" "off|"
 ROUNDS=5 guard
-check "80% at 3.56 V (over the cut margin): nothing" "$(cat "${TMP}/power")" ""
-volts 3540000
-battery 80 Charging
-ROUNDS=5 guard
-check "the cut with a charger: nothing" "$(cat "${TMP}/power")" ""
+check "40% at 3.30 V for 5 readings: nothing" "$(cat "${TMP}/power")" ""
 battery 80 Discharging
-(sleep 0.5; volts 3700000) &
-INTERVAL=1 ROUNDS=5 guard
-check "the cut: a reading back up starts the count over" "$(cat "${TMP}/power")" ""
-volts 3540000
-(sleep 4.5; volts 3700000) &
+volts 3340000
+ROUNDS=6 guard
+check "80% at 3.34 V for 6 readings: power off" "$(tr '\n' '|' <"${TMP}/power")" "off|"
+volts 3350000
+ROUNDS=10 guard
+check "80% at 3.35 V (at the threshold) for 10 readings: nothing" "$(cat "${TMP}/power")" ""
+volts 3360000
+ROUNDS=10 guard
+check "80% at 3.36 V for 10 readings: nothing" "$(cat "${TMP}/power")" ""
+volts 3300000
+battery 80 Charging
+ROUNDS=8 guard
+check "the cut with a charger: nothing" "$(cat "${TMP}/power")" ""
+# Load spikes do not add up: 5 readings under, one over, 5 under.
+battery 40 Discharging
+volts 3300000
+(sleep 4.5; volts 3400000; sleep 1; volts 3300000) &
+INTERVAL=1 ROUNDS=11 guard
+check "the cut: 3.30 V x5, 3.40 V, 3.30 V x5: the count starts over, nothing" "$(cat "${TMP}/power")" ""
+# A discarded reading neither counts nor starts the count over.
+volts 3300000
+(sleep 2.5; volts 2500000; sleep 1; volts 3300000) &
+INTERVAL=1 ROUNDS=7 guard
+check "the cut: 3.30 V x3, an invalid reading, 3.30 V x3: power off" "$(tr '\n' '|' <"${TMP}/power")" "off|"
+volts 3300000
+(sleep 6.5; volts 3700000) &
 INTERVAL=1 COUNTDOWN=4 ROUNDS=6 guard
 check "the cut: a voltage that recovers during the countdown cancels it" "$(cat "${TMP}/power")" ""
 # A real deep discharge (2.7-3.0 V) is not an invalid reading: it carries on.
 battery 35 Discharging
-volts 3400000
+volts 3300000
 (sleep 1.5; volts 2950000) &
-COUNTDOWN=4 guard
-check "35% at 3.4 V, then 2.95 V during the countdown: power off" "$(tr '\n' '|' <"${TMP}/power")" "off|"
-volts 3400000
+COUNTDOWN=4 ROUNDS=6 guard
+check "35% at 3.30 V, then 2.95 V during the countdown: power off" "$(tr '\n' '|' <"${TMP}/power")" "off|"
+volts 3300000
 (sleep 1.5; volts 2500000) &
-COUNTDOWN=4 guard
+COUNTDOWN=4 ROUNDS=6 guard
 check "... a reading under 2.7 V during the countdown is dropped: still power off" "$(tr '\n' '|' <"${TMP}/power")" "off|"
 volts 2950000
-ROUNDS=3 guard
+ROUNDS=6 guard
 check "2.95 V from the start: the cut" "$(tr '\n' '|' <"${TMP}/power")" "off|"
-volts 3540000
-guard "power.battery.critical=0"
+volts 3300000
+ROUNDS=8 guard "power.battery.critical=0"
 check "the cut follows the critical setting (0: off)" "$(cat "${TMP}/power")" ""
 
 # Voltages that cannot be right are thrown away.
@@ -389,20 +418,27 @@ rm -f "${BAT}/voltage_avg"
 ROUNDS=4 guard
 check "no voltage file: nothing" "$(cat "${TMP}/osd" "${TMP}/power")" ""
 
-# A design minimum that cannot be right is taken as 3.4 V.
+# A design minimum that cannot be right is taken as 3.4 V (the cut at 3.25 V).
 battery 80 Discharging
 for min in 2000000 4200000 abc ""; do
-  volts 3440000 "${min}"
-  ROUNDS=3 guard
-  check "design minimum '${min}', 3.44 V (under 3.45): power off" "$(tr '\n' '|' <"${TMP}/power")" "off|"
-  volts 3460000 "${min}"
-  ROUNDS=3 guard
-  check "design minimum '${min}', 3.46 V (over 3.45): nothing" "$(cat "${TMP}/power")" ""
+  volts 3240000 "${min}"
+  ROUNDS=6 guard
+  check "design minimum '${min}', 3.24 V (under 3.25): power off" "$(tr '\n' '|' <"${TMP}/power")" "off|"
+  volts 3260000 "${min}"
+  ROUNDS=6 guard
+  check "design minimum '${min}', 3.26 V (over 3.25): nothing" "$(cat "${TMP}/power")" ""
 done
+# A design minimum in range is used as it is: 3.3 V, the cut at 3.15 V.
+volts 3160000 3300000
+ROUNDS=8 guard
+check "design minimum 3.3 V, 3.16 V: nothing" "$(cat "${TMP}/power")" ""
+volts 3140000 3300000
+ROUNDS=6 guard
+check "design minimum 3.3 V, 3.14 V: power off" "$(tr '\n' '|' <"${TMP}/power")" "off|"
 rm -f "${BAT}/voltage_min_design"
-echo 3440000 >"${BAT}/voltage_avg"
-ROUNDS=3 guard
-check "no design minimum, 3.44 V: power off" "$(tr '\n' '|' <"${TMP}/power")" "off|"
+echo 3240000 >"${BAT}/voltage_avg"
+ROUNDS=6 guard
+check "no design minimum, 3.24 V: power off" "$(tr '\n' '|' <"${TMP}/power")" "off|"
 volts 3550000
 battery 3 Discharging
 guard "power.battery.critical=0" "power.battery.low=0"

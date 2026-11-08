@@ -12,11 +12,16 @@
 # that is not empty (issue 50), so it never acts alone: the voltage must be
 # low too (under the design minimum + SOFT_MARGIN), at every step of the
 # countdown and just before the power off. A voltage that recovers cancels.
-# And the voltage cuts by itself: under the design minimum + CUT_MARGIN for
-# CUT_READINGS readings in a row, whatever the percentage says (an old pack
-# must not die unsaved). Voltages outside 2.7-4.45 V, or unreadable, are
-# discarded (2.7-3.0 V is a real, deep discharge); during a countdown a
-# discarded reading keeps it going, only a recovered voltage cancels; a design minimum outside 3.3-3.5 V (or missing) is taken as 3.4 V.
+# And the voltage cuts by itself, whatever the percentage says (an old pack
+# must not die unsaved), but only for a pack that is empty under load: the
+# design minimum is the empty point at rest, and these packs sag 200-300 mV
+# under load (Wi-Fi, CPU) at 30-50%. So the cut is under the design minimum
+# - CUT_DROP for CUT_READINGS readings in a row (a minute); a reading at or
+# over it starts the count over. Voltages outside 2.7-4.45 V, or unreadable,
+# are discarded (2.7-3.0 V is a real, deep discharge): they neither count
+# nor start it over, and during a countdown they keep it going, only a
+# recovered voltage cancels. A design minimum outside 3.3-3.5 V (or missing)
+# is taken as 3.4 V.
 # Two readings in a row must be at or under the critical level (the fuel
 # gauge wavers near the end). A charger cancels the countdown, and so does a
 # level that rose during it; with a charger nothing happens at all. The
@@ -33,8 +38,8 @@
 : "${GRIM:=grim}"
 : "${OSD:=archr-osd}"
 : "${SOFT_MARGIN:=150000}" # microvolts over the design minimum
-: "${CUT_MARGIN:=50000}"
-: "${CUT_READINGS:=3}"
+: "${CUT_DROP:=150000}" # microvolts under the design minimum
+: "${CUT_READINGS:=6}"
 : "${INTERVAL:=10}"
 : "${COUNTDOWN:=8}"
 # Host tests stop after this many readings.
@@ -73,8 +78,8 @@ design_min() {
   fi
 }
 
-# Whether the voltage now is under the design minimum + $1 (false when the
-# voltage is not readable).
+# Whether the voltage now is under the design minimum + $1 (a negative $1
+# goes under it; false when the voltage is not readable).
 volt_under() {
   local volt
   volt=$(volts)
@@ -84,7 +89,7 @@ volt_under() {
 # Whether the reason that started the countdown ($1: percent or volts) holds:
 # a reading that cannot be used keeps it, only a recovered voltage ends it.
 still() {
-  local margin="${CUT_MARGIN}"
+  local margin=$((-CUT_DROP))
   [ "$1" = percent ] && margin="${SOFT_MARGIN}"
   [ -z "$(volts)" ] || volt_under "${margin}"
 }
@@ -164,10 +169,15 @@ while :; do
     else
       BELOW=0
     fi
-    # The voltage alone, with the percentage on, as the critical setting says.
-    if [ "${CRITICAL}" -gt 0 ] && volt_under "${CUT_MARGIN}"; then
+    # The voltage alone, with the percentage on, as the critical setting
+    # says; a discarded reading leaves the count as it is.
+    VOLT=$(volts)
+    CUTOFF=$(($(design_min) - CUT_DROP))
+    if [ "${CRITICAL}" -eq 0 ]; then
+      CUT=0
+    elif [ -n "${VOLT}" ] && [ "${VOLT}" -lt "${CUTOFF}" ]; then
       CUT=$((CUT + 1))
-    else
+    elif [ -n "${VOLT}" ]; then
       CUT=0
     fi
     MODE=""
