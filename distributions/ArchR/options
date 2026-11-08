@@ -190,8 +190,11 @@
 # Boot partition size (FAT32, kernel + DTBs + bootloader), in MB.
   BOOT_SIZE=256
 
-# Root partition size (ext4 rootfs), in MB
-  ROOT_SIZE=4608
+# Root partition size (ext4 rootfs), in MB. 6 GiB: 3.0's 4.5 GiB left
+# about 200 MB free, little room for updates to grow into. On a 16 GB card
+# this leaves under 2 GiB after the 8 GiB STORAGE, so those cards keep the
+# old layout (no ARCHR_ROMS exFAT partition); 32 GB or more is recommended.
+  ROOT_SIZE=6144
 
 # Default system partition offset, in sectors, eg. 2048
   SYSTEM_PART_START=32768
