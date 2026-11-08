@@ -257,7 +257,7 @@ guard() {
   BATTERY_GUARD_PROFILE="${TMP}/profile" BATTERY="${BAT}" OSD="${TMP}/bin/osd" \
     SAVE_EXIT="${TMP}/bin/save" POWEROFF="${TMP}/bin/off" GRIM="${TMP}/bin/grim" \
     INTERVAL="${INTERVAL:-0}" COUNTDOWN="${COUNTDOWN:-2}" ROUNDS="${ROUNDS:-3}" \
-    bash "${SCRIPTS}/archr-battery-guard" >/dev/null 2>&1
+    bash "${SCRIPTS}/archr-battery-guard" >"${TMP}/log" 2>&1
 }
 battery() { echo "$1" >"${BAT}/capacity"; echo "$2" >"${BAT}/status"; }
 # Volts, in microvolts as the kernel says them, and the design minimum.
@@ -359,6 +359,9 @@ battery 40 Discharging
 volts 3300000
 ROUNDS=6 guard
 check "40% at 3.30 V for 6 readings: power off" "$(tr '\n' '|' <"${TMP}/power")" "off|"
+check "the cut's card says the pack is empty (0%)" "$(tr '\n' '|' <"${TMP}/osd")" "send battery 0 2 2 menu|send battery 0 1 2 menu|"
+check "the cut's log says the threshold and the readings" "$(cat "${TMP}/log")" \
+  "archr-battery-guard: battery voltage under 3350000 uV for 6 readings (3300000 3300000 3300000 3300000 3300000 3300000 uV; gauge at 40%) (now 3300000 uV), powering off"
 ROUNDS=5 guard
 check "40% at 3.30 V for 5 readings: nothing" "$(cat "${TMP}/power")" ""
 battery 80 Discharging

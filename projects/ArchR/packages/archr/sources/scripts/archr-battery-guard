@@ -21,7 +21,8 @@
 # are discarded (2.7-3.0 V is a real, deep discharge): they neither count
 # nor start it over, and during a countdown they keep it going, only a
 # recovered voltage cancels. A design minimum outside 3.3-3.5 V (or missing)
-# is taken as 3.4 V.
+# is taken as 3.4 V. The card of the cut says 0%: the pack is empty, the
+# gauge's percentage is not the reason.
 # Two readings in a row must be at or under the critical level (the fuel
 # gauge wavers near the end). A charger cancels the countdown, and so does a
 # level that rose during it; with a charger nothing happens at all. The
@@ -119,9 +120,10 @@ countdown() {
   ! charging && still "${mode}" && ! rose
 }
 
-# The countdown, the save and the power off; 0 when it powered off.
+# The countdown, the save and the power off; 0 when it powered off. $3 is
+# the reason, for the log.
 power_off() {
-  local level="$1" mode="$2" game=menu shot=""
+  local level="$1" mode="$2" why="$3" game=menu shot=""
   if game_running; then
     game=game
     # The game as it is, before the card covers it.
@@ -129,7 +131,7 @@ power_off() {
       XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/var/run/0-runtime-dir}" WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-1}"         "${GRIM}" -t png "${shot}" 2>/dev/null
   fi
   if countdown "${level}" "${game}" "${mode}"; then
-    echo "archr-battery-guard: battery at ${level}% ($(volts) uV, ${mode}), powering off"
+    echo "archr-battery-guard: ${why} (now $(volts) uV), powering off"
     [ "${game}" = game ] && PICTURE_FROM="${shot}" "${SAVE_EXIT}" battery
     rm -f "${shot}"
     # The save took time: a charger or a recovered voltage still cancels.
@@ -146,6 +148,7 @@ power_off() {
 WARNED=0
 BELOW=0
 CUT=0
+READS=""
 ROUND=0
 while :; do
   LEVEL=$(level)
@@ -174,26 +177,33 @@ while :; do
     VOLT=$(volts)
     CUTOFF=$(($(design_min) - CUT_DROP))
     if [ "${CRITICAL}" -eq 0 ]; then
-      CUT=0
+      CUT=0 READS=""
     elif [ -n "${VOLT}" ] && [ "${VOLT}" -lt "${CUTOFF}" ]; then
-      CUT=$((CUT + 1))
+      CUT=$((CUT + 1)) READS="${READS:+${READS} }${VOLT}"
     elif [ -n "${VOLT}" ]; then
-      CUT=0
+      CUT=0 READS=""
     fi
     MODE=""
     [ "${BELOW}" -ge 2 ] && MODE=percent
     [ "${CUT}" -ge "${CUT_READINGS}" ] && MODE=volts
     if [ -n "${MODE}" ]; then
-      [ "${MODE}" = volts ] && FIRST=${LEVEL:-0}
-      power_off "${FIRST}" "${MODE}" && exit 0
+      if [ "${MODE}" = volts ]; then
+        WHY="battery voltage under ${CUTOFF} uV for ${CUT} readings (${READS} uV; gauge at ${LEVEL:-?}%)"
+        FIRST=0
+      else
+        WHY="battery at ${FIRST}% under $(($(design_min) + SOFT_MARGIN)) uV (percent)"
+      fi
+      power_off "${FIRST}" "${MODE}" "${WHY}" && exit 0
       BELOW=0
       CUT=0
+      READS=""
     fi
   else
     # A charger (or no reading): the next discharge warns again.
     WARNED=0
     BELOW=0
     CUT=0
+    READS=""
   fi
   ROUND=$((ROUND + 1))
   [ "${ROUNDS}" -gt 0 ] && [ "${ROUND}" -ge "${ROUNDS}" ] && exit 0
