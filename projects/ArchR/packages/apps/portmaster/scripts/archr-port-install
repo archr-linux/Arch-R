@@ -1,0 +1,45 @@
+#!/bin/bash
+
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026-present ArchR (https://github.com/archr-linux/Arch-R)
+
+# archr-port-install install|uninstall <port.zip>
+#
+# A port from the official PortMaster catalog, by its catalog name, through
+# PortMaster's own harbourmaster: it downloads from the PortMaster release,
+# checks the md5, unpacks into /storage/roms/ports and fetches the runtimes the
+# port needs. The launcher runs this for apps of modules (API 4, port.install):
+# only a catalog name ever reaches it, never a file or a URL.
+
+action=$1
+name=$2
+case "$action" in
+  install | uninstall) ;;
+  *) echo "usage: archr-port-install install|uninstall <port.zip>" >&2; exit 2 ;;
+esac
+if ! [[ "$name" =~ ^[a-z0-9][a-z0-9._-]{0,59}\.zip$ ]]; then
+  echo "invalid port name: $name" >&2
+  exit 2
+fi
+
+. /etc/profile
+. /usr/bin/portmaster_prepare >/dev/null 2>&1
+
+cd /storage/roms/ports/PortMaster || exit 1
+set -o pipefail
+# pm/: the PortMaster repository only. harbourmaster draws its download bars
+# as "<done> <unit> / <total> <unit>"; they become "PROGRESS <0-100>" lines.
+target=$name
+[ "$action" = install ] && target="pm/$name"
+./harbourmaster --quiet "$action" "$target" 2>&1 | awk '
+  function bytes(n, u) { return n * (u == "KB" ? 1e3 : u == "MB" ? 1e6 : u == "GB" ? 1e9 : 1) }
+  {
+    line = $0
+    while (match(line, /[0-9.]+ [KMG]?B \/ [0-9.]+ [KMG]?B/)) {
+      split(substr(line, RSTART, RLENGTH), f, " ")
+      p = int(100 * bytes(f[1], f[2]) / bytes(f[4], f[5]))
+      if (p != last) { print "PROGRESS " p; fflush(); last = p }
+      line = substr(line, RSTART + RLENGTH)
+    }
+  }
+  /^(Unable|Error|Failed)/ { print > "/dev/stderr" }'
