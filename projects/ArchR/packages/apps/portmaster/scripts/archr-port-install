@@ -31,13 +31,19 @@ set -o pipefail
 # as "<done> <unit> / <total> <unit>"; they become "PROGRESS <0-100>" lines.
 target=$name
 [ "$action" = install ] && target="pm/$name"
-./harbourmaster --quiet "$action" "$target" 2>&1 | awk '
+# Stopped half way (a timeout, a game starting): take back what was unpacked.
+if [ "$action" = install ]; then
+  trap './harbourmaster --quiet uninstall "$name" >/dev/null 2>&1; exit 143' TERM INT
+fi
+# The bars are redrawn with carriage returns: one per line for awk.
+./harbourmaster --quiet "$action" "$target" 2>&1 | tr '\r' '\n' | awk '
   function bytes(n, u) { return n * (u == "KB" ? 1e3 : u == "MB" ? 1e6 : u == "GB" ? 1e9 : 1) }
   {
     line = $0
     while (match(line, /[0-9.]+ [KMG]?B \/ [0-9.]+ [KMG]?B/)) {
       split(substr(line, RSTART, RLENGTH), f, " ")
-      p = int(100 * bytes(f[1], f[2]) / bytes(f[4], f[5]))
+      total = bytes(f[4], f[5])
+      p = total > 0 ? int(100 * bytes(f[1], f[2]) / total) : 0
       if (p != last) { print "PROGRESS " p; fflush(); last = p }
       line = substr(line, RSTART + RLENGTH)
     }
