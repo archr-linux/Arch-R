@@ -3,6 +3,7 @@
 
 PKG_NAME="portmaster"
 PKG_VERSION="2026.04.01-1426"
+PKG_REV="2"
 PKG_ARCH="arm aarch64"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/PortsMaster/PortMaster-GUI"
