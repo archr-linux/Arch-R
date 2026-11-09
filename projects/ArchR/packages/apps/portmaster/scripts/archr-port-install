@@ -5,6 +5,9 @@
 
 # archr-port-install install|uninstall <port.zip>
 #
+# Exit codes: 0 done, 2 bad arguments, 3 already installed (not by an app:
+# its files are in place), 4 not in the catalog, other: harbourmaster's.
+#
 # A port from the official PortMaster catalog, by its catalog name, through
 # PortMaster's own harbourmaster: it downloads from the PortMaster release,
 # checks the md5, unpacks into /storage/roms/ports and fetches the runtimes the
@@ -26,6 +29,31 @@ fi
 . /usr/bin/portmaster_prepare >/dev/null 2>&1
 
 cd /storage/roms/ports/PortMaster || exit 1
+
+# A port the user already has (any of its files in place) is theirs: an app
+# never installs over it. The file list comes from the official catalog,
+# cached for an hour.
+if [ "$action" = install ]; then
+  catalog=/tmp/archr-ports.json
+  if [ -z "$(find "$catalog" -mmin -60 2>/dev/null)" ]; then
+    curl -fsSL --max-time 60 -o "$catalog.part" \
+      https://github.com/PortsMaster/PortMaster-New/releases/latest/download/ports.json &&
+      mv "$catalog.part" "$catalog"
+  fi
+  items=$(jq -r --arg n "$name" '.ports[$n].items[]? // empty' "$catalog" 2>/dev/null) || items=
+  if [ -z "$items" ]; then
+    echo "Unable to find $name in the PortMaster catalog" >&2
+    exit 4
+  fi
+  while IFS= read -r item; do
+    case "$item" in /* | *..*) echo "bad item in catalog: $item" >&2; exit 4 ;; esac
+    if [ -e "/storage/roms/ports/$item" ] || [ -L "/storage/roms/ports/$item" ]; then
+      echo "port already installed" >&2
+      exit 3
+    fi
+  done <<< "$items"
+fi
+
 set -o pipefail
 # pm/: the PortMaster repository only. harbourmaster draws its download bars
 # as "<done> <unit> / <total> <unit>"; they become "PROGRESS <0-100>" lines.
