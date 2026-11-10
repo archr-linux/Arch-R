@@ -140,6 +140,10 @@ makeinstall_target() {
   ### Add themes directory
   add_system_dir /storage/roms/themes
 
+  ### Add the screenshots directory: RetroArch saves "default" in place of
+  ### a screenshot_directory that does not exist yet.
+  add_system_dir /storage/roms/screenshots
+
   ### Add the folder Settings > System > Import from RetroArch reads, with a
   ### short note (written only when missing). No mode or owner: on the exFAT
   ### ROMs partition files are 0755 root, and a chmod to 0644 fails there.
