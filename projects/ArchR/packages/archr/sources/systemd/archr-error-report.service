@@ -1,0 +1,9 @@
+[Unit]
+Description=Send queued error reports
+RequiresMountsFor=/storage
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/archr-error-report send
+Nice=10
+IOSchedulingClass=idle

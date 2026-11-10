@@ -1,0 +1,13 @@
+[Unit]
+Description=Report a kernel crash kept in pstore
+ConditionDirectoryNotEmpty=/sys/fs/pstore
+RequiresMountsFor=/storage
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/archr-error-report kernel
+Nice=10
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=multi-user.target

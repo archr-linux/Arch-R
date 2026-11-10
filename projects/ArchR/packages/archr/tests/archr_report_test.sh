@@ -115,6 +115,8 @@ password:
 Passphrase
 =SECRET-equalsline
 middle line kept
+archr-launcher-session[812]: Launcher exited with 134; a session log line kept
+/usr/bin/archr-launcher-session: line 9: 55648 Aborted, a session path kept
 curl -H "X-Api-Key: SECRET-apikeyheader" h
 {"password": "a\"SECRET-escaped quote"}
 {"token":"t","pw":"SECRET-pw2","pwd":"SECRET-pwd"}
@@ -164,7 +166,7 @@ check "compressed pstore left out" "$(find "${X}" -name '*.enc.z' | wc -l)" "0"
 for want in MinhaCasa pcsx_rearmed_libretro.so archr-broken.service duckstation-sa \
   "R36S" 'video_driver = "gl"' "Kernel panic" "Running: retroarch" "kernel: normal line" \
   'input_enable_hotkey = "nul"' 'input_enable_hotkey_btn = "nul"' 'keyboard_layout = "us"' \
-  "hotkey_enable=1" "middle line kept" "Caf" "Pok" "nameserver 9.9.9.9" "oops" "before=1" 'theme = "default"' "system.loglevel=verbose"; do
+  "hotkey_enable=1" "middle line kept" "a session log line kept" "Aborted, a session path kept" "Caf" "Pok" "nameserver 9.9.9.9" "oops" "before=1" 'theme = "default"' "system.loglevel=verbose"; do
   if grep -raqF -- "${want}" "${X}"; then echo "ok   keeps ${want}"; else echo "FAIL lost ${want}"; FAILED=1; fi
 done
 # Named secrets keep their name; other hints take the whole line.

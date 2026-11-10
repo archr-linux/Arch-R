@@ -66,6 +66,12 @@ Configure zram, swappiness and the OOM behaviour. Started as a service at boot.
 .TP
 .B archr-report-stats
 Send anonymized telemetry when the user opts in.
+.TP
+.B archr-error-report
+Queue an anonymous report of a failed game, service, module, launcher or
+kernel crash and send it to arch-r.io once online; one report per error,
+ten a day. Off with
+.BR system.error_reports=0 .
 .SH ENVIRONMENT
 ArchR scripts read filesystem paths through the
 .B ARCHR_*

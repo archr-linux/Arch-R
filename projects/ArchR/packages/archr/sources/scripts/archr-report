@@ -13,6 +13,10 @@
 #                       exit 1 when no report could be written.
 #   archr-report --osd  the same, with a card on screen (archr-osd) as it
 #                       starts and another with the result.
+#   archr-report --state     the machine's state, "name: value" per line
+#                            (also resumo.txt in the zip).
+#   archr-report --sanitize  stdin to stdout through the secret filter
+#                            below. archr-error-report uses both.
 #
 # What goes in: hardware, kernel and dmesg, the journal of this boot and of
 # the previous one (when the journal is persistent), failed services,
@@ -35,6 +39,123 @@ STAMP=$(date +%Y%m%d-%H%M)
 NAME="archr-relatorio-${STAMP}"
 CAP=$((2 * 1024 * 1024))
 LIMIT=15
+
+# Any line with a hint of a secret goes whole: "<prefix up to the secret
+# name>=<removed>", or "<linha removida>" when there is no name. The value
+# is never cut out alone. Hints:
+#   - a secret name as a word or suffix: pass, pw, pwd, token, secret,
+#     key (never hotkey or keyboard), psk, auth, oauth, bearer, credential,
+#     senha, chave, cookie;
+#     user, username, login or a word with session used as a name
+#     ("user=", "SessionId:"; never "archr-launcher-session[12]:" or
+#     the path "/usr/bin/archr-launcher-session:"),
+#     and the URL fields u, t, p, pw, pwd, user, ssid and devid;
+#   - user:password@ (in a URL or not), or any @ after a URL's //;
+#   - the options -p, -P, -u, -U (with the value apart or attached),
+#     --user, --*-user and --*pass*.
+# The last two kinds, and a URL field, remove the whole line even after a
+# name: what comes before the name may hold the secret.
+# A secret name whose line opens { or [ or leaves a quote open may go on
+# over the next lines: the rest of the file goes, a safe failure; so does
+# a BEGIN ... PRIVATE KEY line. A name with no value after it, or followed
+# by a line starting with = or :, takes the next line too.
+# Every file passes through here, text or not (NUL bytes become blanks,
+# bytes are read as is: LC_ALL=C); one that cannot be filtered is left out.
+sanitize() {
+  tr '\0' ' ' | LC_ALL=C awk '
+    gone { next }
+    # The line after a name that came without a value, or that starts
+    # with = or :, is that value.
+    pending {
+      pending = 0
+      if (empty || $0 ~ /^[[:space:]]*[=:]/) {
+        print "<linha removida>"
+        next
+      }
+    }
+    tolower($0) ~ /-----begin [a-z ]*private key/ {
+      print "<resto do arquivo removido>"
+      gone = 1
+      next
+    }
+    {
+      line = tolower($0)
+      named = 0
+      rest = line
+      # Words of letters and digits: the first secret one, if any.
+      while (match(rest, /[a-z0-9]+/)) {
+        word = substr(rest, RSTART, RLENGTH)
+        at = length(line) - length(rest) + RSTART + RLENGTH - 1
+        rest = substr(rest, RSTART + RLENGTH)
+        if (word ~ /(pass|token|secret|psk|bearer|credential|cookie|senha|chave)/ ||
+            word ~ /^(pw|pwd|o?auth[a-z]*)$/ || word ~ /key$/ && word !~ /hotkey$/ ||
+            (word ~ /^(user(name)?|login)$/ || word ~ /session/ &&
+              substr(line, at - length(word), 1) !~ /[-\/]/) && rest ~ /^"?[[:space:]]*[=:]/) {
+          named = at
+          break
+        }
+      }
+      # Hints with no name before them: the whole line goes.
+      bare = line ~ /[?&](u|t|p|pw|pwd|user|ssid|devid)=/ ||
+        line ~ /[^[:space:]\/@:]+:[^[:space:]\/@]+@/ || line ~ /:\/\/[^[:space:]]*@/ ||
+        $0 ~ /(^|[[:space:]])-[pPuU]/ ||
+        line ~ /(^|[[:space:]])--([a-z0-9-]*-)?user([^a-z0-9-]|$)|(^|[[:space:]])--[a-z0-9-]*pass/
+      if (!named && !bare) {
+        print
+        next
+      }
+      if (bare) {
+        print "<linha removida>"
+        next
+      }
+      print substr($0, 1, named) "=<removed>"
+      tail = substr($0, named + 1)
+      pending = 1
+      empty = tail ~ /^[^[:alnum:]]*$/
+      opened = gsub(/[{[]/, "", tail) > 0
+      if (opened || gsub(/"/, "\"", tail) % 2 || gsub(/\047/, "\047", tail) % 2) {
+        print "<resto do arquivo removido>"
+        gone = 1
+      }
+    }'
+}
+# The machine in one screen, "name: value" per line: what an error report
+# (archr-error-report) carries and the zip's resumo.txt. Only facts, no
+# names or addresses.
+state() {
+  local f model compat temp cap
+  model=$(tr -d '\0' <"${ROOT}/proc/device-tree/model" 2>/dev/null)
+  compat=$(tr '\0' ' ' <"${ROOT}/proc/device-tree/compatible" 2>/dev/null)
+  echo "device: ${model:-unknown}"
+  echo "compatible: ${compat% }"
+  (
+    . "${ROOT}/etc/os-release" 2>/dev/null
+    echo "archr: ${VERSION:-unknown} (${BUILD_ID:0:10}, ${OS_BUILD:-?})"
+  )
+  echo "kernel: $(uname -r 2>/dev/null)"
+  command -v gpudriver >/dev/null 2>&1 && echo "gpu: $(timeout 5 gpudriver 2>/dev/null | head -n 1)"
+  f="${ROOT}/sys/devices/system/cpu/cpufreq/policy0"
+  echo "cpu: $(cat "${f}/scaling_governor" 2>/dev/null), $(($(cat "${f}/scaling_cur_freq" 2>/dev/null || echo 0) / 1000)) MHz now, $(($(cat "${f}/scaling_max_freq" 2>/dev/null || echo 0) / 1000)) MHz max"
+  awk '/^MemTotal:/ { t = $2 } /^MemAvailable:/ { a = $2 } /^SwapTotal:/ { st = $2 } /^SwapFree:/ { sf = $2 }
+    END { printf "memory: %d MB free of %d MB, swap %d MB used\n", a / 1024, t / 1024, (st - sf) / 1024 }' \
+    "${ROOT}/proc/meminfo" 2>/dev/null
+  df -Pm "${ROOT}/storage" 2>/dev/null | awk 'NR == 2 { printf "storage: %d MB free of %d MB\n", $4, $2 }'
+  temp=$(cat "${ROOT}"/sys/class/thermal/thermal_zone0/temp 2>/dev/null)
+  [ -n "${temp}" ] && echo "temperature: $((temp / 1000)).$((temp % 1000 / 100)) C"
+  for f in "${ROOT}"/sys/class/power_supply/*; do
+    [ -r "${f}/capacity" ] || continue
+    read -r cap <"${f}/capacity"
+    echo "battery: ${cap}% ($(cat "${f}/status" 2>/dev/null))"
+    break
+  done
+  awk '{ s = int($1); printf "uptime: %dh %02dm\n", s / 3600, s % 3600 / 60 }' "${ROOT}/proc/uptime" 2>/dev/null
+}
+
+case "${1:-}" in
+  # stdin to stdout through the filter below, for other report tools.
+  --sanitize) sanitize; exit ;;
+  --state) state; exit 0 ;;
+esac
 
 # The cards (--osd): "report start", then "report done" or "report failed"
 # by the exit status. The overlay's socket is in the session's runtime dir.
@@ -96,6 +217,7 @@ readings() {
 }
 
 # hardware
+state >"${DIR}/resumo.txt" 2>/dev/null
 grab hardware.txt /proc/device-tree/model /etc/os-release /proc/cpuinfo /proc/meminfo /proc/cmdline
 run hardware.txt uname -a
 run hardware.txt lsusb
@@ -169,82 +291,6 @@ for src in "${ROOT}"/sys/fs/pstore/*; do
   [ -f "${src}" ] && mkdir -p "${DIR}/pstore" && head -c "${CAP}" "${src}" >"${DIR}/pstore/${src##*/}"
 done
 
-# Any line with a hint of a secret goes whole: "<prefix up to the secret
-# name>=<removed>", or "<linha removida>" when there is no name. The value
-# is never cut out alone. Hints:
-#   - a secret name as a word or suffix: pass, pw, pwd, token, secret,
-#     key (never hotkey or keyboard), psk, auth, oauth, bearer, credential,
-#     senha, chave,
-#     cookie, session, user, username or login used as a name ("user="),
-#     and the URL fields u, t, p, pw, pwd, user, ssid and devid;
-#   - user:password@ (in a URL or not), or any @ after a URL's //;
-#   - the options -p, -P, -u, -U (with the value apart or attached),
-#     --user, --*-user and --*pass*.
-# The last two kinds, and a URL field, remove the whole line even after a
-# name: what comes before the name may hold the secret.
-# A secret name whose line opens { or [ or leaves a quote open may go on
-# over the next lines: the rest of the file goes, a safe failure; so does
-# a BEGIN ... PRIVATE KEY line. A name with no value after it, or followed
-# by a line starting with = or :, takes the next line too.
-# Every file passes through here, text or not (NUL bytes become blanks,
-# bytes are read as is: LC_ALL=C); one that cannot be filtered is left out.
-sanitize() {
-  tr '\0' ' ' | LC_ALL=C awk '
-    gone { next }
-    # The line after a name that came without a value, or that starts
-    # with = or :, is that value.
-    pending {
-      pending = 0
-      if (empty || $0 ~ /^[[:space:]]*[=:]/) {
-        print "<linha removida>"
-        next
-      }
-    }
-    tolower($0) ~ /-----begin [a-z ]*private key/ {
-      print "<resto do arquivo removido>"
-      gone = 1
-      next
-    }
-    {
-      line = tolower($0)
-      named = 0
-      rest = line
-      # Words of letters and digits: the first secret one, if any.
-      while (match(rest, /[a-z0-9]+/)) {
-        word = substr(rest, RSTART, RLENGTH)
-        at = length(line) - length(rest) + RSTART + RLENGTH - 1
-        rest = substr(rest, RSTART + RLENGTH)
-        if (word ~ /(pass|token|secret|psk|bearer|credential|cookie|session|senha|chave)/ ||
-            word ~ /^(pw|pwd|o?auth[a-z]*)$/ || word ~ /key$/ && word !~ /hotkey$/ ||
-            word ~ /^(user(name)?|login)$/ && rest ~ /^"?[[:space:]]*[=:]/) {
-          named = at
-          break
-        }
-      }
-      # Hints with no name before them: the whole line goes.
-      bare = line ~ /[?&](u|t|p|pw|pwd|user|ssid|devid)=/ ||
-        line ~ /[^[:space:]\/@:]+:[^[:space:]\/@]+@/ || line ~ /:\/\/[^[:space:]]*@/ ||
-        $0 ~ /(^|[[:space:]])-[pPuU]/ ||
-        line ~ /(^|[[:space:]])--([a-z0-9-]*-)?user([^a-z0-9-]|$)|(^|[[:space:]])--[a-z0-9-]*pass/
-      if (!named && !bare) {
-        print
-        next
-      }
-      if (bare) {
-        print "<linha removida>"
-        next
-      }
-      print substr($0, 1, named) "=<removed>"
-      tail = substr($0, named + 1)
-      pending = 1
-      empty = tail ~ /^[^[:alnum:]]*$/
-      opened = gsub(/[{[]/, "", tail) > 0
-      if (opened || gsub(/"/, "\"", tail) % 2 || gsub(/\047/, "\047", tail) % 2) {
-        print "<resto do arquivo removido>"
-        gone = 1
-      }
-    }'
-}
 # Compressed pstore records cannot be read through the filter: left out.
 find "${DIR}/pstore" -type f -name '*.z' -delete 2>/dev/null
 while IFS= read -r -d '' f; do

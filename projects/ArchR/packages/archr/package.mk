@@ -192,6 +192,29 @@ EOF
   mkdir -p ${INSTALL}/usr/lib/systemd/system/archr-battery-guard.service.d
   printf '[Service]\nKillMode=process\n' \
     >${INSTALL}/usr/lib/systemd/system/archr-battery-guard.service.d/10-killmode.conf
+  # Error reports (archr-error-report): units, the wants links that enable
+  # them and the OnFailure= drop-in, all packaged for the same reason.
+  # The drop-in covers archr-*.service and the services the console needs;
+  # the reporter's own units and launcher modules (the launcher reports
+  # those) get an empty file of the same name, which turns it off.
+  local units=${INSTALL}/usr/lib/systemd/system
+  mkdir -p ${units}/multi-user.target.wants
+  cp ${PKG_DIR}/sources/systemd/archr-error-report* ${units}
+  for unit in archr-error-report.path archr-error-report-kernel.service; do
+    ln -sf ../${unit} ${units}/multi-user.target.wants/${unit}
+  done
+  for dir in archr- iwd connman sway; do
+    mkdir -p ${units}/${dir}.service.d
+    cp ${PKG_DIR}/sources/systemd/10-error-report.conf ${units}/${dir}.service.d
+  done
+  for dir in archr-error- archr-mod-; do
+    mkdir -p ${units}/${dir}.service.d
+    : >${units}/${dir}.service.d/10-error-report.conf
+  done
+  # The kernel names the faulting library and address of a crashed program
+  # in its log, which the report carries (no core dumps on the console).
+  mkdir -p ${INSTALL}/usr/lib/sysctl.d
+  echo "debug.exception-trace=1" >${INSTALL}/usr/lib/sysctl.d/60-archr-error-report.conf
 }
 
 post_install() {
