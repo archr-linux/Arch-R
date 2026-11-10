@@ -86,5 +86,33 @@ check "boot on headphones refused" "$(run SPK BAD 0 BAD)" "$(printf '%s\n' \
   "$(cset BAD)" \
   "$(cset SPK)" "set audio.device=speakers")"
 
+# Amplified R36S Clone: speaker on the headphone lines, gated by a pin
+# switch, jack the right way round (1 = headphones in). The mux stays on
+# HP; the gate goes off for headphones and back on for the speaker.
+cat >>"${TMP}/profile" <<EOF
+DEVICE_SPEAKER_SWITCH="Internal Speakers Switch"
+DEVICE_HEADPHONE_INSERTED="1"
+EOF
+gate() { echo "amixer -c 0 cset name=Internal Speakers Switch ${1}"; }
+# Here value 1 comes first (in), then 0 (out).
+ON='Event: time 1.0, type 5 (EV_SW), code 2 (SW_HEADPHONE_INSERT), value 1'
+OFF='Event: time 2.0, type 5 (EV_SW), code 2 (SW_HEADPHONE_INSERT), value 0'
+
+# Unplugged at boot (bit clear), then in and out.
+check "amp: speaker gate follows the jack" "$(run HP HP 0 '')" "$(printf '%s\n' \
+  "$(cset HP)" "$(gate on)" "set audio.device=speakers" "volume restore" \
+  "$(cset HP)" "$(gate off)" "set audio.device=headphone" \
+  "$(cset HP)" "$(gate on)" "set audio.device=speakers")"
+
+# Plugged at boot (bit set): starts on headphones, speaker gated off.
+check "amp: boot with headphones in" "$(run HP HP 10 '' | head -3)" "$(printf '%s\n' \
+  "$(cset HP)" "$(gate off)" "set audio.device=headphone")"
+
+# The gate refused: audio.device not recorded, the reason logged.
+check "amp: gate refused" "$(run HP HP 0 off | sed -n 4,6p)" "$(printf '%s\n' \
+  "volume restore" "$(cset HP)" "$(gate off)")"
+grep -q "could not set 'Internal Speakers Switch' to 'off' for headphone" "${TMP}/err" ||
+  { echo "FAIL: gate refusal not logged: $(cat "${TMP}/err")"; FAILED=1; }
+
 [ ${FAILED} -eq 0 ] && echo "headphone_sense_test: OK"
 exit ${FAILED}
