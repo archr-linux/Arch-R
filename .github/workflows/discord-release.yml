@@ -1,0 +1,34 @@
+name: Discord release
+
+# Posts each published release (not drafts, not pre-releases) to the
+# Discord channel whose webhook is the DISCORD_WEBHOOK_URL secret.
+on:
+  release:
+    types: [published]
+
+permissions: {}
+
+jobs:
+  notify:
+    if: ${{ !github.event.release.prerelease }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post to Discord
+        env:
+          WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          NAME: ${{ github.event.release.name }}
+          TAG: ${{ github.event.release.tag_name }}
+          URL: ${{ github.event.release.html_url }}
+          BODY: ${{ github.event.release.body }}
+          TITLE: "Nova versão do Arch R"
+        run: |
+          if [ -z "$WEBHOOK" ]; then
+            echo "DISCORD_WEBHOOK_URL is not set; nothing posted."
+            exit 0
+          fi
+          notes=$(printf "%s" "$BODY" | head -c 3500)
+          [ "${#BODY}" -gt 3500 ] && notes="$notes…"
+          jq -n --arg title "${NAME:-$TAG}" --arg url "$URL" --arg notes "$notes" --arg head "$TITLE" \
+            '{username: "Arch R", content: ($head + ": **" + $title + "**"),
+              embeds: [{title: $title, url: $url, description: $notes, color: 9924082}]}' |
+            curl -fsS -H "Content-Type: application/json" -d @- "$WEBHOOK"
