@@ -693,10 +693,16 @@ fi
 ### game's scope is stopped as soon as runemu.sh returns, and the report
 ### must not hold the launcher back. archr-error-report leaves out exits
 ### that come from outside (the exit hotkey, a shutdown).
-if [ "${ret_error}" != 0 ] && [ "$(get_setting system.error_reports)" != 0 ]; then
+### A port's script usually exits 0 even when the game inside it failed:
+### every port run goes, and its output decides.
+case "${PLATFORM}" in
+  ports | windows) REPORT=(port "${ret_error}" "$((SECONDS - RUN_START))" "${RUN_OFFSET}" "${ROMNAME}") ;;
+  *) REPORT=(game "${ret_error}" "$((SECONDS - RUN_START))" "${RUN_OFFSET}" "${PLATFORM}" "${EMULATOR}" "${CORE}") ;;
+esac
+if { [ "${ret_error}" != 0 ] || [ "${REPORT[0]}" = port ]; } &&
+   [ "$(get_setting system.error_reports)" != 0 ]; then
   timeout 3 systemd-run --no-block --collect --quiet --unit="archr-error-report-game-$$" \
-    -p Nice=10 /usr/bin/archr-error-report game "${ret_error}" "$((SECONDS - RUN_START))" \
-    "${RUN_OFFSET}" "${PLATFORM}" "${EMULATOR}" "${CORE}" -- "${ARGV[@]}" >/dev/null 2>&1 || :
+    -p Nice=10 /usr/bin/archr-error-report "${REPORT[@]}" -- "${ARGV[@]}" >/dev/null 2>&1 || :
 fi
 
 ### RetroArch saves into retroarch.cfg what the append config only lent to

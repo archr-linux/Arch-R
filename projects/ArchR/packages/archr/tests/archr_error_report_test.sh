@@ -200,4 +200,119 @@ check "off: nothing queued" "$(count "${Q}")" "${before}"
 report send
 check "off: queue dropped" "$(count "${Q}")" "0"
 
+# --- ports: the output decides, whatever the script returned ---
+sed -i '/^system.error_reports=/d' "${CFG}"
+rm -rf "${R}/storage/.cache/error-reports"
+P="${R}/storage/roms/ports"
+mkdir -p "${P}/asteroludi" "${P}/PortMaster/libs"
+echo 2026.04.01-1426 >"${P}/PortMaster/version"
+: >"${P}/PortMaster/control.txt"
+cat >"${P}/Asteroludi.sh" <<'EOF'
+#!/bin/bash
+source $controlfolder/control.txt
+GAMEDIR=/$directory/ports/asteroludi
+> "$GAMEDIR/log.txt" && exec > >(tee "$GAMEDIR/log.txt") 2>&1
+$GPTOKEYB "arcajs" &
+"./arcajs.${DEVICE_ARCH}" -f asteroludi.ajs
+EOF
+cat >"${P}/asteroludi/port.json" <<'EOF'
+{"version": 4, "name": "asteroludi.zip", "items": ["Asteroludi.sh", "asteroludi/"],
+ "attr": {"title": "Asteroludi", "porter": ["eludi"], "runtime": ["frt_3.5.2", "mono-6.12"], "arch": ["aarch64"]},
+ "status": {"source": "PortMaster", "md5": "07f4"}}
+EOF
+printf '<gameList><game><name>asteroludi</name></game></gameList>\n' >"${P}/asteroludi/gameinfo.xml"
+: >"${P}/PortMaster/libs/mono-6.12.squashfs"
+{ printf '\177ELF'; head -c 2000 /dev/zero; } >"${P}/asteroludi/arcajs.aarch64"
+echo "Error: game log line" >"${P}/asteroludi/log.txt"
+fake ldd 'echo "	libcurl.so.4 => /usr/lib/libcurl.so.4"; echo "	libSDL2_gfx-1.0.so.0 => not found"'
+fake gpudriver 'echo panfrost'
+: >"${TMP}/dmesg"
+# What the real Asteroludi prints on a good run (R36S, 2026-11-10).
+NOISE='/roms/ports/PortMaster/device_info.txt: line 189: warning: command substitution: ignored null byte in input
+CFW_NAME=ArchR
+DEVICE_NAME=R36S
+DISPLAY_WIDTH=640
+./arcajs.aarch64: /usr/lib/libcurl.so.4: no version information available (required by ./arcajs.aarch64)
+Attempting to fullscreen app_id=arcajs.aarch64
+    "success": false,
+    "parse_error": false,
+    "error": "No matching node."
+r36s_Gamepad :: 19003982010000008811000088010000
+Failed, waiting to try again
+localStorage load file "/storage/.local/share/eludi/arcajs/asteroludi.json" error: Couldn'"'"'t open /storage/.local/share/eludi/arcajs/asteroludi.json: No such file or directory
+(<unknown>:610135): Gtk-WARNING **: 10:39:18.965: gtk_disable_setlocale() must be called before gtk_init()
+arm_release_ver: g24p0-00eac0, rk_so_ver: 10
+WARN: WindowControllerOpen(0): already opened'
+port() {
+  printf 'old run: Segmentation fault\n' >"${R}/var/log/exec.log"
+  local offset
+  offset=$(stat -c %s "${R}/var/log/exec.log")
+  printf '%s\n' "$3" >>"${R}/var/log/exec.log"
+  report port "$1" "$2" "${offset}" /storage/roms/ports/Asteroludi.sh -- /storage/roms/ports/Asteroludi.sh -Pports
+}
+port 0 40 "${NOISE}"
+port 0 2 "${NOISE}"
+check "a good run's noise is no failure, long or short" "$(count "${Q}")" "0"
+port 143 40 "${NOISE}"
+port 0 40 "${NOISE}
+/storage/roms/ports/Asteroludi.sh: line 6: 4242 Killed  ./arcajs.aarch64 -f asteroludi.ajs"
+check "TERM and a Killed without OOM are the user's" "$(count "${Q}")" "0"
+port 0 3 "${NOISE}
+Error: no game data"
+check "an error line on a short run counts" "$(count "${Q}")" "1"
+port 0 60 "${NOISE}
+Error: no game data, again"
+check "the same line on a long run does not" "$(count "${Q}")" "1"
+rm -f "${Q}"/*.txt
+# The PortMaster bug of 2026-11-10: control.txt missing; the script still
+# exits 0.
+port 0 1 "/roms/ports/Asteroludi.sh: line 2: /roms/ports/PortMaster/control.txt: No such file or directory
+/roms/ports/Asteroludi.sh: line 6: ./arcajs.: No such file or directory"
+check "script errors with exit 0 are reported" "$(count "${Q}")" "1"
+F=$(find "${Q}" -name '*.txt' | head -n 1)
+check "event" "$(field event)" "port"
+check "what: the port's title" "$(field what)" "Asteroludi"
+check "game: the script" "$(field game)" "Asteroludi.sh"
+check "only the failure lines" "$(sed -n '/^--- failure lines ---$/,/^$/p' "${F}" | wc -l)" "4"
+check "failure lines come first" "$(sed -n '/^--- failure lines ---$/{n;p}' "${F}")" \
+  "/roms/ports/Asteroludi.sh: line 2: /roms/ports/PortMaster/control.txt: No such file or directory"
+for want in "porter: eludi" "runtime: frt_3.5.2, mono-6.12" "runtime frt_3.5.2: MISSING from PortMaster/libs" \
+  "runtime mono-6.12: present" "portmaster: 2026.04.01-1426" "gameinfo name: asteroludi" \
+  "arcajs.aarch64: 	libSDL2_gfx-1.0.so.0 => not found" "gptokeyb: used by the script, no .gptk in the folder" \
+  "gpu: panfrost" "--- script (first 80 lines) ---" "--- port log log.txt (last 80 lines) ---" \
+  "(the script tees it: same as the run output)"; do
+  if grep -qF -- "${want}" "${F}"; then echo "ok   has ${want}"; else echo "FAIL lacks ${want}"; FAILED=1; fi
+done
+check "libraries found are left out" "$(grep -c 'libcurl.so.4 =>' "${F}")" "0"
+# The same failure on another console (other paths and numbers): counted.
+port 0 1 "/storage/roms/ports/Asteroludi.sh: line 2: /storage/roms/ports/PortMaster/control.txt: No such file or directory"
+check "signature ignores paths and numbers" "$(count "${Q}")" "1"
+for line in "Segmentation fault (core dumped)" "./arcajs.aarch64: error while loading shared libraries: libSDL2.so: cannot open shared object file" \
+  "Traceback (most recent call last):" "Error: [string \"main.lua\"]:12: attempt to call nil" "SDL_CreateWindow failed: Could not initialize EGL" \
+  "Unhandled Exception: System.DllNotFoundException: libSDL2" "box64: Error loading needed lib libGL.so.1" "FATAL: no GPU"; do
+  rm -f "${Q}"/*.txt "${R}/storage/.cache/error-reports/"{seen,today}
+  port 0 120 "${NOISE}
+${line}"
+  check "marker: ${line}" "$(count "${Q}")" "1"
+done
+eval "$(sed -n '/^normalize() {/,/^}/p' "${SCRIPT}")"
+check "a signature line keeps file names, not paths or numbers" \
+  "$(normalize <<<'Segmentation fault at /a/b/c.so 0x12 pid 77')" "Segmentation fault at c.so # pid #"
+
+# runemu.sh: every port run goes to the reporter (it decides), other games
+# only when they exit with an error.
+BLOCK=$(sed -n "/^### A port's script usually exits 0/,/^fi$/p" "${SCRIPTS}/runemu.sh")
+runemu_report() {
+  local PLATFORM=$1 ret_error=$2 ROMNAME=/storage/roms/ports/A.sh EMULATOR=x CORE=y RUN_OFFSET=10 RUN_START=0 SECONDS=7
+  local ARGV=("${ROMNAME}" -Pports)
+  get_setting() { echo 1; }
+  : >"${TMP}/runs"
+  PATH="${B}:${PATH}" eval "${BLOCK}"
+  sed 's/^.*archr-error-report //' "${TMP}/runs"
+}
+fake systemd-run 'echo "$*" >>"'"${TMP}"'/runs"'
+check "runemu: a port that exited 0 still goes" "$(runemu_report ports 0)" "port 0 7 10 /storage/roms/ports/A.sh -- /storage/roms/ports/A.sh -Pports"
+check "runemu: a game that exited 0 does not" "$(runemu_report gb 0)" ""
+check "runemu: a game that failed does" "$(runemu_report gb 139)" "game 139 7 10 gb x y -- /storage/roms/ports/A.sh -Pports"
+
 exit ${FAILED}
