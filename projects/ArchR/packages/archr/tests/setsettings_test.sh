@@ -5,8 +5,9 @@
 # Host test for the RetroArch settings path: setsettings.sh writes a key to
 # the append config only when system.cfg sets it, never touches the user's
 # own values in retroarch.cfg, and passes --set-shader only for a chosen
-# shader; archr-retroarch-hotkeys writes once (or forced); and
-# archr-retroarch-defaults drops only the old factory values, once.
+# shader; archr-retroarch-hotkeys writes once (or forced);
+# archr-retroarch-unappend takes back after the game what the append config
+# lent; and archr-retroarch-defaults drops only the old factory values, once.
 #   bash projects/ArchR/packages/archr/tests/setsettings_test.sh
 
 set -u
@@ -84,8 +85,10 @@ check "no empty value in the append config" "! grep -q '= \"\"' '${A}'"
 check "no bogus 'false' key" "! grep -q '^false = ' '${A}'"
 check "no --set-shader" "! grep -q -- --set-shader '${TMP}/stdout'"
 check "autosave default still applies" "has 'savestate_auto_load = \"true\"' '${A}'"
-check "awaiting a decision: analog d-pad, menu driver, savestate folder stay" \
-  "has 'input_player1_analog_dpad_mode = \"1\"' '${A}' && has 'menu_driver = \"ozone\"' '${A}' && grep -q '^savestate_directory = ' '${A}'"
+check "awaiting a decision: analog d-pad, savestate folder stay" \
+  "has 'input_player1_analog_dpad_mode = \"1\"' '${A}' && grep -q '^savestate_directory = ' '${A}'"
+check "the menu driver is retroarch.cfg's, as in Tools" "! grep -q '^menu_driver = ' '${A}'"
+check "retroarch.cfg kept as the game finds it" "cmp -s '${TMP}/ra/retroarch.cfg' '${A}.base'"
 check "achievements off stays explicit" "has 'cheevos_enable = \"false\"' '${A}'"
 while IFS= read -r line; do
   check "retroarch.cfg keeps: ${line}" "has '${line}' '${TMP}/ra/retroarch.cfg'"
@@ -208,6 +211,39 @@ echo "old-joypad" >"${TMP}/ra/.archr-hotkeys"
 bash "${HK}" "${R}"
 check "another built-in pad: written again" "has 'input_menu_toggle_btn = \"2\"' '${R}'"
 
+# After the game: what RetroArch saved from the append config goes back to
+# the user's value; what the user changed in the game stays.
+UA="${SCRIPTS}/archr-retroarch-unappend"
+printf '%s\n' "${USER_RA}" 'menu_driver = "rgui"' 'input_menu_toggle_btn = "2"' >"${TMP}/ra/retroarch.cfg"
+printf '%s\n' "global.retroarch.menu_driver=ozone" "gba.integerscale=1" "system.autohotkeys=0" >"${TMP}/system.cfg"
+bash "${SCRIPTS}/setsettings.sh" gba "/roms/gba/Game (USA).gba" mgba --controllers="" --autosave="" --snapshot="" >/dev/null
+# RetroArch saved on exit: the lent values (~/ for the home folder, true
+# for 1), a hotkey and the menu changed by the user, and keys of its own.
+sed -e 's/^video_scale_integer = .*/video_scale_integer = "true"/' \
+    -e 's/^input_menu_toggle_btn = .*/input_menu_toggle_btn = "9"/' \
+    -e 's/^menu_driver = .*/menu_driver = "xmb"/' "${A}.base" >"${TMP}/ra/retroarch.cfg"
+grep -E '^(savestate_directory|savestate_auto_load|input_player1_analog_dpad_mode) = ' "${A}" |
+  sed "s|\"${TMP}/|\"~/|" >>"${TMP}/ra/retroarch.cfg"
+echo 'netplay_fade_chat = "true"' >>"${TMP}/ra/retroarch.cfg"
+check "unappend fixture: the lent folder is saved as ~/" "grep -q '^savestate_directory = \"~/' '${TMP}/ra/retroarch.cfg'"
+HOME="${TMP}" bash "${UA}" "${TMP}/ra/retroarch.cfg" "${A}"
+R="${TMP}/ra/retroarch.cfg"
+check "unappend: lent keys the user had come back" "has 'video_scale_integer = \"true\"' '${R}' && [ \$(grep -c '^video_scale_integer = ' '${R}') = 1 ]"
+check "unappend: lent keys the user never had go away" \
+  "! grep -Eq '^(savestate_directory|savestate_auto_load|input_player1_analog_dpad_mode) = ' '${R}'"
+check "unappend: a hotkey changed in the game stays" "has 'input_menu_toggle_btn = \"9\"' '${R}'"
+check "unappend: a menu changed in the game stays" "has 'menu_driver = \"xmb\"' '${R}'"
+check "unappend: RetroArch's own new keys stay" "has 'netplay_fade_chat = \"true\"' '${R}'"
+check "unappend: the user's other keys stay" "has 'input_overlay_opacity = \"0.5\"' '${R}'"
+check "unappend: done once" "[ ! -e '${A}.base' ] && [ ! -e '${R}.unappend' ]"
+cp "${R}" "${TMP}/saved.cfg"
+HOME="${TMP}" bash "${UA}" "${R}" "${A}"
+check "unappend: nothing without a game" "cmp -s '${R}' '${TMP}/saved.cfg'"
+bash "${SCRIPTS}/setsettings.sh" gba "/roms/gba/Game (USA).gba" mgba --controllers="" --autosave="" --snapshot="" >/dev/null
+cp "${R}" "${TMP}/saved.cfg"
+HOME="${TMP}" bash "${UA}" "${R}" "${A}"
+check "unappend: RetroArch saved nothing, nothing changes" "cmp -s '${R}' '${TMP}/saved.cfg' && [ ! -e '${A}.base' ]"
+
 # Migration: old factory values go, user values and other keys stay, once.
 # An older installation: today's defaults plus some of the old factory lines.
 { grep -v '^migration\.' "${PKG}/config/system/configs/system.cfg"
@@ -227,6 +263,27 @@ check "migration marked done" "has 'migration.retroarch_defaults=1' '${C}'"
 echo "gba.ratio=3/2" >>"${C}"
 bash "${SCRIPTS}/archr-retroarch-defaults"
 check "migration runs once" "has 'gba.ratio=3/2' '${C}'"
+
+# Second step: the factory menu driver goes and RetroArch saves on exit,
+# only where they hold the factory value; once.
+{ grep -v '^migration\.retroarch_menu' "${PKG}/config/system/configs/system.cfg"
+  echo global.retroarch.menu_driver=ozone; } >"${C}"
+printf '%s\n' 'menu_driver = "rgui"' 'config_save_on_exit = "false"' >"${TMP}/ra/retroarch.cfg"
+bash "${SCRIPTS}/archr-retroarch-defaults"
+check "factory menu driver removed" "! grep -q '^global.retroarch.menu_driver=' '${C}'"
+check "RetroArch saves on exit" "has 'config_save_on_exit = \"true\"' '${TMP}/ra/retroarch.cfg'"
+check "retroarch.cfg menu kept" "has 'menu_driver = \"rgui\"' '${TMP}/ra/retroarch.cfg'"
+check "second step marked done" "has 'migration.retroarch_menu=1' '${C}'"
+check "first step not run again" "has 'gba.ratio=3/2' '${C}' || ! grep -q '^gba.ratio=' '${C}'"
+echo global.retroarch.menu_driver=xmb >>"${C}"
+sed -i 's/^config_save_on_exit = .*/config_save_on_exit = "false"/' "${TMP}/ra/retroarch.cfg"
+bash "${SCRIPTS}/archr-retroarch-defaults"
+check "second step runs once" "has 'global.retroarch.menu_driver=xmb' '${C}' && has 'config_save_on_exit = \"false\"' '${TMP}/ra/retroarch.cfg'"
+{ grep -v '^migration\.retroarch_menu' "${PKG}/config/system/configs/system.cfg"
+  echo global.retroarch.menu_driver=xmb; } >"${C}"
+bash "${SCRIPTS}/archr-retroarch-defaults"
+check "a menu driver the user chose stays" "has 'global.retroarch.menu_driver=xmb' '${C}'"
+check "factory system.cfg has no menu driver" "! grep -q '^global.retroarch.menu_driver=' '${PKG}/config/system/configs/system.cfg'"
 check "paste is never called" "[ ! -e '${TMP}/paste-calls' ]"
 
 exit "${FAILED}"

@@ -1371,4 +1371,8 @@ set_melondsdsopts &
 wait
 flush_settings
 
+### retroarch.cfg as the game finds it: after the game,
+### archr-retroarch-unappend takes back what the append config lent.
+cp -f "${RETROARCH_CONFIG}" "${TMP_CONFIG}.base" ||:
+
 cleanup

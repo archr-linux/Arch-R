@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2024-present Arch R
 #
-# Runs once per installation (001-setup, every boot until done). Older
+# Each step runs once per installation (001-setup, every boot until done). Older
 # defaults put integer scale, aspect ratio, bezel, rewind, run-ahead and
 # savestate numbering in system.cfg for everyone, and setsettings.sh then
 # imposed them on RetroArch at every game. Remove each of those keys only
@@ -12,9 +12,9 @@
 # shellcheck source=/dev/null
 . "${SETSETTINGS_PROFILE:-/etc/profile}"
 
-DONE="migration.retroarch_defaults"
-[ -z "$(get_setting "${DONE}")" ] || exit 0
 [ -f "${J_CONF}" ] || exit 0
+RETROARCH_CONFIG="${SETSETTINGS_RETROARCH:-/storage/.config/retroarch}/retroarch.cfg"
+DONE="migration.retroarch_defaults"
 
 factory() {
   cat <<'LIST'
@@ -172,4 +172,28 @@ without_factory() {
   echo "${DONE}=1"
 }
 
-rewrite_config without_factory
+[ -n "$(get_setting "${DONE}")" ] || rewrite_config without_factory
+
+# Second step, once as well. The factory global.retroarch.menu_driver=ozone
+# reached every game through the append config and beat the menu driver of
+# retroarch.cfg, so RetroArch from Tools and RetroArch in a game showed two
+# different menus. And RetroArch never saved on exit, so a hotkey or any
+# setting changed in its menu was gone at the next game. runemu.sh now puts
+# back what the append config lent to a game (archr-retroarch-unappend), so
+# saving on exit keeps only what the user changed. Both only while they
+# still hold the factory value.
+MENU_DONE="migration.retroarch_menu"
+
+without_menu() {
+  grep -vxF "global.retroarch.menu_driver=ozone" "${J_CONF}"
+  [ $? -le 1 ] || return 1
+  echo "${MENU_DONE}=1"
+}
+
+[ -n "$(get_setting "${MENU_DONE}")" ] || {
+  if [ -f "${RETROARCH_CONFIG}" ]
+  then
+    sed -i 's/^config_save_on_exit = "false"$/config_save_on_exit = "true"/' "${RETROARCH_CONFIG}" || exit 1
+  fi
+  rewrite_config without_menu
+}
