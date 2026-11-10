@@ -11,6 +11,10 @@
 #   archr-error-report game RC SECONDS OFFSET SYSTEM EMULATOR CORE -- ARGS...
 #       runemu.sh, after a game or app exited with RC; OFFSET is where this
 #       run's output starts in exec.log, ARGS what runemu.sh was given.
+#   archr-error-report port RC SECONDS OFFSET SCRIPT -- ARGS...
+#       runemu.sh, after every port (PortMaster, Itch.io) or Windows run:
+#       its script often exits 0 when the game inside failed, so the run's
+#       output decides (see port_failures).
 #   archr-error-report unit UNIT       a service failed (OnFailure= of archr-*, iwd,
 #                                      connman and sway)
 #   archr-error-report kernel          at boot: an oops or panic kept in pstore
@@ -139,7 +143,8 @@ scrub() {
       }
       line = gensub(/([0-9a-f]{2}[:-]){5}[0-9a-f]{2}/, "<mac>", "g", line)
       line = gensub(/([0-9a-f]{1,4}:){7}[0-9a-f]{1,4}/, "<ip>", "g", line)
-      line = gensub(/(^|[^[:alnum:]_:])([0-9a-f]{1,4}(:[0-9a-f]{1,4}){0,6})?::([0-9a-f]{1,4}(:[0-9a-f]{1,4}){0,6})?(%[[:alnum:]]+)?($|[^[:alnum:]_:(<])/, "\\1<ip>\\7", "g", line)
+      # "::" with a group on at least one side ("r36s :: 1900..." is a pad).
+      line = gensub(/(^|[^[:alnum:]_:])(([0-9a-f]{1,4}(:[0-9a-f]{1,4}){0,6})?::[0-9a-f]{1,4}(:[0-9a-f]{1,4}){0,6}|[0-9a-f]{1,4}(:[0-9a-f]{1,4}){0,6}::)(%[[:alnum:]]+)?($|[^[:alnum:]_:(<])/, "\\1<ip>\\8", "g", line)
       line = gensub(/(^|[^0-9.])([0-9]{1,3}\.){3}[0-9]{1,3}/, "\\1<ip>", "g", line)
       line = gensub(/((ssid|essid)["]?[[:space:]]*[=:][[:space:]]*["]?)[^[:space:]",;]+/, "\\1<name>", "g", line)
       print line
@@ -202,6 +207,157 @@ queue() {
   mv -f "${_tmp}" "${QUEUE}/${_name}"
   echo "archr-error-report: queued ${_name} (${_signature})" >&2
 }
+# --- ports ---
+
+# Lines that say a port failed, whatever the script returned: a crash, a
+# missing library or file, a script error (bash's "x.sh: line N: ...",
+# the way a missing PortMaster/control.txt shows), an interpreter's
+# traceback, a graphics or runtime that did not start. Built from real
+# port logs: PortMaster's own noise (sway fullscreen retries, the
+# arcajs localStorage on a first run, device_info's null byte, GTK and
+# libcurl warnings) matches none of them.
+PORT_FAILS='(Segmentation fault|Illegal instruction|Bus error|Floating point exception|Aborted)( |$|\()|core dumped'
+PORT_FAILS+='|error while loading shared libraries|cannot open shared object file|GLIBC_[0-9.]+. not found'
+PORT_FAILS+='|\.(sh|txt): line [0-9]+: |^(ba)?sh: |command not found|exec format error'
+PORT_FAILS+='|Traceback \(most recent call last\)|stack traceback:|^(lua|love|python[0-9.]*): |Error: \[string'
+PORT_FAILS+='|Unhandled [Ee]xception|Exception in thread|DllNotFoundException|TypeLoadException'
+PORT_FAILS+='|FATAL|[Ff]atal( error)?:|Fatal error|[Ff]ailed to (load|initiali[sz]e|create|open (display|window))'
+PORT_FAILS+='|(Could not|Unable to|Couldn.t) (initiali[sz]e|create|open (display|window|audio)|load)'
+PORT_FAILS+='|SDL_(CreateWindow|Init|GL_CreateContext|CreateRenderer)|EGL_(BAD|NOT)_|eglInitialize|GL_INVALID|GLSL.*error'
+PORT_FAILS+='|Error loading needed lib|Unimplemented Opcode|PltResolver|[Ff]ailed to start [Ww]eston|westonpack.*(error|fail)'
+PORT_FAILS+='|gmloader.*(error|[Ff]ailed|abort)|Missing runtime|requires the latest PortMaster|[Nn]o such runtime'
+# Never a failure: warnings, and what ArchR's helpers print on every run.
+PORT_NOISE='[Ww][Aa][Rr][Nn]|ignored null byte|no version information available|Failed, waiting to try again'
+PORT_NOISE+='|^[[:space:]]*"(success|parse_error|error)":|localStorage load file|arm_release_ver'
+# bash reporting a job it lost to a signal from outside (the exit hotkey).
+PORT_NOISE+='|line [0-9]+: +[0-9]+ (Killed|Terminated|Hangup|Interrupt)'
+# Lines that only look like errors: they count on a run that ended
+# within SHORT seconds (nothing was played).
+PORT_SOFT='[Ee]rror|ERROR|[Ff]ail|[Cc]annot|[Uu]nable to|not found|No such file'
+SHORT=5
+
+# The failure lines of a run (stdin), the strongest first; a "Killed"
+# counts only when the kernel's OOM killer did it (else it is the exit
+# hotkey or a shutdown).
+port_failures() {
+  local seconds=$1 out
+  out=$(grep -av -E "${PORT_NOISE}")
+  grep -a -E "${PORT_FAILS}" <<<"${out}"
+  if grep -aqE '(^| )Killed( |$)' <<<"${out}" && run dmesg | tail -n 80 | grep -qiE 'out of memory|oom-kill'; then
+    grep -aE '(^| )Killed( |$)' <<<"${out}"
+  fi
+  [ "${seconds}" -lt "${SHORT}" ] && grep -a -E "${PORT_SOFT}" <<<"${out}" | grep -av -E "${PORT_FAILS}"
+  :
+}
+# A line with what varies taken out: paths down to the file name, numbers.
+normalize() {
+  sed -E 's#[^ :"'"'"'(]*/([^/ :"'"'"')]*)#\1#g; s/0x[0-9a-fA-F]+/#/g; s/[0-9]+/#/g; s/^[[:space:]#.:-]*//'
+}
+# The port's folder: the one whose port.json lists the script, else the
+# script's GAMEDIR=.../<folder>.
+port_dir() {
+  local script=$1 base=${1##*/} json dir
+  for json in "${script%/*}"/*/port.json; do
+    [ -f "${json}" ] || continue
+    jq -e --arg s "${base}" '.items // [] | index($s)' "${json}" >/dev/null 2>&1 && {
+      echo "${json%/port.json}"
+      return
+    }
+  done
+  dir=$(sed -n 's#^[[:space:]]*GAMEDIR=.*/\([^/"$ ]*\)"\{0,1\}[[:space:]]*$#\1#p' "${script}" 2>/dev/null | head -n 1)
+  [ -n "${dir}" ] && [ -d "${script%/*}/${dir}" ] && echo "${script%/*}/${dir}"
+}
+
+port() {
+  local rc=$1 seconds=$2 offset=$3 script="${ROOT}$4" dir json pm name failures
+  shift 4
+  [ "$1" = -- ] && shift
+  OUTPUT=$(tail -c +"$((offset + 1))" "${EXEC_LOG}" 2>/dev/null | tail -n 300)
+  failures=$(port_failures "${seconds}" <<<"${OUTPUT}" | awk '!seen[$0]++' | head -n 20)
+  # Nothing failed: a clean exit, or one from outside.
+  if [ -z "${failures}" ]; then
+    { [ "${rc}" = 0 ] || external "${rc}"; } && return 0
+  fi
+  dir=$(port_dir "${script}")
+  json="${dir}/port.json"
+  pm="${ROOT}/storage/roms/ports/PortMaster"
+  name=$(jq -r '.attr.title // .name // empty' "${json}" 2>/dev/null)
+  name=${name:-$(basename "${script}" .sh)}
+  FAILURES=${failures}
+  build() {
+    local f elf=0 runtime
+    echo "event: port"
+    echo "what: ${name}"
+    echo "game: ${script##*/}"
+    echo "exit: $(describe "${rc}") after ${seconds} s"
+    echo "signature: ${SIGNATURE}"
+    section "failure lines"
+    printf '%s\n' "${FAILURES:-(none matched; the script exited ${rc})}"
+    section port
+    echo "script: ${script#"${ROOT}"}"
+    echo "folder: ${dir:+${dir#"${ROOT}"}}"
+    if [ -f "${json}" ]; then
+      jq -r '"package: \(.name) (port.json version \(.version))",
+        "porter: \((.attr.porter // []) | join(", "))",
+        "arch: \((.attr.arch // []) | join(", "))",
+        "runtime: \((.attr.runtime // []) | if type == "array" then join(", ") else . end | if . == "" then "none" else . end)",
+        "source: \(.status.source // "?") \(.status.md5 // "")"' "${json}" 2>&1
+    fi
+    sed -n 's#.*<name>\(.*\)</name>.*#gameinfo name: \1#p' "${dir}/gameinfo.xml" 2>/dev/null | head -n 1
+    echo "portmaster: $(cat "${pm}/version" 2>/dev/null || echo missing)"
+    [ -f "${pm}/control.txt" ] || echo "control.txt: MISSING"
+    # The device as PortMaster sees it: from the run's output, else its file.
+    f=$(grep -aE '^(CFW_NAME|CFW_VERSION|DEVICE_NAME|DISPLAY_WIDTH|DISPLAY_HEIGHT|ANALOG_STICKS)=' <<<"${OUTPUT}")
+    [ -n "${f}" ] || f=$(cd "${pm}" 2>/dev/null && bash -c '. ./device_info.txt >/dev/null 2>&1
+      for v in CFW_NAME CFW_VERSION DEVICE_NAME DISPLAY_WIDTH DISPLAY_HEIGHT ANALOG_STICKS; do echo "$v=${!v}"; done')
+    printf '%s\n' "${f}" | sort -u
+    if [ -f "${json}" ]; then
+      while IFS= read -r runtime; do
+        [ -n "${runtime}" ] || continue
+        if [ -e "${pm}/libs/${runtime}" ] || [ -e "${pm}/libs/${runtime}.squashfs" ]; then
+          echo "runtime ${runtime}: present"
+        else
+          echo "runtime ${runtime}: MISSING from PortMaster/libs"
+        fi
+      done < <(jq -r '.attr.runtime // [] | if type == "array" then .[] else . end' "${json}" 2>/dev/null)
+    fi
+    if grep -q 'GPTOKEYB' "${script}" 2>/dev/null; then
+      echo "gptokeyb: used by the script$(ls "${dir}"/*.gptk >/dev/null 2>&1 && echo ", .gptk present" || echo ", no .gptk in the folder")$(pgrep -x gptokeyb >/dev/null 2>&1 && echo "; still running" || echo "; not running now")"
+    fi
+    echo "gpu: $(timeout 5 gpudriver 2>/dev/null | head -n 1)"
+    section "missing libraries (ldd, the port's libs first)"
+    if [ -d "${dir}" ]; then
+      while IFS= read -r -d '' f; do
+        [ "$(head -c 4 "${f}" 2>/dev/null | od -An -c | tr -d ' ')" = '177ELF' ] || continue
+        elf=$((elf + 1))
+        [ "${elf}" -le 20 ] || break
+        LD_LIBRARY_PATH="${dir}/libs:${dir}/lib:${dir}/libs.${DEVICE_ARCH:-aarch64}:/usr/lib/compat" \
+          run ldd "${f}" | grep 'not found' | sed "s#^#${f#"${dir}/"}: #"
+      done < <(find "${dir}" -maxdepth 3 -type f -size +1k -print0 2>/dev/null)
+    fi
+    section "script (first 80 lines)"
+    head -n 80 "${script}" 2>/dev/null
+    common
+    section "run output (exec.log, last 300 lines)"
+    printf '%s\n' "${OUTPUT}"
+    # The port's own logs written during this run.
+    if [ -d "${dir}" ]; then
+      find "${dir}" -maxdepth 2 -type f \( -name '*.log' -o -name 'log.txt' -o -name '*log*.txt' \) \
+        -newermt "@$(($(date +%s) - seconds - 5))" 2>/dev/null | head -n 3 | while IFS= read -r f; do
+        section "port log ${f#"${dir}/"} (last 80 lines)"
+        # Most scripts tee their log: it is the run output above.
+        if grep -q "tee .*${f##*/}" "${script}" 2>/dev/null; then
+          echo "(the script tees it: same as the run output)"
+        else
+          tail -n 80 "${f}"
+        fi
+      done
+    fi
+  }
+  SIGNATURE=$(head -n 1 <<<"${failures}" | normalize | sign port "${name}")
+  queue "${SIGNATURE}" build "$@"
+}
+
 sign() { { printf '%s\n' "$@"; cat; } | sha1sum | cut -c1-8; }
 
 # --- events ---
@@ -407,7 +563,7 @@ send() {
 }
 
 case "${1:-}" in
-  game | unit | kernel | launcher | module)
+  game | port | unit | kernel | launcher | module)
     enabled || exit 0
     event=$1
     shift
@@ -415,7 +571,7 @@ case "${1:-}" in
     ;;
   send) send ;;
   *)
-    sed -n '10,21s/^# \{0,3\}//p' "$0" >&2
+    sed -n '10,25s/^# \{0,3\}//p' "$0" >&2
     exit 2
     ;;
 esac
