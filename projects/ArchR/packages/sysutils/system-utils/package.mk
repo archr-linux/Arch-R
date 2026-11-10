@@ -2,7 +2,7 @@
 
 PKG_NAME="system-utils"
 PKG_VERSION="2.1"
-PKG_REV="6"
+PKG_REV="7"
 PKG_LICENSE="mix"
 PKG_DEPENDS_TARGET="toolchain sleep pulseaudio"
 PKG_SITE=""

@@ -34,7 +34,7 @@ run() {
   done
   ARCHR_DT="${dir}/dt" ARCHR_PROFILE_DIR="${dir}/out" sh "${QUIRK}" 2>"${dir}/log" || echo "quirk exited $?"
   (. "${dir}/out/001-device_config" &&
-    echo "${DEVICE_PLAYBACK_PATH_SPK} ${DEVICE_PLAYBACK_PATH_HP} ${DEVICE_HEADPHONE_DEV##*/}")
+    echo "${DEVICE_PLAYBACK_PATH_SPK} ${DEVICE_PLAYBACK_PATH_HP} ${DEVICE_HEADPHONE_DEV##*/} ${DEVICE_HEADPHONE_INSERTED} [${DEVICE_SPEAKER_SWITCH}]")
   [ -s "${dir}/log" ] && echo "log: $(cat "${dir}/log")"
 }
 check() {
@@ -44,9 +44,9 @@ check() {
   fi
 }
 
-AMP="HP HP platform-rk817-sound-amplified-event"
-SIMPLE="SPK HP platform-rk817-sound-simple-event"
-BASE="SPK HP platform-rk817-sound-event"
+AMP="HP HP platform-rk817-sound-amplified-event 1 [Internal Speakers Switch]"
+SIMPLE="SPK HP platform-rk817-sound-simple-event 0 []"
+BASE="SPK HP platform-rk817-sound-event 0 []"
 
 check "amplified card: speaker on the HP lines" \
   "$(run rk817-sound=stub rk817-sound-amplified=okay rk817-sound-simple=disabled)" "${AMP}"

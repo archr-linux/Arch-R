@@ -34,8 +34,22 @@ if [ $# -gt 1 ]; then
 elif [ $# -eq 0 ]; then
   echo "R36S Clone audio: no rk817 sound card on; speaker path left at SPK" >&2
 fi
+# On the amplified card both mux positions are "HP", so the mux alone
+# never takes the sound off the speaker: headphone_sense turns the amp's
+# "Internal Speakers" pin off while headphones are in. That card's jack
+# also reads the right way round (the overlay copies the stock hp-det
+# polarity, and the stock BSP driver treats an active line as plugged),
+# so value 1 means headphones in. It has to: the kernel keeps the
+# "Headphones" pin on only while the jack reads 1, and with both pins off
+# the headphone lines lose power and nothing plays at all.
+SPK_SWITCH=""
+HP_INSERTED="0"
 case "${CARD}" in
-  rk817-sound-amplified) SPK_PATH="HP" ;;
+  rk817-sound-amplified)
+    SPK_PATH="HP"
+    SPK_SWITCH="Internal Speakers Switch"
+    HP_INSERTED="1"
+    ;;
   *) SPK_PATH="SPK" ;;
 esac
 JACK_DEV="/dev/input/by-path/platform-${CARD:-rk817-sound}-event"
@@ -51,6 +65,8 @@ DEVICE_POWER_LED="blue:power"
 DEVICE_PLAYBACK_PATH_SPK="${SPK_PATH}"
 DEVICE_PLAYBACK_PATH_HP="HP"
 DEVICE_HEADPHONE_DEV="${JACK_DEV}"
+DEVICE_SPEAKER_SWITCH="${SPK_SWITCH}"
+DEVICE_HEADPHONE_INSERTED="${HP_INSERTED}"
 DEVICE_TEMP_SENSOR="/sys/devices/virtual/thermal/thermal_zone0/temp"
 DEVICE_GPU_TEMP_SENSOR="/sys/devices/virtual/thermal/thermal_zone1/temp"
 CONF

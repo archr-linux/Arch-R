@@ -11,17 +11,23 @@ if [[ ${AUDIO_MANAGEMENT} == "UCM" ]]; then
     exit 0
 fi
 
+# The switch value that means headphones in. On most of these boards the
+# switch is inverted (0 = headphones in); a quirk sets 1 where the jack
+# reads the right way round.
+HP_IN="${DEVICE_HEADPHONE_INSERTED:-0}"
+
 # Sync with the REAL jack state at startup. The kernel keeps the switch
 # state in the input device (EV_SW/SW_HEADPHONE_INSERT), so query it via
-# evtest --query (exit 10 = bit set) instead of trusting a saved setting
-# or the legacy /sys/class/gpio number, which mainline kernels don't
-# even expose. On these boards the switch is inverted: value 0 means
-# headphones inserted (see HP_ON below), so bit set = speakers.
+# evtest --query (exit 10 = bit set, 0 = clear) instead of trusting a
+# saved setting or the legacy /sys/class/gpio number, which mainline
+# kernels don't even expose.
 # Fallback order: input switch, legacy gpio node when it exists, speakers.
 JACK_STATE="speakers"
 if [ -n "${DEVICE_HEADPHONE_DEV}" ] && [ -e "${DEVICE_HEADPHONE_DEV}" ]; then
   evtest --query "${DEVICE_HEADPHONE_DEV}" EV_SW SW_HEADPHONE_INSERT
-  [ $? -eq 0 ] && JACK_STATE="headphone"
+  case "${HP_IN}:$?" in
+    0:0 | 1:10) JACK_STATE="headphone" ;;
+  esac
 elif [ -n "${DEVICE_JACK}" ] && [ -e "/sys/class/gpio/gpio${DEVICE_JACK}/value" ]; then
   [ "$(cat /sys/class/gpio/gpio${DEVICE_JACK}/value)" = "0" ] && JACK_STATE="headphone"
 fi
@@ -35,12 +41,23 @@ fi
 # Moves the mux and records where the sound goes, in that order: when the
 # mixer refuses (no such control, no such item, no card yet) audio.device
 # keeps saying where the sound really is, and the journal says why.
+# Where the speaker sits on the same lines as the headphones (the mux
+# alone cannot take the sound off it), DEVICE_SPEAKER_SWITCH names the
+# mixer switch that gates it: off for headphones, on for speakers.
 set_path() {
-  if amixer -c 0 cset "name=${DEVICE_PLAYBACK_PATH}" "${1}" >/dev/null; then
-    set_setting "audio.device" "${2}"
-  else
+  if ! amixer -c 0 cset "name=${DEVICE_PLAYBACK_PATH}" "${1}" >/dev/null; then
     echo "headphone_sense: could not set '${DEVICE_PLAYBACK_PATH}' to '${1}' for ${2}; audio.device left as it was" >&2
+    return
   fi
+  if [ -n "${DEVICE_SPEAKER_SWITCH}" ]; then
+    local gate=on
+    [ "${2}" = headphone ] && gate=off
+    if ! amixer -c 0 cset "name=${DEVICE_SPEAKER_SWITCH}" "${gate}" >/dev/null; then
+      echo "headphone_sense: could not set '${DEVICE_SPEAKER_SWITCH}' to '${gate}' for ${2}; audio.device left as it was" >&2
+      return
+    fi
+  fi
+  set_setting "audio.device" "${2}"
 }
 
 # An explicit request wins; "auto" (or nothing) follows the jack state
@@ -66,8 +83,8 @@ if [ -z "${DEVICE}" ] || [ ! -e "${DEVICE}" ]; then
     exit 0
 fi
 
-HP_ON='*(SW_HEADPHONE_INSERT), value 0*'
-HP_OFF='*(SW_HEADPHONE_INSERT), value 1*'
+HP_ON="*(SW_HEADPHONE_INSERT), value ${HP_IN}*"
+HP_OFF="*(SW_HEADPHONE_INSERT), value $((1 - HP_IN))*"
 
 evtest "${DEVICE}" | while read line; do
     case $line in
