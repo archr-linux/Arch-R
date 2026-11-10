@@ -4,6 +4,7 @@
 
 PKG_NAME="scummvmsa"
 PKG_VERSION="2026.2.0"
+PKG_REV="2"
 PKG_LICENSE="GPL2"
 PKG_SITE="https://github.com/scummvm/scummvm"
 PKG_URL="${PKG_SITE}/archive/refs/tags/v${PKG_VERSION}.tar.gz"
