@@ -1,0 +1,18 @@
+[Unit]
+Description=Send error reports when one is queued or the network changes
+RequiresMountsFor=/storage
+
+# Nothing runs until a report arrives in the queue or a network comes up:
+# iwd writes its state folder, /var/lib/iwd (profile, frequencies), on
+# every Wi-Fi connection, resolved and connman their resolv.conf when the
+# DNS servers change (connman: a USB or cable network). archr-error-report
+# send waits up to 20 s for a default route, then gives up until the next.
+[Path]
+PathChanged=/storage/.cache/error-reports/queue
+PathChanged=/var/lib/iwd
+PathChanged=/run/systemd/resolve/resolv.conf
+PathChanged=/run/connman/resolv.conf
+Unit=archr-error-report.service
+
+[Install]
+WantedBy=multi-user.target
