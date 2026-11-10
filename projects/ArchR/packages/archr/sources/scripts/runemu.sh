@@ -273,6 +273,20 @@ function restore_ksm() {
         echo "${KSM_PREVIOUS_STATE}" > "${KSM_RUN_FILE}" 2>/dev/null
 }
 
+# Ports source /roms/ports/PortMaster/control.txt, which only exists once
+# PortMaster is unpacked; until now that happened only when the PortMaster app
+# was opened. A port copied from the PC on a fresh card, or a system update
+# that changed control.txt, must not depend on it.
+function portmaster_ready() {
+        if [ -f /storage/roms/ports/PortMaster/control.txt ] &&
+           [ -f /storage/.config/PortMaster/mapper.txt ] &&
+           cmp -s /usr/config/PortMaster/control.txt /storage/roms/ports/PortMaster/control.txt; then
+                return
+        fi
+        ${VERBOSE} && log $0 "Preparing PortMaster"
+        ( . /usr/bin/portmaster_prepare ) >/dev/null 2>>${OUTPUT_LOG}
+}
+
 function clear_screen() {
         ${VERBOSE} && log $0 "Clearing screen"
         clear
@@ -508,6 +522,7 @@ case ${EMULATOR} in
         RUNTHIS='${RUN_SHELL} /usr/bin/start_dolphin_wii.sh "${ROMNAME}" "${PLATFORM}" "${CORE}"'
       ;;
       "ports")
+        portmaster_ready
         if [[ "${ROMNAME,,}" == *".appimage" ]]; then
           RUNTHIS='${EMUPERF} "${ROMNAME}"'
         else
@@ -519,6 +534,7 @@ case ${EMULATOR} in
       ;;
       "windows")
         RUNTHIS='${EMUPERF} ${RUN_SHELL} "${ROMNAME}"'
+        portmaster_ready
         # Hook into Portmaster control mapping
         sed -i "/^ACTIVE_GAME=/c\ACTIVE_GAME=\"${ROMNAME}\"" /storage/.config/PortMaster/mapper.txt
         sed -i "/^ACTIVE_PLATFORM=/c\ACTIVE_PLATFORM=\"${PLATFORM}\"" /storage/.config/PortMaster/mapper.txt
