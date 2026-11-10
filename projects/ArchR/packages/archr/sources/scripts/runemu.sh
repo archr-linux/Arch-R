@@ -124,6 +124,8 @@ LOG_FILE="exec.log"
 RUN_SHELL="/usr/bin/bash"
 RETROARCH_TEMP_CONFIG="/storage/.config/retroarch/retroarch.cfg"
 RETROARCH_APPEND_CONFIG="/tmp/.retroarch.cfg"
+# Set for a RetroArch game: archr-retroarch-unappend runs after it.
+RA_UNAPPEND=0
 CURRENT_GAME="/run/archr/current-game"
 NETWORK_PLAY="No"
 SET_SETTINGS_TMP="/tmp/shader"
@@ -491,6 +493,7 @@ case ${EMULATOR} in
     esac
 
     ### Configure retroarch
+    RA_UNAPPEND=1
     if [ -e "${SET_SETTINGS_TMP}" ]
     then
       rm -f "${SET_SETTINGS_TMP}"
@@ -679,6 +682,14 @@ else
           kill -TERM "${PERF_PROBE}" 2>/dev/null
           wait "${PERF_PROBE}" 2>/dev/null
         fi
+fi
+
+### RetroArch saves into retroarch.cfg what the append config only lent to
+### this game (savestate folder, pads, overlay): put that back, keep
+### what the user changed.
+if [ "${RA_UNAPPEND}" = 1 ]; then
+  archr-retroarch-unappend "${RETROARCH_TEMP_CONFIG}" "${RETROARCH_APPEND_CONFIG}" ||
+    log $0 "retroarch.cfg: the append config could not be taken back"
 fi
 
 ### Switch back to performance mode to clean up

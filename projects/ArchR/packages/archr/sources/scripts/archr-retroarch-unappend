@@ -1,0 +1,55 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2024-present Arch R
+#
+# RetroArch saves every setting it holds into retroarch.cfg (on exit or
+# from its menu), the ones the append config only lent to this game too:
+# this system's savestate folder, the joypad indexes, this run's overlay.
+# setsettings.sh keeps retroarch.cfg as the game found it (<append>.base);
+# runemu.sh runs this after the game. A key of the append config that
+# RetroArch saved with the lent value gets back the value it had before,
+# or goes away when it had none. A key the user changed in the game keeps
+# the user's value, and so does every other key.
+#   archr-retroarch-unappend [retroarch.cfg [append.cfg]]
+
+CONFIG="${1:-/storage/.config/retroarch/retroarch.cfg}"
+APPEND="${2:-/tmp/.retroarch.cfg}"
+BASE="${APPEND}.base"
+
+[ -f "${BASE}" ] || exit 0
+# RetroArch saved nothing: nothing to put back.
+if [ ! -f "${APPEND}" ] || [ ! -f "${CONFIG}" ] || cmp -s "${BASE}" "${CONFIG}"
+then
+    rm -f "${BASE}"
+    exit 0
+fi
+
+# RetroArch writes ~/ for the home folder and true/false for 1/0.
+awk -v home="${HOME:-/storage}" '
+    function key(line) { sub(/[ \t]*=.*/, "", line); return line }
+    function value(line) {
+        sub(/^[^=]*=[ \t]*/, "", line); sub(/[ \t\r]*$/, "", line)
+        gsub(/^"|"$/, "", line)
+        if (substr(line, 1, 2) == "~/") line = home substr(line, 2)
+        if (line == "1") line = "true"
+        if (line == "0") line = "false"
+        return line
+    }
+    FILENAME == ARGV[1] { if (/^[^#]*=/) lent[key($0)] = value($0); next }
+    FILENAME == ARGV[2] { if (/^[^#]*=/) { k = key($0); before[k] = $0 } next }
+    /^[^#]*=/ {
+        k = key($0)
+        if ((k in lent) && value($0) == lent[k] &&
+            !((k in before) && value(before[k]) == lent[k])) {
+            if ((k in before) && !(k in done)) print before[k]
+            done[k] = 1
+            next
+        }
+    }
+    { print }
+' "${APPEND}" "${BASE}" "${CONFIG}" >"${CONFIG}.unappend" &&
+    chmod --reference="${CONFIG}" "${CONFIG}.unappend" &&
+    mv -f "${CONFIG}.unappend" "${CONFIG}"
+RC=$?
+rm -f "${CONFIG}.unappend" "${BASE}"
+exit ${RC}

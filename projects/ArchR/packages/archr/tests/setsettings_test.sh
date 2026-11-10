@@ -5,8 +5,9 @@
 # Host test for the RetroArch settings path: setsettings.sh writes a key to
 # the append config only when system.cfg sets it, never touches the user's
 # own values in retroarch.cfg, and passes --set-shader only for a chosen
-# shader; archr-retroarch-hotkeys writes once (or forced); and
-# archr-retroarch-defaults drops only the old factory values, once.
+# shader; archr-retroarch-hotkeys writes once (or forced);
+# archr-retroarch-unappend takes back after the game what the append config
+# lent; and archr-retroarch-defaults drops only the old factory values, once.
 #   bash projects/ArchR/packages/archr/tests/setsettings_test.sh
 
 set -u
@@ -207,6 +208,39 @@ check "same pad: hotkeys stay" "has 'input_menu_toggle_btn = \"9\"' '${R}'"
 echo "old-joypad" >"${TMP}/ra/.archr-hotkeys"
 bash "${HK}" "${R}"
 check "another built-in pad: written again" "has 'input_menu_toggle_btn = \"2\"' '${R}'"
+
+# After the game: what RetroArch saved from the append config goes back to
+# the user's value; what the user changed in the game stays.
+UA="${SCRIPTS}/archr-retroarch-unappend"
+printf '%s\n' "${USER_RA}" 'menu_driver = "rgui"' 'input_menu_toggle_btn = "2"' >"${TMP}/ra/retroarch.cfg"
+printf '%s\n' "global.retroarch.menu_driver=ozone" "gba.integerscale=1" "system.autohotkeys=0" >"${TMP}/system.cfg"
+bash "${SCRIPTS}/setsettings.sh" gba "/roms/gba/Game (USA).gba" mgba --controllers="" --autosave="" --snapshot="" >/dev/null
+# RetroArch saved on exit: the lent values (~/ for the home folder, true
+# for 1), a hotkey and the menu changed by the user, and keys of its own.
+sed -e 's/^video_scale_integer = .*/video_scale_integer = "true"/' \
+    -e 's/^input_menu_toggle_btn = .*/input_menu_toggle_btn = "9"/' \
+    -e 's/^menu_driver = .*/menu_driver = "xmb"/' "${A}.base" >"${TMP}/ra/retroarch.cfg"
+grep -E '^(savestate_directory|savestate_auto_load|input_player1_analog_dpad_mode) = ' "${A}" |
+  sed "s|\"${TMP}/|\"~/|" >>"${TMP}/ra/retroarch.cfg"
+echo 'netplay_fade_chat = "true"' >>"${TMP}/ra/retroarch.cfg"
+check "unappend fixture: the lent folder is saved as ~/" "grep -q '^savestate_directory = \"~/' '${TMP}/ra/retroarch.cfg'"
+HOME="${TMP}" bash "${UA}" "${TMP}/ra/retroarch.cfg" "${A}"
+R="${TMP}/ra/retroarch.cfg"
+check "unappend: lent keys the user had come back" "has 'video_scale_integer = \"true\"' '${R}' && [ \$(grep -c '^video_scale_integer = ' '${R}') = 1 ]"
+check "unappend: lent keys the user never had go away" \
+  "! grep -Eq '^(savestate_directory|savestate_auto_load|input_player1_analog_dpad_mode) = ' '${R}'"
+check "unappend: a hotkey changed in the game stays" "has 'input_menu_toggle_btn = \"9\"' '${R}'"
+check "unappend: a menu changed in the game stays" "has 'menu_driver = \"xmb\"' '${R}'"
+check "unappend: RetroArch's own new keys stay" "has 'netplay_fade_chat = \"true\"' '${R}'"
+check "unappend: the user's other keys stay" "has 'input_overlay_opacity = \"0.5\"' '${R}'"
+check "unappend: done once" "[ ! -e '${A}.base' ] && [ ! -e '${R}.unappend' ]"
+cp "${R}" "${TMP}/saved.cfg"
+HOME="${TMP}" bash "${UA}" "${R}" "${A}"
+check "unappend: nothing without a game" "cmp -s '${R}' '${TMP}/saved.cfg'"
+bash "${SCRIPTS}/setsettings.sh" gba "/roms/gba/Game (USA).gba" mgba --controllers="" --autosave="" --snapshot="" >/dev/null
+cp "${R}" "${TMP}/saved.cfg"
+HOME="${TMP}" bash "${UA}" "${R}" "${A}"
+check "unappend: RetroArch saved nothing, nothing changes" "cmp -s '${R}' '${TMP}/saved.cfg' && [ ! -e '${A}.base' ]"
 
 # Migration: old factory values go, user values and other keys stay, once.
 # An older installation: today's defaults plus some of the old factory lines.
