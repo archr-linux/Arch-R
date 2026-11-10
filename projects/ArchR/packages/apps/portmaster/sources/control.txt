@@ -17,6 +17,16 @@
 
 directory="roms"
 controlfolder="/$directory/ports/PortMaster"
+# Ports find their files at /$directory/ports/<game>. A port kept on the
+# second card (automount publishes its ROM folder as /run/archr/roms2) has
+# them there, not on the system card: point $directory at that card, as
+# ArkOS does with roms2. PortMaster itself always stays on the system card.
+_pm_port=$(readlink -f -- "$0" 2>/dev/null)
+_pm_roms2=$(readlink -f /run/archr/roms2 2>/dev/null)
+if [ -n "$_pm_roms2" ] && [[ "$_pm_port" == "$_pm_roms2"/ports/* ]]; then
+  directory="run/archr/roms2"
+fi
+unset _pm_port _pm_roms2
 # ArchR roda a interface/runemu/PortMaster como root (modelo herdado de
 # JELOS/ROCKNIX). Por isso ESUDO fica vazio: ports que executam mount,
 # umount, chmod /dev/uinput, zramctl, swapon ou systemctl funcionam sem
