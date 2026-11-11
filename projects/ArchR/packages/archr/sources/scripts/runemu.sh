@@ -408,7 +408,10 @@ disc_from_archive() {
   done
   wait "${pid}"
   rc=$?
-  if [ "${rc}" -ne 0 ] || ! mv -f "${work}/${inner}" "${disc}"; then
+  # Most archives already name the disc after themselves (Hero.zip holding
+  # Hero.chd): then it is in place, and mv onto itself would fail.
+  if [ "${rc}" -ne 0 ] || [ ! -f "${work}/${inner}" ] ||
+     { [ "${work}/${inner}" != "${disc}" ] && ! mv -f "${work}/${inner}" "${disc}"; }; then
     log $0 "Disc in archive: extraction failed (${rc})"
     rm -rf "${DISC_CACHE}"
     return 0
