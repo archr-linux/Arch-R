@@ -295,6 +295,41 @@ for line in "Segmentation fault (core dumped)" "./arcajs.aarch64: error while lo
 ${line}"
   check "marker: ${line}" "$(count "${Q}")" "1"
 done
+# A port that writes its own log and nothing to exec.log (NextOS ports):
+# the failure lines come from that log.
+mkdir -p "${P}/chrono"
+cat >"${P}/Chrono Trigger.sh" <<'EOF'
+#!/bin/bash
+GAMEDIR="/$directory/ports/chrono"
+exec > "$GAMEDIR/log.txt" 2>&1
+EOF
+printf '{"version": 4, "name": "chrono.zip", "items": ["Chrono Trigger.sh", "chrono/"], "attr": {"title": "Chrono Trigger"}}\n' >"${P}/chrono/port.json"
+nxport() {
+  printf '%s\n' "$3" >"${P}/chrono/log.txt"
+  local offset
+  offset=$(stat -c %s "${R}/var/log/exec.log")
+  report port "$1" "$2" "${offset}" "/storage/roms/ports/Chrono Trigger.sh" -- "/storage/roms/ports/Chrono Trigger.sh" -Pports
+}
+rm -f "${Q:?}"/*.txt "${R:?}/storage/.cache/error-reports/seen" "${R:?}/storage/.cache/error-reports/today"
+nxport 1 13 '== Chrono Trigger | nxbootstrap 0.6.17 | cfw=ArchR ==
+[2026-11-11 12:46:48] TERMINAL ERROR NXE2001: no APK, APKM, APKS, XAPK, companion archive or loose payload was found
+ERROR: game data installation did not complete'
+check "NextOS port with no game data: an answer, no report" "$(count "${Q}")" "0"
+nxport 1 12 '[2026-11-11 12:53:44] ERROR: no APK, APKM, APKS, XAPK, companion archive or loose payload was found
+ERROR: game data installation did not complete'
+check "the same from NXExtract 1.2.6 (no code)" "$(count "${Q}")" "0"
+nxport 1 13 '[2026-11-11 12:46:48] TERMINAL ERROR NXE6001: [Errno 1] Operation not permitted'
+check "NextOS port failing for another reason is reported" "$(count "${Q}")" "1"
+F=$(find "${Q}" -name '*.txt' | head -n 1)
+check "its own log gives the failure line" "$(sed -n '/^--- failure lines ---$/{n;p}' "${F}")" \
+  "[2026-11-11 12:46:48] TERMINAL ERROR NXE6001: [Errno 1] Operation not permitted"
+check "and is attached" "$(grep -c '^--- port log log.txt (last 80 lines) ---$' "${F}")" "1"
+rm -f "${Q:?}"/*.txt "${R:?}/storage/.cache/error-reports/seen" "${R:?}/storage/.cache/error-reports/today"
+nxport 2 18 '[subsurf] frame 4 keep=0
+[subsurf] signal 11 at pc=0xffff85e8cd64 addr=0x1'
+check "a crash only the port's log tells is reported" "$(sed -n '/^--- failure lines ---$/{n;p}' "$(find "${Q}" -name '*.txt' | head -n 1)")" \
+  "[subsurf] signal 11 at pc=0xffff85e8cd64 addr=0x1"
+
 eval "$(sed -n '/^normalize() {/,/^}/p' "${SCRIPT}")"
 check "a signature line keeps file names, not paths or numbers" \
   "$(normalize <<<'Segmentation fault at /a/b/c.so 0x12 pid 77')" "Segmentation fault at c.so # pid #"

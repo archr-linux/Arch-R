@@ -176,7 +176,9 @@ check "value with blanks" "$(line '^wifi.key' configs/system.cfg)" "wifi.key=<re
 check "quoted value" "$(line '^cheevos_password' configs/retroarch.cfg)" "cheevos_password=<removed>"
 check "bearer" "$(line '^Authorization=' logs/launcher.log)" "Authorization=<removed>"
 check "URL user:password" "$(line 'example.org\|^<linha' logs/launcher.log)" "<linha removida>"
-check "every line of the log accounted for" "$(grep -c '' "${X}/logs/launcher.log")" "$(($(grep -c '' "${R}/var/log/archr-launcher-session.log") - 6 + 3))"
+# The X-Api-Key line closes its quotes: the escaped-quote line after it is
+# cut on its own, then leaves a quote open and takes the rest.
+check "every line of the log accounted for" "$(grep -c '' "${X}/logs/launcher.log")" "$(($(grep -c '' "${R}/var/log/archr-launcher-session.log") - 6 + 4))"
 check "a value over lines takes the rest of the file" \
   "$(tr '\n' '|' <"${X}/logs/runemu-debug.log")" \
   '### /var/log/runemu-debug.log|before=1|{"secret=<removed>|<resto do arquivo removido>|'
@@ -209,5 +211,28 @@ rm -f "${TMP}/osd"
 PATH="${TMP}/bin:${PATH}" ARCHR_REPORT_ROOT="${R}" bash "${SCRIPT}" --osd >/dev/null 2>&1
 check "--osd: a failure says so" "$(tr '\n' '|' <"${TMP}/osd")" "send report start|send report failed|"
 chmod 700 "${R}/storage/roms/relatorios"
+
+# sanitize alone, line by line. A quote is open only when the whole line
+# leaves it open: "$(cd ... && pwd)" closes on its own line, so the lines
+# after it stay (a port script's first line took a whole report with it).
+eval "$(sed -n '/^sanitize() {/,/^}/p' "${SCRIPT}")"
+san() { printf '%s\n' "$@" | sanitize | tr '\n' '|'; }
+# Nothing but ")\"" after the name reads as a value to come: the next line
+# goes too, the ones after stay.
+check "pwd in a closed command substitution keeps the rest of the file" \
+  "$(san 'SCRIPT_DIR="$(cd -- "$(dirname -- "$0")" && pwd)"' 'cd "$SCRIPT_DIR"' 'GAMEDIR=/roms/ports/pes6')" \
+  'SCRIPT_DIR="$(cd -- "$(dirname -- "$0")" && pwd=<removed>|<linha removida>|GAMEDIR=/roms/ports/pes6|'
+check "a quoted name, value on the same line" \
+  "$(san '"token" : "abc123"' 'next line')" \
+  '"token=<removed>|next line|'
+check "a quote left open still takes the rest" \
+  "$(san 'password="abc' 'def"' 'after')" \
+  'password=<removed>|<resto do arquivo removido>|'
+check "an open single quote still takes the rest" \
+  "$(san "cheevos_token = 'abc" "def'" 'after')" \
+  'cheevos_token=<removed>|<resto do arquivo removido>|'
+check "an open brace still takes the rest" \
+  "$(san '{"secret": {' '"v": "x"}}' 'after')" \
+  '{"secret=<removed>|<resto do arquivo removido>|'
 
 exit ${FAILED}

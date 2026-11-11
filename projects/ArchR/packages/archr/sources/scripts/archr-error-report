@@ -226,6 +226,8 @@ PORT_FAILS+='|Traceback \(most recent call last\)|stack traceback:|^(lua|love|py
 PORT_FAILS+='|Unhandled [Ee]xception|Exception in thread|DllNotFoundException|TypeLoadException'
 PORT_FAILS+='|FATAL|[Ff]atal( error)?:|Fatal error|[Ff]ailed to (load|initiali[sz]e|create|open (display|window))'
 PORT_FAILS+='|(Could not|Unable to|Couldn.t) (initiali[sz]e|create|open (display|window|audio)|load)'
+# NextOS ports: NXExtract's verdict, and a crash their wrappers log.
+PORT_FAILS+='|TERMINAL ERROR NXE[0-9]+|(signal|signum|child_signal)[ =]+(4|6|7|8|11)([^0-9]|$)'
 PORT_FAILS+='|SDL_(CreateWindow|Init|GL_CreateContext|CreateRenderer)|EGL_(BAD|NOT)_|eglInitialize|GL_INVALID|GLSL.*error'
 PORT_FAILS+='|Error loading needed lib|Unimplemented Opcode|PltResolver|[Ff]ailed to start [Ww]eston|westonpack.*(error|fail)'
 PORT_FAILS+='|gmloader.*(error|[Ff]ailed|abort)|Missing runtime|requires the latest PortMaster|[Nn]o such runtime'
@@ -271,17 +273,36 @@ port_dir() {
   [ -n "${dir}" ] && [ -d "${script%/*}/${dir}" ] && echo "${script%/*}/${dir}"
 }
 
+# The port's own logs written during this run, one per line.
+port_logs() {
+  [ -d "$1" ] || return 0
+  find "$1" -maxdepth 2 -type f \( -name '*.log' -o -name 'log.txt' -o -name '*log*.txt' \) \
+    -newermt "@$(($(date +%s) - $2 - 5))" 2>/dev/null | head -n 3
+}
+# Whether the script tees that log: then it is the run output already.
+teed() { grep -q "tee .*${1##*/}" "$2" 2>/dev/null; }
+
 port() {
-  local rc=$1 seconds=$2 offset=$3 script="${ROOT}$4" dir json pm name failures
+  local rc=$1 seconds=$2 offset=$3 script="${ROOT}$4" dir json pm name failures own f
   shift 4
   [ "$1" = -- ] && shift
   OUTPUT=$(tail -c +"$((offset + 1))" "${EXEC_LOG}" 2>/dev/null | tail -n 300)
-  failures=$(port_failures "${seconds}" <<<"${OUTPUT}" | awk '!seen[$0]++' | head -n 20)
+  dir=$(port_dir "${script}")
+  # Many ports write their own log and nothing to exec.log: their failure
+  # lines are there.
+  LOGS=$(port_logs "${dir}" "${seconds}")
+  own=$(while IFS= read -r f; do
+    [ -n "${f}" ] && ! teed "${f}" "${script}" && tail -n 300 "${f}"
+  done <<<"${LOGS}")
+  # A NextOS port whose game files are missing or broken (NXExtract's source
+  # errors; before 1.2.10 only the message) says so on the screen: the
+  # user's to fix, not a failure.
+  grep -aqE 'TERMINAL ERROR NXE200[12]|ERROR: no APK, APKM, APKS, XAPK' <<<"${own}" && return 0
+  failures=$(printf '%s\n%s\n' "${OUTPUT}" "${own}" | port_failures "${seconds}" | awk '!seen[$0]++' | head -n 20)
   # Nothing failed: a clean exit, or one from outside.
   if [ -z "${failures}" ]; then
     { [ "${rc}" = 0 ] || external "${rc}"; } && return 0
   fi
-  dir=$(port_dir "${script}")
   json="${dir}/port.json"
   pm="${ROOT}/storage/roms/ports/PortMaster"
   name=$(jq -r '.attr.title // .name // empty' "${json}" 2>/dev/null)
@@ -344,18 +365,16 @@ port() {
     section "run output (exec.log, last 300 lines)"
     printf '%s\n' "${OUTPUT}"
     # The port's own logs written during this run.
-    if [ -d "${dir}" ]; then
-      find "${dir}" -maxdepth 2 -type f \( -name '*.log' -o -name 'log.txt' -o -name '*log*.txt' \) \
-        -newermt "@$(($(date +%s) - seconds - 5))" 2>/dev/null | head -n 3 | while IFS= read -r f; do
-        section "port log ${f#"${dir}/"} (last 80 lines)"
-        # Most scripts tee their log: it is the run output above.
-        if grep -q "tee .*${f##*/}" "${script}" 2>/dev/null; then
-          echo "(the script tees it: same as the run output)"
-        else
-          tail -n 80 "${f}"
-        fi
-      done
-    fi
+    while IFS= read -r f; do
+      [ -n "${f}" ] || continue
+      section "port log ${f#"${dir}/"} (last 80 lines)"
+      # Most scripts tee their log: it is the run output above.
+      if teed "${f}" "${script}"; then
+        echo "(the script tees it: same as the run output)"
+      else
+        tail -n 80 "${f}"
+      fi
+    done <<<"${LOGS}"
   }
   SIGNATURE=$(head -n 1 <<<"${failures}" | normalize | sign port "${name}")
   queue "${SIGNATURE}" build "$@"
