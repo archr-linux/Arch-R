@@ -352,6 +352,73 @@ case $(get_setting system.loglevel) in
   ;;
 esac
 
+### A disc kept in an archive (.zip or .7z holding a .gdi, .cdi, .chd or
+### .cue) on the systems flycast runs. flycast opens any archive as an
+### arcade cartridge, so the disc fails ("Unknown game"; the Atomiswave
+### conversions are Dreamcast discs). The disc is extracted once to
+### DISC_CACHE and that copy runs, its disc file named after the archive so
+### saves and states keep the game's name. Only the last disc stays; the
+### next one replaces it. Without the room for it, a card says so and the
+### game does not start.
+DISC_CACHE="${DISC_CACHE:-/storage/.cache/archr-disc}"
+SEVENZIP="${SEVENZIP:-/usr/bin/7z}"
+GAME_FILE="${ROMNAME}"
+
+disc_card() {
+  XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/var/run/0-runtime-dir}" archr-osd send disc "$1" >/dev/null 2>&1
+}
+
+disc_from_archive() {
+  local list inner ext source need free work disc pid rc
+  case "${PLATFORM}" in dreamcast|atomiswave|naomi|naomi2|naomigd) ;; *) return 0 ;; esac
+  case "${ROMNAME,,}" in *.zip|*.7z) ;; *) return 0 ;; esac
+  list=$("${SEVENZIP}" l -slt -- "${ROMNAME}" 2>/dev/null) || return 0
+  # Entries only: the first "Path =" is the archive itself.
+  list=$(sed -n '/^----------$/,$p' <<<"${list}")
+  for ext in gdi cdi chd cue; do
+    inner=$(sed -n 's/^Path = //p' <<<"${list}" | grep -i "\.${ext}$" | head -n 1)
+    [ -n "${inner}" ] && break
+  done
+  [ -n "${inner}" ] || return 0
+  work="${DISC_CACHE}/disc"
+  disc="${work}/${inner%/*}"
+  [ "${inner}" = "${inner%/*}" ] && disc="${work}"
+  disc="${disc}/${BASEROMNAME%.*}.${ext}"
+  source="${ROMNAME}|$(stat -c '%s %Y' "${ROMNAME}")"
+  if [ -f "${disc}" ] && [ "$(cat "${DISC_CACHE}/source" 2>/dev/null)" = "${source}" ]; then
+    log $0 "Disc in archive: ${disc} (already extracted)"
+    GAME_FILE="${disc}"
+    return 0
+  fi
+  rm -rf "${DISC_CACHE}"
+  mkdir -p "${DISC_CACHE}" || return 0
+  need=$(sed -n 's/^Size = //p' <<<"${list}" | awk '{s += $1} END {printf "%d", s / 1024 + 65536}')
+  free=$(df -Pk "${DISC_CACHE}" | awk 'NR == 2 {print $4}')
+  if [ "${free:-0}" -lt "${need}" ]; then
+    log $0 "Disc in archive: ${need} KiB needed, ${free} KiB free"
+    disc_card nospace
+    sleep 4
+    exit 0
+  fi
+  "${SEVENZIP}" x -y -o"${work}" -- "${ROMNAME}" >/dev/null 2>&1 &
+  pid=$!
+  while kill -0 "${pid}" 2>/dev/null; do
+    disc_card start
+    sleep 3
+  done
+  wait "${pid}"
+  rc=$?
+  if [ "${rc}" -ne 0 ] || ! mv -f "${work}/${inner}" "${disc}"; then
+    log $0 "Disc in archive: extraction failed (${rc})"
+    rm -rf "${DISC_CACHE}"
+    return 0
+  fi
+  printf '%s\n' "${source}" >"${DISC_CACHE}/source"
+  log $0 "Disc in archive: ${inner} extracted as ${disc}"
+  GAME_FILE="${disc}"
+}
+disc_from_archive
+
 ### Prepare to load our emulator and game.
 loginit "$1" "$2" "$3" "$4"
 clear_screen
@@ -466,7 +533,7 @@ case ${EMULATOR} in
     esac
 
 
-    RUNTHIS='${EMUPERF} /usr/bin/${RABIN} -L /tmp/cores/${CORE}_libretro.so --config ${RETROARCH_TEMP_CONFIG} --appendconfig ${RETROARCH_APPEND_CONFIG} ${ENTRYARGS} "${ROMNAME}"'
+    RUNTHIS='${EMUPERF} /usr/bin/${RABIN} -L /tmp/cores/${CORE}_libretro.so --config ${RETROARCH_TEMP_CONFIG} --appendconfig ${RETROARCH_APPEND_CONFIG} ${ENTRYARGS} "${GAME_FILE}"'
 
     # A slot loads with -e (its saves go on in that slot); the automatic
     # state loads with autosave on for this run.
@@ -546,7 +613,7 @@ case ${EMULATOR} in
         RUNTHIS='${RUN_SHELL} "${ROMNAME}"'
       ;;
       *)
-        RUNTHIS='${RUN_SHELL} "/usr/bin/start_${CORE%-*}.sh" "${ROMNAME}" "${PLATFORM}"'
+        RUNTHIS='${RUN_SHELL} "/usr/bin/start_${CORE%-*}.sh" "${GAME_FILE}" "${PLATFORM}"'
       ;;
     esac
   ;;

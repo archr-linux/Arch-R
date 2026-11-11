@@ -97,7 +97,10 @@ external() {
 # The error lines that make a signature: numbers, addresses and quotes
 # taken out, so the same fault matches on every run and every console.
 errors() {
+  # A core asking for an option this build does not define logs it as an
+  # [ERROR] on every run (flycast2021_cpu_mode): not why a game failed.
   grep -aiE 'error|fail|fatal|abort|assert|segmentation|exception|panic|cannot|unable|not found|unhandled|internal error|bug:' |
+    grep -avE 'GET_VARIABLE: .* - Invalid value' |
     sed -E 's/0x[0-9a-fA-F]+/#/g; s/[0-9]+/#/g; s/"[^"]*"/""/g; s/^[[:space:]#.:-]*//' | head -n "${1:-3}"
 }
 
