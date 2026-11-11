@@ -129,14 +129,16 @@ function create_controller_db {
       unset SELECT_BUTTON
 
       while IFS=";" read -r -e INPUT_NAME TYPE ID VALUE; do
-        [ ${INPUT_NAME} == "hotkeyenable" ] && HOTKEYENABLE_BUTTON="${ID}"
-        [ ${INPUT_NAME} == "select" ] && SELECT_BUTTON="${ID}"
+        [ "${INPUT_NAME}" = "hotkeyenable" ] && HOTKEYENABLE_BUTTON="${ID}"
+        [ "${INPUT_NAME}" = "select" ] && SELECT_BUTTON="${ID}"
       done <<< ${MAPPING_CFG:1}
 
       local MAPPING=""
       while IFS=";" read -r -e INPUT_NAME TYPE ID VALUE; do
         # Map the controller - skip 'hotkeyenable' if it is the same as 'select'
-        if [ ${INPUT_NAME} == "hotkeyenable" -a ${HOTKEYENABLE_BUTTON} == ${SELECT_BUTTON} ]; then
+        # A GUID with no inputs gives one empty line: nothing to map.
+        [ -n "${INPUT_NAME}" ] || continue
+        if [ "${INPUT_NAME}" = "hotkeyenable" ] && [ "${HOTKEYENABLE_BUTTON}" = "${SELECT_BUTTON}" ]; then
           echo "Skipping 'hotkeyenable', same mapping as 'select'"
         else
           map_input_control "${INPUT_NAME}" "${TYPE}" "${ID}" "${VALUE}"

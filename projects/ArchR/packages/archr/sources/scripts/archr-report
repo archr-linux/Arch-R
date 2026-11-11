@@ -113,7 +113,10 @@ sanitize() {
       pending = 1
       empty = tail ~ /^[^[:alnum:]]*$/
       opened = gsub(/[{[]/, "", tail) > 0
-      if (opened || gsub(/"/, "\"", tail) % 2 || gsub(/\047/, "\047", tail) % 2) {
+      # A quote is left open when the whole line leaves it open: the
+      # tail of "$(cd ... && pwd)" closes a quote opened before the name.
+      whole = $0
+      if (opened || gsub(/"/, "\"", whole) % 2 || gsub(/\047/, "\047", whole) % 2) {
         print "<resto do arquivo removido>"
         gone = 1
       }
