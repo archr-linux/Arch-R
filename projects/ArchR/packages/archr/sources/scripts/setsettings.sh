@@ -866,6 +866,9 @@ function set_errorlog() {
     add_setting "none" "log_to_file" "false"
     add_setting "none" "frontend_log_level" "${level}"
     add_setting "none" "libretro_log_level" "${level}"
+    # No GameMode on the console: its "dlopen failed" warning would be the
+    # first failure line of every game report.
+    add_setting "none" "gamemode_enable" "false"
 }
 
 function set_audiolatency() {
