@@ -34,21 +34,17 @@ if [ $# -gt 1 ]; then
 elif [ $# -eq 0 ]; then
   echo "R36S Clone audio: no rk817 sound card on; speaker path left at SPK" >&2
 fi
-# On the amplified card both mux positions are "HP", so the mux alone
-# never takes the sound off the speaker: headphone_sense turns the amp's
-# "Internal Speakers" pin off while headphones are in. That card's jack
-# also reads the right way round (the overlay copies the stock hp-det
-# polarity, and the stock BSP driver treats an active line as plugged),
-# so value 1 means headphones in. It has to: the kernel keeps the
-# "Headphones" pin on only while the jack reads 1, and with both pins off
-# the headphone lines lose power and nothing plays at all.
+# headphone_sense can gate the speaker (DEVICE_SPEAKER_SWITCH) and take
+# the jack polarity from DEVICE_HEADPHONE_INSERTED, but the amplified
+# card is left as it was: gating its "Internal Speakers" pin with the
+# polarity guessed from the stock DTB left a V20 2551 with no sound at
+# all (Arch-R#35, update 20261110.7). Set them only once a board's jack
+# reading has been checked on the device.
 SPK_SWITCH=""
 HP_INSERTED="0"
 case "${CARD}" in
   rk817-sound-amplified)
     SPK_PATH="HP"
-    SPK_SWITCH="Internal Speakers Switch"
-    HP_INSERTED="1"
     ;;
   *) SPK_PATH="SPK" ;;
 esac

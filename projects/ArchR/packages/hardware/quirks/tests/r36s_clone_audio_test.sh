@@ -44,7 +44,7 @@ check() {
   fi
 }
 
-AMP="HP HP platform-rk817-sound-amplified-event 1 [Internal Speakers Switch]"
+AMP="HP HP platform-rk817-sound-amplified-event 0 []"
 SIMPLE="SPK HP platform-rk817-sound-simple-event 0 []"
 BASE="SPK HP platform-rk817-sound-event 0 []"
 
