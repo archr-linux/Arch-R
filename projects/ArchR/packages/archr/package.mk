@@ -211,6 +211,15 @@ EOF
     mkdir -p ${units}/${dir}.service.d
     : >${units}/${dir}.service.d/10-error-report.conf
   done
+  # Exits that are an answer, not a fault, so OnFailure= stays quiet: the
+  # switcher tapped with no game (1) or on an emulator that saves no state
+  # (3), and an update the console refused (75: battery, network, space).
+  # Both units are transient (systemd-run); drop-ins apply to them too.
+  mkdir -p ${units}/archr-save-exit.service.d ${units}/archr-update.service.d
+  printf '[Service]\nSuccessExitStatus=1 3\n' \
+    >${units}/archr-save-exit.service.d/20-answers.conf
+  printf '[Service]\nSuccessExitStatus=75\n' \
+    >${units}/archr-update.service.d/20-answers.conf
   # The kernel names the faulting library and address of a crashed program
   # in its log, which the report carries (no core dumps on the console).
   mkdir -p ${INSTALL}/usr/lib/sysctl.d

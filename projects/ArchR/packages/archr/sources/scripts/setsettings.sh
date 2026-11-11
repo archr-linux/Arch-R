@@ -855,6 +855,19 @@ function set_frame_delay() {
     esac
 }
 
+# RetroArch's warnings and errors in the run output (exec.log), so an error
+# report says why a game closed ("Failed to load content", the core's own
+# error). Warnings and errors only, info lines too with system.loglevel
+# verbose. exec.log is in /var/log, in RAM: nothing goes to the card.
+function set_errorlog() {
+    local level=2
+    [ "${LOGGING}" = verbose ] && level=1
+    add_setting "none" "log_verbosity" "true"
+    add_setting "none" "log_to_file" "false"
+    add_setting "none" "frontend_log_level" "${level}"
+    add_setting "none" "libretro_log_level" "${level}"
+}
+
 function set_audiolatency() {
     add_setting "audiolatency" "audio_latency"
 }
@@ -1357,6 +1370,7 @@ set_netplay &
 set_runahead &
 set_frame_delay &
 set_audiolatency &
+set_errorlog &
 set_analogsupport &
 set_core_devices &
 set_tatemode &

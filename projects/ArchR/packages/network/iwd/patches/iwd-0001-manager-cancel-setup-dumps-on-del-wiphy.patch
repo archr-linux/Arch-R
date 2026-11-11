@@ -1,0 +1,118 @@
+manager: cancel a wiphy's setup dumps when it goes away
+
+NEW_WIPHY starts a GET_WIPHY and a GET_INTERFACE dump that carry the
+setup state as user_data but are not counted in pending_cmd_count. A
+DEL_WIPHY arriving before they finish freed the state (and the wiphy),
+and the dumps' done callbacks then used freed memory. On the R36S a USB
+RTL8188EU dongle that resets right after it appears (two drivers race
+for it) crashed iwd in wiphy_supports_iftype, called from
+manager_create_interfaces.
+
+Keep the dump ids on the state, cancel them when the wiphy is removed,
+and make the callbacks ignore an aborted state.
+
+--- a/src/manager.c	2026-11-11 09:33:18.273491044 -0300
++++ b/src/manager.c	2026-11-11 09:33:40.051947134 -0300
+@@ -55,6 +55,9 @@
+ 	uint32_t id;
+ 	struct wiphy *wiphy;
+ 	unsigned int pending_cmd_count;
++	/* GET_WIPHY / GET_INTERFACE dumps sent for this wiphy, 0 once done */
++	unsigned int wiphy_dump_id;
++	unsigned int iface_dump_id;
+ 	bool aborted;
+ 	bool retry;
+ 
+@@ -458,6 +461,25 @@
+ 	return wiphy;
+ }
+ 
++/*
++ * The wiphy went away while its setup was still running.  The filtered
++ * dumps hold the state as user_data and are not counted in
++ * pending_cmd_count, so cancel them before the state can be freed: their
++ * done callbacks would otherwise use freed memory (a USB dongle that
++ * disconnects right after it appears crashed iwd in
++ * wiphy_supports_iftype).
++ */
++static void manager_abort_setup(struct wiphy_setup_state *state)
++{
++	state->aborted = true;
++
++	if (state->wiphy_dump_id)
++		l_genl_family_cancel(nl80211, state->wiphy_dump_id);
++
++	if (state->iface_dump_id)
++		l_genl_family_cancel(nl80211, state->iface_dump_id);
++}
++
+ static void manager_del_wiphy_event(struct l_genl_msg *msg)
+ {
+ 	struct wiphy_setup_state *state;
+@@ -468,9 +490,9 @@
+ 
+ 	state = manager_find_pending(id);
+ 	if (state) {
+-		if (state->pending_cmd_count)
+-			state->aborted = true;
+-		else
++		manager_abort_setup(state);
++
++		if (!state->pending_cmd_count)
+ 			wiphy_setup_state_destroy(state);
+ 	}
+ 
+@@ -497,6 +519,11 @@
+ {
+ 	struct wiphy_setup_state *state = user_data;
+ 
++	state->iface_dump_id = 0;
++
++	if (state->aborted)
++		return;
++
+ 	l_debug("");
+ 
+ 	if (!manager_wiphy_check_setup_done(state))
+@@ -570,6 +597,9 @@
+ {
+ 	struct wiphy_setup_state *state = user_data;
+ 
++	if (state->aborted)
++		return;
++
+ 	wiphy_update_from_genl(state->wiphy, msg);
+ }
+ 
+@@ -579,6 +609,11 @@
+ 
+ 	l_debug("");
+ 
++	state->wiphy_dump_id = 0;
++
++	if (state->aborted)
++		return;
++
+ 	wiphy_create_complete(state->wiphy);
+ 	state->use_default = use_default;
+ 
+@@ -664,11 +699,19 @@
+ 					state, interface_done);
+ 	if (!iface_cmd_id) {
+ 		l_error("Could not dump interface for wiphy %u", wiphy_id);
++		/* The caller frees the state: its done callback must not run */
++		if (state)
++			state->aborted = true;
+ 		l_genl_family_cancel(nl80211, wiphy_cmd_id);
+ 		l_genl_msg_unref(msg);
+ 		return -EIO;
+ 	}
+ 
++	if (state) {
++		state->wiphy_dump_id = wiphy_cmd_id;
++		state->iface_dump_id = iface_cmd_id;
++	}
++
+ 	return 0;
+ }
+ 

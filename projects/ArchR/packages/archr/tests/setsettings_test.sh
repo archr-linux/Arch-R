@@ -85,6 +85,8 @@ check "no empty value in the append config" "! grep -q '= \"\"' '${A}'"
 check "no bogus 'false' key" "! grep -q '^false = ' '${A}'"
 check "no --set-shader" "! grep -q -- --set-shader '${TMP}/stdout'"
 check "autosave default still applies" "has 'savestate_auto_load = \"true\"' '${A}'"
+check "RetroArch warnings reach exec.log (for error reports)" \
+  "has 'log_verbosity = \"true\"' '${A}' && has 'frontend_log_level = \"2\"' '${A}' && has 'libretro_log_level = \"2\"' '${A}'"
 check "awaiting a decision: analog d-pad, savestate folder stay" \
   "has 'input_player1_analog_dpad_mode = \"1\"' '${A}' && grep -q '^savestate_directory = ' '${A}'"
 check "the menu driver is retroarch.cfg's, as in Tools" "! grep -q '^menu_driver = ' '${A}'"

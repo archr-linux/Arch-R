@@ -13,7 +13,10 @@
 #       battery, suspend: the power goes anyway; the state is saved where
 #       possible and the game always closes.
 #       Exit 0 once the game has closed, 1 when no game runs, 2 for a wrong
-#       argument, 3 when the switcher left the game open.
+#       argument, 3 when the switcher left the game open, 4 when it cannot
+#       work (no temporary file). The switcher's unit (archr-save-exit)
+#       takes 1 and 3 as success: no error report for a tap with no game,
+#       or for an emulator that saves no state.
 #   archr-game-save-exit --forget ROM
 #       runemu.sh, as a game starts: its old record goes (the state no longer
 #       holds the latest progress), and so does the "last game" mark.
@@ -175,7 +178,7 @@ else
   alive "${PID}" || exit 0
 fi
 printf '%s\n' "$$" >"${SAVING}"
-MARK=$(mktemp "${TMPDIR:-/tmp}/save-exit.XXXXXX") || exit 1
+MARK=$(mktemp "${TMPDIR:-/tmp}/save-exit.XXXXXX") || exit 4
 trap 'rm -f "${SAVING}" "${MARK}"' EXIT
 
 # How this emulator saves, and whether it can now.

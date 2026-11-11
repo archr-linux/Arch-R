@@ -164,9 +164,10 @@ OUT=$(run)
 check "nothing pending: exit 0" "$?" 0
 check "nothing pending: total 0, no reboot" "$(field total <<<"${OUT}") $(field reboot_required <<<"${OUT}")" "0 false"
 OUT=$(FAKE_PING=1 run)
-check "no network: exit 1" "$?" 1
+check "no network: a refusal, exit 75" "$?" 75
 check "no network: reason" "$(field error <<<"${OUT}")" network
 OUT=$(FAKE_SYNC_FAIL=1 run)
+check "sync failure: a fault, exit 1" "$?" 1
 check "sync failure: reason" "$(field error <<<"${OUT}")" sync
 exec 8>>"${TMP}/run/archr-update.lock"
 flock -n 8
