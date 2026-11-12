@@ -330,6 +330,49 @@ nxport 2 18 '[subsurf] frame 4 keep=0
 check "a crash only the port's log tells is reported" "$(sed -n '/^--- failure lines ---$/{n;p}' "$(find "${Q}" -name '*.txt' | head -n 1)")" \
   "[subsurf] signal 11 at pc=0xffff85e8cd64 addr=0x1"
 
+# NetSurf's missing translation is no failure, even with exit 0 after a
+# session of browsing (2026-11-12).
+rm -f "${Q:?}"/*.txt "${R:?}/storage/.cache/error-reports/seen" "${R:?}/storage/.cache/error-reports/today"
+port 0 330 "${NOISE}
+Message translations failed to load"
+check "NetSurf's translation line is noise" "$(count "${Q}")" "0"
+
+# --- games: a program the user copies in, the command whole ---
+pico() {
+  printf 'old run: error\n' >"${R}/var/log/exec.log"
+  local offset
+  offset=$(stat -c %s "${R}/var/log/exec.log")
+  printf '%b' "$2" >>"${R}/var/log/exec.log"
+  report game "$1" 1 "${offset}" pico-8 pico8 pico8 -- /storage/roms/pico-8/Splore.png -Ppico-8 --core=pico8 --emulator=pico8 \
+    '--controllers= -p1index 0 -p1guid 19003982010000008811000088010000 '
+}
+pico 127 "chmod: cannot access '/storage/roms/pico-8//pico8_64': No such file or directory\n/usr/bin/start_pico8.sh: line 48: /storage/roms/pico-8//pico8_64: No such file or directory\n"
+check "PICO-8 without its program: the user's to add, no report" "$(count "${Q}")" "0"
+pico 1 'error: cart failed\n'
+check "PICO-8 failing otherwise is reported" "$(count "${Q}")" "1"
+F=$(find "${Q}" -name '*.txt' | head -n 1)
+check "its command keeps the controller options" "$(sed -n '/^--- command ---$/{n;p}' "${F}")" \
+  "runemu.sh '/storage/roms/pico-8/Splore.png' '-Ppico-8' '--core=pico8' '--emulator=pico8' '--controllers= -p1index 0 -p1guid 19003982010000008811000088010000 '"
+
+# --- the launcher with no screen yet: a report only if none comes ---
+mkdir -p "${R}/run" "${R}/sys/class/drm/card0-DSI-1"
+echo disconnected >"${R}/sys/class/drm/card0-DSI-1/status"
+rm -f "${Q:?}"/*.txt "${R:?}/storage/.cache/error-reports/seen" "${R:?}/storage/.cache/error-reports/today"
+printf '[ 51.2] host archr-launcher-session[3491]: archr-launcher: The video driver did not add any displays\n' >"${TMP}/journal"
+fake swaymsg 'printf "[\n  {\n    \"name\": \"DSI-1\",\n    \"active\": true\n  }\n]\n"'
+ARCHR_ERROR_REPORT_DISPLAY_WAIT=1 report launcher 1
+check "a screen that comes late: no report" "$(count "${Q}")" "0"
+fake swaymsg 'printf "[]\n"'
+ARCHR_ERROR_REPORT_DISPLAY_WAIT=1 report launcher 1
+check "no screen at all: reported" "$(count "${Q}")" "1"
+F=$(find "${Q}" -name '*.txt' | head -n 1)
+check "with the connectors" "$(grep -c '^card0-DSI-1/status: disconnected$' "${F}")" "1"
+exec 8>"${R}/run/archr-error-report.display" && flock -n 8
+rm -f "${Q:?}"/*.txt "${R:?}/storage/.cache/error-reports/seen"
+ARCHR_ERROR_REPORT_DISPLAY_WAIT=1 report launcher 1
+check "while one reporter waits, the session's next tries leave it to it" "$(count "${Q}")" "0"
+exec 8>&-
+
 eval "$(sed -n '/^normalize() {/,/^}/p' "${SCRIPT}")"
 check "a signature line keeps file names, not paths or numbers" \
   "$(normalize <<<'Segmentation fault at /a/b/c.so 0x12 pid 77')" "Segmentation fault at c.so # pid #"

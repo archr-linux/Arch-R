@@ -235,4 +235,13 @@ check "an open brace still takes the rest" \
   "$(san '{"secret": {' '"v": "x"}}' 'after')" \
   '{"secret=<removed>|<resto do arquivo removido>|'
 
+# The launcher's controller options are no -p: a game's command line
+# stays whole (a PICO-8 report lost it); a -p with a value still goes.
+check "controller options keep the command" \
+  "$(san "runemu.sh '/storage/roms/pico-8/Splore.png' '-Ppico-8' '--controllers= -p1index 0 -p1guid 19003982010000008811000088010000 '")" \
+  "runemu.sh '/storage/roms/pico-8/Splore.png' '-Ppico-8' '--controllers= -p1index 0 -p1guid 19003982010000008811000088010000 '|"
+check "-p with a password beside them still takes the line" \
+  "$(san 'x -p1index 0 -p hunter2' 'mysql -psecret' '-p1indexx y')" \
+  '<linha removida>|<linha removida>|<linha removida>|'
+
 exit ${FAILED}
