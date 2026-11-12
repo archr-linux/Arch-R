@@ -379,6 +379,21 @@ check "a signature line keeps file names, not paths or numbers" \
 
 # runemu.sh: every port run goes to the reporter (it decides), other games
 # only when they exit with an error.
+# --- the game file: size, space taken and first bytes, and what a .cue/.m3u names ---
+rm -f "${Q:?}"/*.txt "${R:?}/storage/.cache/error-reports/seen" "${R:?}/storage/.cache/error-reports/today"
+mkdir -p "${R}/storage/roms/psx"
+printf 'Dino Crisis.cue\r\n#a note\r\nMissing.cue\r\n' >"${R}/storage/roms/psx/Dino.m3u"
+printf 'FILE "Dino Crisis.bin" BINARY\n  TRACK 01 MODE2/2352\n    INDEX 01 00:00:00\n' >"${R}/storage/roms/psx/Dino Crisis.cue"
+truncate -s 1M "${R}/storage/roms/psx/Dino Crisis.bin"
+report game 1 2 0 psx retroarch pcsx_rearmed -- /storage/roms/psx/Dino.m3u -Ppsx --core=pcsx_rearmed --emulator=retroarch
+F=$(find "${Q}" -name '*.txt' | head -n 1)
+GF=$(sed -n '/^--- game file ---$/,/^--- /p' "${F}")
+check "the m3u listed" "$(grep -c '^Dino.m3u: [0-9]* bytes' <<<"${GF}")" "1"
+check "the cue it names" "$(grep -c '^Dino Crisis.cue: [0-9]* bytes' <<<"${GF}")" "1"
+check "the bin, sparse: no blocks, zeros" "$(grep '^Dino Crisis.bin:' <<<"${GF}")" \
+  "Dino Crisis.bin: 1048576 bytes, 0 blocks of 512 allocated, starts 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00"
+check "a named file that is not there" "$(grep -c '^Missing.cue: not found$' <<<"${GF}")" "1"
+
 BLOCK=$(sed -n "/^### A port's script usually exits 0/,/^fi$/p" "${SCRIPTS}/runemu.sh")
 runemu_report() {
   local PLATFORM=$1 ret_error=$2 ROMNAME=/storage/roms/ports/A.sh EMULATOR=x CORE=y RUN_OFFSET=10 RUN_START=0 SECONDS=7
