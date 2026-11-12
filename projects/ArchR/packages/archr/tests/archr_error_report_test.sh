@@ -295,6 +295,24 @@ for line in "Segmentation fault (core dumped)" "./arcajs.aarch64: error while lo
 ${line}"
   check "marker: ${line}" "$(count "${Q}")" "1"
 done
+# dethrace (Carmageddon) quit with the hotkey: its handler catches the TERM
+# and prints a stack trace through addr2line, which the image lacks.
+TRACE="******************
+Caught SIGTERM
+******************
+
+Stack trace:
+0: sh: line 1: addr2line: command not found
+1: sh: line 1: addr2line: command not found"
+rm -f "${Q}"/*.txt "${R}/storage/.cache/error-reports/"{seen,today}
+port 0 58 "${NOISE}
+${TRACE}"
+check "a port's own TERM handler is the exit hotkey: no report" "$(count "${Q}")" "0"
+port 0 58 "${NOISE}
+${TRACE/SIGTERM/SIGSEGV}"
+check "the same handler catching a SEGV is reported" "$(count "${Q}")" "1"
+F=$(find "${Q}" -name '*.txt' | head -n 1)
+check "with the signal, not addr2line, as the failure" "$(sed -n '/^--- failure lines ---$/{n;p}' "${F}")" "Caught SIGSEGV"
 # A port that writes its own log and nothing to exec.log (NextOS ports):
 # the failure lines come from that log.
 mkdir -p "${P}/chrono"

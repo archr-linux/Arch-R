@@ -233,6 +233,9 @@ PORT_FAILS+='|TERMINAL ERROR NXE[0-9]+|(signal|signum|child_signal)[ =]+(4|6|7|8
 PORT_FAILS+='|SDL_(CreateWindow|Init|GL_CreateContext|CreateRenderer)|EGL_(BAD|NOT)_|eglInitialize|GL_INVALID|GLSL.*error'
 PORT_FAILS+='|Error loading needed lib|Unimplemented Opcode|PltResolver|[Ff]ailed to start [Ww]eston|westonpack.*(error|fail)'
 PORT_FAILS+='|gmloader.*(error|[Ff]ailed|abort)|Missing runtime|requires the latest PortMaster|[Nn]o such runtime'
+# A port's own crash handler naming the signal (dethrace: "Caught SIGSEGV");
+# its "Caught SIGTERM" is the exit hotkey.
+PORT_FAILS+='|Caught SIG(SEGV|ABRT|BUS|ILL|FPE)'
 # Never a failure: warnings, and what ArchR's helpers print on every run.
 PORT_NOISE='[Ww][Aa][Rr][Nn]|ignored null byte|no version information available|Failed, waiting to try again'
 PORT_NOISE+='|^[[:space:]]*"(success|parse_error|error)":|localStorage load file|arm_release_ver'
@@ -240,6 +243,8 @@ PORT_NOISE+='|^[[:space:]]*"(success|parse_error|error)":|localStorage load file
 PORT_NOISE+='|Message translations failed to load'
 # bash reporting a job it lost to a signal from outside (the exit hotkey).
 PORT_NOISE+='|line [0-9]+: +[0-9]+ (Killed|Terminated|Hangup|Interrupt)'
+# A crash handler symbolizing its stack trace: the image has no addr2line.
+PORT_NOISE+='|addr2line: command not found'
 # Lines that only look like errors: they count on a run that ended
 # within SHORT seconds (nothing was played).
 PORT_SOFT='[Ee]rror|ERROR|[Ff]ail|[Cc]annot|[Uu]nable to|not found|No such file'
