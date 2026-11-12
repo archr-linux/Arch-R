@@ -6,6 +6,8 @@ PKG_NAME="mupen64plus-arch-core"
 PKG_REPLACES="mupen64plus-sa-core"
 PKG_VERSION="5340dafcc0f5e8284057ab931dd5c66222d3d49e"
 #PKG_VERSION="d4f3e12db0609158c7b4e0beef2bb950aad0ccb9"
+# 2: start_mupen64plus.sh extracts .7z games.
+PKG_REV="2"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/mupen64plus/mupen64plus-core"
 PKG_URL="https://github.com/mupen64plus/mupen64plus-core/archive/${PKG_VERSION}.tar.gz"
