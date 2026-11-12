@@ -13,6 +13,19 @@
 
 PORT_32BIT="${PORT_32BIT:-"N"}"
 
+# westonwrap (PortMaster's weston_pkg runtime) sources this file too. Left
+# alone it runs Weston on the DRM device: it kills seatd and deletes
+# /run/seatd.sock, and sway loses the screen for good (the launcher never
+# comes back). Under sway it has to nest Weston in the running compositor,
+# which it does for ROCKNIX only: say so to westonwrap alone, without
+# exporting it to the game.
+case "$0" in
+*/westonwrap*.sh)
+    export -n CFW_NAME
+    CFW_NAME=ROCKNIX
+    ;;
+esac
+
 if [[ "$PORT_32BIT" == "Y" ]]; then
     export SPA_PLUGIN_DIR="/usr/lib32/spa-0.2"
     export PIPEWIRE_MODULE_DIR="/usr/lib32/pipewire-0.3/"
