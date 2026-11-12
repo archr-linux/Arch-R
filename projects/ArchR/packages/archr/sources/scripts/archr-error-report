@@ -386,6 +386,35 @@ port() {
 
 sign() { { printf '%s\n' "$@"; cat; } | sha1sum | cut -c1-8; }
 
+# Size, space taken and first bytes of a game file. A copy the card left
+# before it was written out keeps its size with nothing in it: fewer
+# blocks than bytes, and zeros where the header should be.
+game_file() {
+  local f="${ROOT}$1"
+  if [ ! -f "${f}" ]; then
+    echo "${1##*/}: not found"
+    return
+  fi
+  echo "${1##*/}: $(stat -c '%s bytes, %b blocks of %B allocated' "${f}"), starts$(head -c 16 "${f}" | od -An -tx1 | tr -s ' ' | sed 's/ *$//')"
+}
+
+# The game file, and the files a .cue or .m3u names (one level down
+# again, for an .m3u of .cue files).
+game_files() {
+  local rom=$1 depth=${2:-0} dir name
+  game_file "${rom}"
+  [ "${depth}" -lt 2 ] || return 0
+  dir=${rom%/*}
+  case "${rom,,}" in
+  *.cue) sed -n 's/^[[:space:]]*FILE[[:space:]]*"\{0,1\}\([^"]*\)"\{0,1\}[[:space:]]\{1,\}[A-Z0-9]*[[:space:]]*$/\1/p' "${ROOT}${rom}" 2>/dev/null ;;
+  *.m3u) grep -v '^[[:space:]]*#' "${ROOT}${rom}" 2>/dev/null | tr -d '\r' | grep . ;;
+  *) return 0 ;;
+  esac | head -n 8 | while IFS= read -r name; do
+    [ "${name#/}" = "${name}" ] && name="${dir}/${name}"
+    game_files "${name}" $((depth + 1))
+  done
+}
+
 # --- events ---
 
 game() {
@@ -424,6 +453,8 @@ game() {
     else
       run pacman -Qo "/usr/bin/start_${core%-*}.sh"
     fi
+    section "game file"
+    game_files "${rom}"
     common
     section "run output (exec.log, last 300 lines)"
     printf '%s\n' "${OUTPUT}"
