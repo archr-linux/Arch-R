@@ -32,8 +32,9 @@
 # the last 20 sent are kept for the launcher's viewer.
 #
 # ARCHR_ERROR_REPORT_ROOT prefixes every file (tests); ARCHR_ERROR_REPORT_URL
-# replaces the server and ARCHR_ERROR_REPORT_ROUTE_WAIT the wait for a
-# network (tests only).
+# replaces the server, ARCHR_ERROR_REPORT_ROUTE_WAIT the wait for a
+# network and ARCHR_ERROR_REPORT_DISPLAY_WAIT the one for a screen (tests
+# only).
 
 ROOT="${ARCHR_ERROR_REPORT_ROOT:-}"
 URL="${ARCHR_ERROR_REPORT_URL:-https://arch-r.io/api/reports}"
@@ -48,6 +49,7 @@ KEEP=20
 CAP=$((256 * 1024))
 LIMIT=10
 ROUTE_WAIT="${ARCHR_ERROR_REPORT_ROUTE_WAIT:-20}"
+DISPLAY_WAIT="${ARCHR_ERROR_REPORT_DISPLAY_WAIT:-60}"
 TODAY=$(date +%F)
 
 setting() { sed -n "s/^$1=//p" "${CFG}" 2>/dev/null | tail -n 1; }
@@ -234,6 +236,8 @@ PORT_FAILS+='|gmloader.*(error|[Ff]ailed|abort)|Missing runtime|requires the lat
 # Never a failure: warnings, and what ArchR's helpers print on every run.
 PORT_NOISE='[Ww][Aa][Rr][Nn]|ignored null byte|no version information available|Failed, waiting to try again'
 PORT_NOISE+='|^[[:space:]]*"(success|parse_error|error)":|localStorage load file|arm_release_ver'
+# NetSurf with no translation for the locale (it falls back to English).
+PORT_NOISE+='|Message translations failed to load'
 # bash reporting a job it lost to a signal from outside (the exit hotkey).
 PORT_NOISE+='|line [0-9]+: +[0-9]+ (Killed|Terminated|Hangup|Interrupt)'
 # Lines that only look like errors: they count on a run that ended
@@ -395,6 +399,12 @@ game() {
   full=$(grep -A2 "<name>${system}</name>" "${ROOT}/usr/share/archr/systems.cfg" 2>/dev/null |
     sed -n 's/.*<fullname>\(.*\)<\/fullname>.*/\1/p' | head -n 1)
   OUTPUT=$(tail -c +"$((offset + 1))" "${EXEC_LOG}" 2>/dev/null | tail -n 300)
+  # A start script that finds no program of the user's own on the card
+  # (PICO-8's pico8_64, bought and copied to roms/pico-8): the user's to
+  # add, not a failure.
+  [ "${rc}" = 127 ] &&
+    grep -aqE '^/usr/bin/start_[^:]*: line [0-9]+: /storage/[^:]*: No such file or directory' <<<"${OUTPUT}" &&
+    return 0
   build() {
     echo "event: game"
     echo "what: ${what}"
@@ -495,16 +505,54 @@ kernel() {
   queue "${SIGNATURE}" build
 }
 
+# sway's outputs, as swaymsg prints them; nothing without sway.
+outputs() {
+  local sock=${SWAYSOCK:-}
+  if [ -z "${sock}" ]; then
+    for sock in "${XDG_RUNTIME_DIR:-/var/run/0-runtime-dir}"/sway-ipc.*.sock; do
+      [ -S "${sock}" ] && break
+    done
+  fi
+  SWAYSOCK=${sock} run swaymsg -t get_outputs
+}
+# Whether a screen is on within DISPLAY_WAIT seconds.
+display_comes() {
+  local i=0
+  while :; do
+    outputs | grep -q '"active": true' && return 0
+    [ "${i}" -lt "${DISPLAY_WAIT}" ] || return 1
+    sleep 1
+    i=$((i + 1))
+  done
+}
+
 launcher() {
-  local rc=$1
+  local rc=$1 NODISPLAY=
   external "${rc}" && return 0
   JOURNAL=$(run journalctl -u archr-launcher-session -n 200 --no-pager -q -o short-monotonic)
+  # No screen yet: at boot the panel can come after the session's 10 s
+  # wait (seen on R36S consoles), and the launcher fails until it is
+  # there. A screen that comes is no failure; one reporter waits for it,
+  # the session's next tries leave it to that one.
+  if tail -n 5 <<<"${JOURNAL}" | grep -aq 'did not add any displays'; then
+    exec 8>"${ROOT}/run/archr-error-report.display" && flock -n 8 || return 0
+    display_comes && return 0
+    NODISPLAY=1
+  fi
   build() {
+    local f
     echo "event: launcher"
     echo "what: archr-launcher"
     echo "exit: $(describe "${rc}")"
     echo "signature: ${SIGNATURE}"
     common
+    if [ -n "${NODISPLAY:-}" ]; then
+      section "display (sway outputs, DRM connectors)"
+      outputs | grep -aE '"(name|make|model|active|power|current_mode)"|"width"|"height"'
+      for f in "${ROOT}"/sys/class/drm/card*-*/status; do
+        [ -f "${f}" ] && echo "${f#"${ROOT}"/sys/class/drm/}: $(cat "${f}")"
+      done
+    fi
     section "launcher journal (last 200 lines)"
     printf '%s\n' "${JOURNAL}"
     section "session log"

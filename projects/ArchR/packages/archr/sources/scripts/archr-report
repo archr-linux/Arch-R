@@ -51,8 +51,9 @@ LIMIT=15
 #     the path "/usr/bin/archr-launcher-session:"),
 #     and the URL fields u, t, p, pw, pwd, user, ssid and devid;
 #   - user:password@ (in a URL or not), or any @ after a URL's //;
-#   - the options -p, -P, -u, -U (with the value apart or attached),
-#     --user, --*-user and --*pass*.
+#   - the options -p, -P, -u, -U (with the value apart or attached; never
+#     the launcher's -p<N>index and -p<N>guid), --user, --*-user and
+#     --*pass*.
 # The last two kinds, and a URL field, remove the whole line even after a
 # name: what comes before the name may hold the secret.
 # A secret name whose line opens { or [ or leaves a quote open may go on
@@ -95,10 +96,14 @@ sanitize() {
           break
         }
       }
-      # Hints with no name before them: the whole line goes.
+      # Hints with no name before them: the whole line goes. The
+      # controller options the launcher passes (" -p1index 0 -p1guid
+      # 0300...") are no -p.
+      opts = $0
+      gsub(/(^|[[:space:]])-p[1-9](index|guid)([[:space:]]|$)/, " ", opts)
       bare = line ~ /[?&](u|t|p|pw|pwd|user|ssid|devid)=/ ||
         line ~ /[^[:space:]\/@:]+:[^[:space:]\/@]+@/ || line ~ /:\/\/[^[:space:]]*@/ ||
-        $0 ~ /(^|[[:space:]])-[pPuU]/ ||
+        opts ~ /(^|[[:space:]])-[pPuU]/ ||
         line ~ /(^|[[:space:]])--([a-z0-9-]*-)?user([^a-z0-9-]|$)|(^|[[:space:]])--[a-z0-9-]*pass/
       if (!named && !bare) {
         print

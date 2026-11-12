@@ -53,17 +53,26 @@ elif [ "${CON}" = "standard" ]; then
 else
     cp ${SHARE}/default.ini ${TMP}/InputAutoCfg.ini
 fi
-if [ $(echo $1 | grep -i .zip | wc -l) -eq 1 ]; then
-    # Unzip the game ROM if needed
-    unzip -q -o "$1" -d ${TMP}
-    # Find the cartridge by extension: the image ships BusyBox unzip, which
-    # has no zipinfo mode (-Z) to list the archive's member names.
-    ROM=$(find ${TMP} -maxdepth 1 -type f \( -iname '*.z64' -o -iname '*.n64' -o -iname '*.v64' \) | head -n 1)
-    ROM="${ROM##*/}"
-else
+case "${1,,}" in
+*.zip | *.7z)
+    # mupen64plus opens only the cartridge itself: extract it from the
+    # archive (a .7z handed over as is is "not a valid ROM image").
+    if [[ "${1,,}" == *.zip ]]; then
+        unzip -q -o "$1" -d ${TMP}
+    else
+        7z x -y -bd -o"${TMP}" "$1" >/dev/null
+    fi
+    # Find the cartridge by extension, at the top or in one folder: the
+    # image ships BusyBox unzip, which has no zipinfo mode (-Z) to list
+    # the archive's member names.
+    ROM=$(find ${TMP} -maxdepth 2 -type f \( -iname '*.z64' -o -iname '*.n64' -o -iname '*.v64' \) | head -n 1)
+    ROM="${ROM#"${TMP}"/}"
+    ;;
+*)
     cp "$1" ${TMP}
     ROM="${GAME}"
-fi
+    ;;
+esac
 
 # CPU core settings
 if [ "${CORES}" = "little" ]; then
