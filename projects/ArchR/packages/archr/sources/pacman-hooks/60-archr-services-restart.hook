@@ -8,11 +8,13 @@
 # link (archr-error-report.path) start here, not one boot later; so does
 # the kernel setting the error reports need.
 # pacman reads hooks again at PostTransaction, so this one also runs in
-# the transaction that installs it.
+# the transaction that installs it. An update of the launcher alone changes
+# its session unit too ("changed on disk" until a reboot), so it counts.
 [Trigger]
 Operation = Upgrade
 Type = Package
 Target = archr
+Target = archr-launcher
 
 [Action]
 Description = Reloading systemd and restarting Arch R background services...
