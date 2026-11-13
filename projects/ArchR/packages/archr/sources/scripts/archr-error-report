@@ -29,7 +29,10 @@
 # archr-report --sanitize, then lose addresses (IPv4, IPv6, MAC), Wi-Fi
 # names and the user's account names. The game's name stays: games are
 # public. Files: /storage/.cache/error-reports/{queue,sent}/<date>_<time>.txt,
-# the last 20 sent are kept for the launcher's viewer.
+# the last 20 sent are kept for the launcher's viewer. Each report says
+# which console sent it (archr-console-id, "console:" under "when:"), and
+# goes out as <date>_<time>_<console id>_<4 random hex>.txt (without the id
+# when there is none).
 #
 # ARCHR_ERROR_REPORT_ROOT prefixes every file (tests); ARCHR_ERROR_REPORT_URL
 # replaces the server, ARCHR_ERROR_REPORT_ROUTE_WAIT the wait for a
@@ -53,6 +56,13 @@ DISPLAY_WAIT="${ARCHR_ERROR_REPORT_DISPLAY_WAIT:-60}"
 TODAY=$(date +%F)
 
 setting() { sed -n "s/^$1=//p" "${CFG}" 2>/dev/null | tail -n 1; }
+# The console's id (archr-console-id, beside this script when it is not on
+# PATH); nothing when there is none.
+console_id() {
+  local cmd
+  cmd=$(command -v archr-console-id) || cmd="${0%/*}/archr-console-id"
+  ARCHR_CONSOLE_ID_ROOT="${ROOT}" timeout 5 "${cmd}" 2>/dev/null | grep -xE '[0-9a-f]{12}'
+}
 enabled() { [ "$(setting system.error_reports)" != 0 ]; }
 # CMD... with a time limit; nothing when CMD is missing.
 run() { command -v "$1" >/dev/null 2>&1 && timeout "${LIMIT}" "$@" 2>&1; }
@@ -171,7 +181,7 @@ common() {
 queue() {
   # Locals with a leading _: BUILD sees the event function's own (bash
   # scoping is dynamic), which a plain "name" here would hide.
-  local _signature=$1 _build=$2 _created _name _tmp
+  local _signature=$1 _build=$2 _created _name _tmp _id
   shift 2
   mkdir -p "${QUEUE}" "${SENT}" || return 1
   exec 9>"${DIR}/.lock"
@@ -198,6 +208,7 @@ queue() {
   {
     echo "ArchR error report"
     echo "when: $(date '+%F %T %z')"
+    _id=$(console_id) && echo "console: ${_id}"
     "${_build}" "$@"
   } 2>&1 | scrub >"${_tmp}.full"
   if [ "$(stat -c %s "${_tmp}.full")" -gt "${CAP}" ]; then
@@ -626,7 +637,7 @@ module() {
 # --- sending ---
 
 send() {
-  local f name code sent
+  local f name code sent id
   mkdir -p "${QUEUE}" "${SENT}" || return 1
   if ! enabled; then
     # Turned off: what waits is never sent.
@@ -642,6 +653,8 @@ send() {
   [ -n "$(run ip route show default)" ] || return 0
   exec 9>"${DIR}/.lock"
   timeout 30 flock -x 9 || return 0
+  # No id: the report still goes, under its old name.
+  id=$(console_id) && id="_${id}"
   for f in "${QUEUE}"/*.txt; do
     [ -f "${f}" ] || continue
     read -r _ sent <<<"$(counts)"
@@ -649,7 +662,7 @@ send() {
     name=${f##*/}
     code=$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 10 --max-time 60 -X PUT \
       -H 'Content-Type: text/plain; charset=utf-8' --data-binary "@${f}" \
-      "${URL}/${name%.txt}_$(od -An -N2 -tx1 /dev/urandom | tr -d ' \n').txt" 2>/dev/null)
+      "${URL}/${name%.txt}${id}_$(od -An -N2 -tx1 /dev/urandom | tr -d ' \n').txt" 2>/dev/null)
     case "${code}" in
       201 | 204)
         mv -f "${f}" "${SENT}/${name}" && touch "${SENT}/${name}"
