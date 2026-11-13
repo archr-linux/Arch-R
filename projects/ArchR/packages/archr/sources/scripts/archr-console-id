@@ -1,0 +1,91 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026 ArchR (https://github.com/archr-linux/Arch-R)
+#
+# archr-console-id: the console's id, 12 lowercase hex characters. The same
+# console always gets the same id (a new card or a reflash does not change
+# it); it says nothing about its owner. Error reports and the diagnostic
+# zip carry it, so reports from one console can be told apart.
+#
+#   archr-console-id           prints the id; exit 1 when none could be had
+#   archr-console-id --source  prints where it came from: otp, device-tree,
+#                              cpuinfo or random
+#
+# The id is the first 12 hex characters of the sha256 of
+# "archr-console-id:v1:" and the source's bytes. Sources, the first good one
+# wins:
+#   otp          the SoC's OTP (rockchip-otp0), its first 32 bytes: the
+#                "RK3326" magic and the chip's id, lot and wafer. Left out
+#                when missing, short, or all 00 or all ff.
+#   device-tree  /proc/device-tree/serial-number, without its NUL
+#   cpuinfo      the Serial line of /proc/cpuinfo (its value)
+#                Both left out when empty or all zeros.
+#   random       12 hex characters made once and kept in
+#                /storage/.config/archr/console-id (reflashing loses it).
+#
+# ARCHR_CONSOLE_ID_ROOT prefixes every file (tests).
+
+ROOT="${ARCHR_CONSOLE_ID_ROOT:-}"
+OTP="${ROOT}/sys/bus/nvmem/devices/rockchip-otp0/nvmem"
+SERIAL="${ROOT}/proc/device-tree/serial-number"
+CPUINFO="${ROOT}/proc/cpuinfo"
+KEPT="${ROOT}/storage/.config/archr/console-id"
+PREFIX="archr-console-id:v1:"
+
+# stdin's bytes, after the prefix, hashed.
+digest() { { printf '%s' "${PREFIX}"; cat; } | sha256sum | cut -c1-12; }
+# A text value that is something: not empty, not only zeros.
+something() { [ -n "$1" ] && [[ ! "$1" =~ ^0+$ ]]; }
+
+from_otp() {
+  local hex
+  [ -r "${OTP}" ] || return 1
+  hex=$(od -An -v -tx1 -N32 "${OTP}" 2>/dev/null | tr -d ' \n')
+  [ "${#hex}" = 64 ] || return 1
+  [[ "${hex}" =~ ^(00)+$ || "${hex}" =~ ^(ff)+$ ]] && return 1
+  head -c 32 "${OTP}" | digest
+}
+from_device_tree() {
+  local value
+  value=$(tr -d '\0' <"${SERIAL}" 2>/dev/null)
+  something "${value}" || return 1
+  printf '%s' "${value}" | digest
+}
+from_cpuinfo() {
+  local value
+  value=$(sed -n 's/^Serial[[:space:]]*:[[:space:]]*//p' "${CPUINFO}" 2>/dev/null | head -n 1 | tr -d '[:space:]')
+  something "${value}" || return 1
+  printf '%s' "${value}" | digest
+}
+# Made once, then read back; nothing when it cannot be kept (an id that
+# changes on every run is no id).
+from_random() {
+  local id tmp
+  id=$(cat "${KEPT}" 2>/dev/null)
+  if [[ "${id}" =~ ^[0-9a-f]{12}$ ]]; then
+    echo "${id}"
+    return 0
+  fi
+  id=$(od -An -N6 -tx1 /dev/urandom | tr -d ' \n')
+  [[ "${id}" =~ ^[0-9a-f]{12}$ ]] || return 1
+  mkdir -p "${KEPT%/*}" 2>/dev/null || return 1
+  tmp="${KEPT}.$$"
+  echo "${id}" >"${tmp}" 2>/dev/null && mv -f "${tmp}" "${KEPT}" 2>/dev/null || {
+    rm -f "${tmp}"
+    return 1
+  }
+  sync -f "${KEPT}" 2>/dev/null || :
+  echo "${id}"
+}
+
+for source in otp device_tree cpuinfo random; do
+  if id=$("from_${source}") && [[ "${id}" =~ ^[0-9a-f]{12}$ ]]; then
+    case "${1:-}" in
+      --source) echo "${source//_/-}" ;;
+      *) echo "${id}" ;;
+    esac
+    exit 0
+  fi
+done
+echo "archr-console-id: no id could be made" >&2
+exit 1
