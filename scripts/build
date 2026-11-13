@@ -602,6 +602,28 @@ if [ "${TARGET}" = "target" -o "${TARGET}" = "init" ]; then
   fi
 fi
 
+# The convention folders (profile.d, system.d, udev.d, ...) reach the image
+# only through scripts/install, which never touches the package: a fix to
+# one of those files never reached an updated device. Stage them in the
+# package too, for archr-image-files to put in place after an update. A
+# file the package installs itself wins in the image (its tree is copied
+# over them there), so it is left out here as well.
+if [ "${TARGET}" = "target" -a -n "${INSTALL}" -a -d "${INSTALL}" ]; then
+  image_files="${INSTALL}/usr/share/archr/image-files/${PKG_NAME}"
+  rm -rf "${image_files}"
+  install_convention_files "${image_files}"
+  if [ -d "${image_files}" ]; then
+    (cd "${image_files}" && find . \( -type f -o -type l \) -print) | while read -r f; do
+      if [ -e "${INSTALL}/${f#./}" -o -L "${INSTALL}/${f#./}" ]; then
+        rm -f "${image_files}/${f#./}"
+      fi
+    done
+    find "${INSTALL}/usr/share/archr/image-files" -depth -type d -empty -delete 2>/dev/null || :
+    rmdir "${INSTALL}/usr/share/archr" "${INSTALL}/usr/share" "${INSTALL}/usr" 2>/dev/null || :
+  fi
+  unset image_files
+fi
+
 if [ -n "${INSTALL}" -a -d "${INSTALL}" ]; then
   echo "INFO_PKG_NAME=\"${PKG_NAME}\"" >"${INSTALL}/.archr-package"
 fi

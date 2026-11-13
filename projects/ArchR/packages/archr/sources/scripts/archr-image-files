@@ -1,0 +1,89 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026 ArchR (https://github.com/archr-linux/Arch-R)
+#
+# archr-image-files: put in place the files that packages keep under
+# /usr/share/archr/image-files/<package>/ (their profile.d, system.d,
+# udev.d, autostart, ... folders). The image build copies those folders
+# straight into the image and no package owns the result, so before this
+# a fix to one of them never reached an updated console. The pacman hook
+# 50-archr-image-files runs this after every transaction that brings one.
+#
+# A file is written only when it differs, and left alone when:
+#   - a package owns it (pacman puts that one; it already won in the image);
+#   - two packages stage it with different contents (the image's install
+#     order chose one, which this cannot know).
+# Files a package stops staging stay where they are.
+#
+# ARCHR_ROOT (tests): the root to work on, "" for /.
+# ARCHR_OWNED (tests): a file listing the owned paths, instead of pacman.
+
+ROOT="${ARCHR_ROOT:-}"
+SRC="${ROOT}/usr/share/archr/image-files"
+[ -d "${SRC}" ] || exit 0
+
+work="$(mktemp -d)" || exit 1
+trap 'rm -rf "${work}"' EXIT
+
+if [ -n "${ARCHR_OWNED:-}" ]; then
+    cat "${ARCHR_OWNED}" >"${work}/owned"
+else
+    LC_ALL=C pacman -Qlq 2>/dev/null >"${work}/owned"
+fi
+sed 's:/$::' "${work}/owned" | sort -u >"${work}/owned.sorted"
+
+# Fingerprint of one path: a link's target, or a file's checksum.
+print_id() {
+    if [ -L "$1" ]; then
+        echo "link:$(readlink "$1")"
+    else
+        md5sum <"$1" | cut -c1-32
+    fi
+}
+
+# "<path> <package> <fingerprint>" for every staged file.
+for pkgdir in "${SRC}"/*/; do
+    [ -d "${pkgdir}" ] || continue
+    pkg="$(basename "${pkgdir}")"
+    (cd "${pkgdir}" && find . \( -type f -o -type l \) -print) | while read -r rel; do
+        rel="${rel#./}"
+        echo "/${rel} ${pkg} $(print_id "${pkgdir}${rel}")"
+    done
+done | LC_ALL=C sort >"${work}/staged"
+
+: >"${work}/done"
+cut -d' ' -f1 "${work}/staged" | uniq | while read -r path; do
+    grep -qxF "${path}" "${work}/owned.sorted" && continue
+    ids="$(awk -v p="${path}" '$1 == p { print $3 }' "${work}/staged" | sort -u)"
+    if [ "$(echo "${ids}" | wc -l)" -gt 1 ]; then
+        echo "archr-image-files: ${path}: packages disagree, left as it is"
+        continue
+    fi
+    pkg="$(awk -v p="${path}" '$1 == p { print $2; exit }' "${work}/staged")"
+    src="${SRC}/${pkg}${path}"
+    dst="${ROOT}${path}"
+    if [ -e "${dst}" ] || [ -L "${dst}" ]; then
+        [ "$(print_id "${dst}")" = "${ids}" ] && continue
+    fi
+    mkdir -p "$(dirname "${dst}")" || continue
+    tmp="$(dirname "${dst}")/.archr-image-files.$$"
+    rm -f "${tmp}"
+    if cp -P --preserve=mode "${src}" "${tmp}" && mv -f "${tmp}" "${dst}"; then
+        echo "archr-image-files: ${path} (${pkg})"
+        echo "${path}" >>"${work}/done"
+    else
+        rm -f "${tmp}"
+        echo "archr-image-files: ${path}: could not be written" >&2
+    fi
+done
+
+# New units and rules are read now, not one boot later. profile.d,
+# autostart, sysctl.d and tmpfiles.d take effect at the next boot.
+if [ -z "${ROOT}" ]; then
+    grep -q '^/usr/lib/systemd/' "${work}/done" && systemctl daemon-reload >/dev/null 2>&1
+    if grep -q '^/usr/lib/udev/' "${work}/done"; then
+        grep -q '^/usr/lib/udev/hwdb.d/' "${work}/done" && systemd-hwdb update >/dev/null 2>&1
+        udevadm control --reload >/dev/null 2>&1
+    fi
+fi
+exit 0

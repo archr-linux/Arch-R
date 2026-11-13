@@ -1,0 +1,17 @@
+# Files from the packages' profile.d, system.d, udev.d, autostart, ...
+# folders were copied into the image only, so a fix to one of them never
+# reached an updated console. Packages now stage them under
+# /usr/share/archr/image-files/<package>/ and this puts them in place
+# (archr-image-files). It runs before 60-archr-services-restart, which
+# reloads systemd. pacman reads hooks again at PostTransaction, so this
+# one also runs in the transaction that installs it.
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Path
+Target = usr/share/archr/image-files/*
+
+[Action]
+Description = Updating Arch R system files...
+When = PostTransaction
+Exec = /usr/bin/archr-image-files
