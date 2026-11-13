@@ -1,0 +1,26 @@
+wlr_egl_buffer: finish the buffer when it is destroyed
+
+Every wlr_buffer implementation must call wlr_buffer_finish() from its
+destroy hook (wlroots 0.17+): that emits the destroy signal and destroys
+the buffer's addons. The libmali wl_buffer wrapper never did, so the DRM
+backend's KMS framebuffer addon (and its imported GEM object, a whole
+640x480 frame) outlived every buffer a libmali client ever presented.
+On a 1 GB RK3326 handheld each fullscreen app launch (a game, the
+launcher itself) left 3 framebuffers behind, about 3.7 MB, until the
+compositor ran the board out of memory.
+
+--- a/types/wlr_egl_buffer.c
++++ b/types/wlr_egl_buffer.c
+@@ -64,8 +64,11 @@
+ static void egl_buffer_destroy(struct wlr_buffer *wlr_buffer) {
+ 	struct wlr_egl_buffer *buffer =
+ 		wl_container_of(wlr_buffer, buffer, base);
+-	wl_list_remove(&buffer->resource_destroy.link);
+ 	wl_list_remove(&buffer->release.link);
++
++	wlr_buffer_finish(wlr_buffer);
++
++	wl_list_remove(&buffer->resource_destroy.link);
+ 	free(buffer);
+ }
+ 
