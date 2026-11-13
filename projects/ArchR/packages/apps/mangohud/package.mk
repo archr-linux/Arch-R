@@ -3,7 +3,7 @@
 
 PKG_NAME="mangohud"
 PKG_VERSION="d7654ebcefb3bdb106d581c937417aa2007eaeeb" # v0.8.3-rc1 + a few fixes
-PKG_REV="2"
+PKG_REV="3"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/flightlessmango/MangoHud"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

@@ -1,0 +1,21 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+Subject: [PATCH] egl: find libEGL opened without a version
+
+gl4es (and other loaders) dlopen "libEGL.so", so the loaded object is
+named /usr/lib/libEGL.so and matches none of the "*libEGL.so.*"
+patterns. get_egl_proc_address then finds no eglGetProcAddress, the
+RTLD_NEXT fallback finds nothing either (libEGL was opened with
+RTLD_LOCAL), and MangoHud's eglGetDisplay hook returns NULL: the
+program crashes (PortMaster's Perfect Dark on gl4es).
+
+---
+--- a/src/gl/inject_egl.cpp
++++ b/src/gl/inject_egl.cpp
+@@ -41,6 +41,7 @@ static void* get_egl_proc_address(const char* name) {
+     static void *(*pfn_eglGetProcAddress)(const char*) = nullptr;
+     const char *libs[] = {
+         "*libEGL.so.*",
++        "*libEGL.so",
+         "*libEGL_mesa.so.*",
+         "*libEGL_nvidia.so.*"
+     };
