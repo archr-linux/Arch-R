@@ -3,14 +3,16 @@
 
 PKG_NAME="portmaster"
 PKG_VERSION="2026.04.01-1426"
-PKG_REV="5"
+PKG_REV="6"
 PKG_ARCH="arm aarch64"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/PortsMaster/PortMaster-GUI"
 PKG_URL="https://github.com/PortsMaster/PortMaster-GUI/releases/download/${PKG_VERSION}/PortMaster.zip"
-PKG_DEPENDS_TARGET="toolchain archr-hotkey gamecontrollerdb oga_controls control-gen xmlstarlet list-guid gst-plugins-base Python3 xz portmaster-compat-libs"
+PKG_DEPENDS_TARGET="toolchain archr-hotkey gamecontrollerdb oga_controls control-gen xmlstarlet list-guid gst-plugins-base Python3 xz portmaster-compat-libs lib32-openssl11"
 PKG_LONGDESC="Portmaster - a simple tool that allows you to download various game ports"
 PKG_TOOLCHAIN="manual"
+# Consoles updated with pacman get the 32-bit libssl 1.1 too.
+PKG_PACMAN_DEPENDS="lib32-openssl11"
 
 COMPAT_URL="https://github.com/archr-linux/packages/raw/main/compat.zip"
 

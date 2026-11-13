@@ -4,7 +4,7 @@
 PKG_NAME="arm"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://arch-r.io"
-PKG_DEPENDS_TARGET="toolchain libc gcc libusb  SDL2 SDL2_gfx SDL2_image SDL2_mixer SDL2_net SDL2_ttf"
+PKG_DEPENDS_TARGET="toolchain libc gcc libusb  SDL2 SDL2_gfx SDL2_image SDL2_mixer SDL2_net SDL2_ttf lib32-openssl11"
 PKG_SECTION="virtual"
 PKG_LONGDESC="Root package used to build and create 32-bit userland"
 
