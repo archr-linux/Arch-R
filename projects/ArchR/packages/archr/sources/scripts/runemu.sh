@@ -283,8 +283,8 @@ function portmaster_ready() {
         if [ -f /storage/roms/ports/PortMaster/control.txt ] &&
            [ -f /storage/.config/PortMaster/mapper.txt ] &&
            cmp -s /usr/config/PortMaster/control.txt /storage/roms/ports/PortMaster/control.txt &&
-           { [ ! -f /usr/config/PortMaster/mod_ArchR.txt ] ||
-             cmp -s /usr/config/PortMaster/mod_ArchR.txt /storage/roms/ports/PortMaster/mod_ArchR.txt; }; then
+           cmp -s /usr/config/PortMaster/mod_ArchR.txt /storage/roms/ports/PortMaster/mod_ArchR.txt &&
+           cmp -s /usr/config/PortMaster/libgl_ArchR.txt /storage/roms/ports/PortMaster/libgl_ArchR.txt; then
                 return
         fi
         ${VERBOSE} && log $0 "Preparing PortMaster"

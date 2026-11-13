@@ -1,0 +1,15 @@
+# PortMaster ports that run on Arch R only with GPU DRIVER = panfrost.
+#
+# The launcher reads this list when a port starts on libmali and offers to
+# switch the driver. Ports whose port.json already says reqs: opengl are
+# caught from there; this list is for the ones that do not say so but fail
+# on libmali (certified on the R36S, 2026-11-12, portmaster-cert).
+#
+# One port name per line, as PortMaster names it (NAME.zip).
+
+# Segfaults inside libmali's OpenGL ES 1 glDrawArrays at the first frame.
+bzflag.zip
+
+# gl4es on libmali: aborts on a GL error, or draws without the tunnel
+# (LIBGL_NOERROR=1). Full picture on panfrost with libgl_ArchR.txt.
+a7xpg.zip
