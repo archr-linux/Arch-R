@@ -1,0 +1,134 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026 ArchR (https://github.com/archr-linux/Arch-R)
+#
+# gen-offline-update: the update bundle for consoles without network.
+#
+# Usage: gen-offline-update [REPO_DIR OUT BASE_DB...]
+#   or REPO_DIR=... OUT=... BASE_DBS="a.tar.gz b.tar.gz" gen-offline-update
+#
+#   REPO_DIR  a published repo dir (repo-out): archr.db.tar.gz and its .sig,
+#             changelog.txt (first line: the update id) and the
+#             .pkg.tar.zst files.
+#   BASE_DBS  the installed-package db of every supported image: a tar of
+#             local/<pkg>-<ver>/desc entries (archr-localdb.tar.gz from
+#             gen-pacman-repo's seed step, or the image's own
+#             /usr/share/archr/pacman-image-db.tar.gz).
+#   OUT       the bundle to write (e.g. archr-update-20261113.4.tar; it is
+#             published as archr-update.tar).
+#   CHANNEL   the manifest's channel (default stable).
+#
+# The bundle updates any console flashed with one of those images: it holds
+# every package of the repo db whose version is not the same in ALL base
+# dbs (missing from a base counts as different); a package identical in
+# every base is already on every console. archr-update update --from reads
+# it (see the header of archr-update): one uncompressed tar, top-level
+# entries only, manifest first:
+#   archr-update.txt   id=<update id>, channel=<channel>, created=<UTC>
+#   changelog.txt      the repo's
+#   archr.db           the content of archr.db.tar.gz
+#   archr.db.sig       its detached signature (pacman checks it)
+#   *.pkg.tar.zst      the selected packages
+# Written atomically (a temporary file next to OUT, then a rename).
+
+set -euo pipefail
+
+if [ $# -gt 0 ]; then
+    [ $# -ge 3 ] || { echo "usage: ${0##*/} [REPO_DIR OUT BASE_DB...]" >&2; exit 2; }
+    REPO_DIR="$1"
+    OUT="$2"
+    shift 2
+    BASE_DBS="$*"
+fi
+REPO_DIR="${REPO_DIR:-}"
+OUT="${OUT:-}"
+BASE_DBS="${BASE_DBS:-}"
+CHANNEL="${CHANNEL:-stable}"
+
+die() { echo "gen-offline-update: $*" >&2; exit 1; }
+
+[ -n "${REPO_DIR}" ] && [ -d "${REPO_DIR}" ] || die "REPO_DIR is not a directory: '${REPO_DIR}'"
+[ -n "${OUT}" ] || die "OUT is not set"
+[ -n "${BASE_DBS}" ] || die "BASE_DBS is not set: give the db of every supported image"
+[[ ${CHANNEL} =~ ^[a-z]+$ ]] || die "bad CHANNEL '${CHANNEL}'"
+
+db="${REPO_DIR}/archr.db.tar.gz"
+[ -e "${db}" ] || db="${REPO_DIR}/archr.db"
+[ -f "${db}" ] || die "no archr.db.tar.gz in ${REPO_DIR}"
+sig="${db}.sig"
+[ -f "${sig}" ] || die "no signature ${sig}: consoles only accept a signed db"
+[ -f "${REPO_DIR}/changelog.txt" ] || die "no changelog.txt in ${REPO_DIR}"
+id="$(sed -n '1s/^[[:space:]]*\([^[:space:]]*\)[[:space:]]*$/\1/p' "${REPO_DIR}/changelog.txt")"
+[[ ${id} =~ ^[0-9]{8}(\.[0-9]+)?$ ]] || die "changelog.txt's first line is not an update id: '${id}'"
+
+work="$(mktemp -d)"
+tmp=""
+trap 'rm -rf "${work}"; [ -n "${tmp}" ] && rm -f "${tmp}"' EXIT
+
+# "name version filename" of every desc under a directory.
+descs() {
+    find "$1" -type f -name desc -print0 | sort -z | xargs -0 -r awk '
+        function flush() { if (name != "") print name, ver, (file == "" ? "-" : file) }
+        FNR == 1 { flush(); name = ver = file = key = "" }
+        /^%[A-Z0-9]+%$/ { key = $0; next }
+        /^$/ { key = ""; next }
+        key == "%NAME%" && name == "" { name = $0 }
+        key == "%VERSION%" && ver == "" { ver = $0 }
+        key == "%FILENAME%" && file == "" { file = $0 }
+        END { flush() }'
+}
+
+mkdir -p "${work}/repo"
+tar -xf "${db}" -C "${work}/repo" || die "cannot read ${db}"
+descs "${work}/repo" >"${work}/repo.list"
+[ -s "${work}/repo.list" ] || die "no packages in ${db}"
+
+# "index name version" of every base.
+n=0
+: >"${work}/bases.list"
+for base in ${BASE_DBS}; do
+    n=$((n + 1))
+    mkdir -p "${work}/base${n}"
+    tar -xf "${base}" -C "${work}/base${n}" || die "cannot read ${base}"
+    [ -d "${work}/base${n}/local" ] || die "${base} has no local/ db"
+    descs "${work}/base${n}/local" | awk -v i="${n}" '{ print i, $1, $2 }' >>"${work}/bases.list"
+    grep -q "^${n} " "${work}/bases.list" || die "no packages in ${base}"
+done
+
+awk -v nb="${n}" '
+    FNR == NR { have[$1 " " $2 " " $3] = 1; next }
+    { for (i = 1; i <= nb; i++) if (!((i " " $1 " " $2) in have)) { print $3; next } }
+' "${work}/bases.list" "${work}/repo.list" >"${work}/selected"
+
+missing=""
+while read -r file; do
+    [[ ${file} =~ ^[A-Za-z0-9@._+:-]+\.pkg\.tar\.zst$ ]] || die "unexpected package file name in the db: '${file}'"
+    [ -f "${REPO_DIR}/${file}" ] || missing="${missing} ${file}"
+done <"${work}/selected"
+[ -z "${missing}" ] || die "selected packages missing in ${REPO_DIR}:${missing}"
+count=$(wc -l <"${work}/selected" | tr -d ' ')
+
+stage="${work}/stage"
+mkdir -p "${stage}"
+printf 'id=%s\nchannel=%s\ncreated=%s\n' "${id}" "${CHANNEL}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"${stage}/archr-update.txt"
+cp -L "${REPO_DIR}/changelog.txt" "${stage}/changelog.txt"
+cp -L "${db}" "${stage}/archr.db"
+cp -L "${sig}" "${stage}/archr.db.sig"
+{
+    printf '%s\n' archr-update.txt changelog.txt archr.db archr.db.sig
+    while read -r file; do
+        ln -s "$(realpath "${REPO_DIR}/${file}")" "${stage}/${file}"
+        printf '%s\n' "${file}"
+    done <"${work}/selected"
+} >"${work}/members"
+
+mkdir -p "$(dirname "${OUT}")"
+tmp="$(mktemp "$(dirname "${OUT}")/.$(basename "${OUT}").XXXXXX")"
+# GNU format: BusyBox tar on the console reads its long names.
+tar -C "${stage}" -c -h -f "${tmp}" --format=gnu --owner=0 --group=0 --numeric-owner \
+    --no-recursion -T "${work}/members"
+chmod 644 "${tmp}"
+mv -f "${tmp}" "${OUT}"
+tmp=""
+size=$(stat -c %s "${OUT}")
+echo "gen-offline-update: ${OUT}: update ${id} (${CHANNEL}), ${count} packages, ${size} bytes ($((size / 1048576)) MiB)"
