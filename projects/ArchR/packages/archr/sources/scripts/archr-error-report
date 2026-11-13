@@ -258,6 +258,11 @@ PORT_NOISE+='|line [0-9]+: +[0-9]+ (Killed|Terminated|Hangup|Interrupt)'
 PORT_NOISE+='|addr2line: command not found'
 # Unity games log their analytics/store service failing offline (Huntdown).
 PORT_NOISE+='|Unity (Analytics|Purchasing|Services)'
+# gmloader probing optional modules a game does not ship (libopenal.so on
+# nearly every GameMaker port, the game running fine), and the NextOS
+# splash naming each step it reaches.
+PORT_NOISE+="|gmloader/main.cpp:[0-9]+: Failed initializing module '[^']*'\.\$"
+PORT_NOISE+='|^nxsplash: attempt=[0-9]+ phase=[A-Za-z_-]+$'
 # Lines that only look like errors: they count on a run that ended
 # within SHORT seconds (nothing was played).
 PORT_SOFT='[Ee]rror|ERROR|[Ff]ail|[Cc]annot|[Uu]nable to|not found|No such file'
