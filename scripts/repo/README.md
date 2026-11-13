@@ -66,6 +66,26 @@ the repo (`repo-<channel>/changelog.txt`). Its first line is the version
 the release brings (for example `2.1.2`); the following lines are the
 notes, in plain text. Without the asset the page simply has no notes.
 
+## Update without network (gen-offline-update)
+
+`gen-offline-update` writes the bundle a player copies to `roms/update/`
+on the card when the console has no network; the console offers it with
+`archr-update offline --json` and installs it with
+`archr-update update --from <tar>` (the script header documents both).
+
+```sh
+scripts/repo/gen-offline-update repo-out-3.0.36-inc \
+    /tmp/archr-update-20261113.4.tar \
+    image-3.0/pacman-image-db.tar.gz image-3.0.1/pacman-image-db.tar.gz
+```
+
+The last arguments are the installed-package dbs of every supported image
+(`/usr/share/archr/pacman-image-db.tar.gz` inside each image, or the
+`archr-localdb.tar.gz` seed). The bundle carries every package of the repo
+db whose version is not the same in all of them, plus the signed db and
+`changelog.txt`; the console's pacman checks the db signature as it does
+online. Publish it next to the repo as `archr-update.tar`.
+
 ## Versions of git-pinned packages
 
 A package.mk whose `PKG_VERSION` is a 40-hex commit (367 of them today:
