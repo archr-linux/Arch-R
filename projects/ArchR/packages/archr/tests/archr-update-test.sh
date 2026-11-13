@@ -426,7 +426,7 @@ offline_reset
 echo junk >"${CARD}/archr-update.tar"
 ARGS=(update --from "${CARD}/archr-update.tar")
 OUT=$(run)
-check "invalid tar: offline-invalid, exit 1" "$?|$(field reason <<<"${OUT}")|$(field changed <<<"${OUT}")" "1|offline-invalid|false"
+check "invalid tar: offline-invalid, exit 75 (the user's file, not a fault)" "$?|$(field reason <<<"${OUT}")|$(field changed <<<"${OUT}")" "75|offline-invalid|false"
 check "invalid tar: pacman not run" "$(cat "${TMP}/calls" 2>/dev/null | grep -c 'pacman -S')" 0
 ARGS=(update --from "${TMP}/nowhere.tar")
 check "no such file: offline-invalid" "$(run | field reason)" offline-invalid
@@ -446,7 +446,7 @@ offline_reset
 bundle "${CARD}/archr-update.tar" 20261113.4
 OUT=$(FAKE_SIG_FAIL=1 run)
 check "db signature refused: offline-invalid" "$?|$(field reason <<<"${OUT}")|$(field line <<<"${OUT}")" \
-  "1|offline-invalid|error: failed to synchronize all databases (invalid or corrupted database (PGP signature))"
+  "75|offline-invalid|error: failed to synchronize all databases (invalid or corrupted database (PGP signature))"
 check "db signature refused: nothing installed, tar kept, work dir removed" \
   "$(cat "${TMP}/calls" 2>/dev/null | grep -c 'pacman -Su ')|$(ls "${CARD}")|$(count "${TMP}/storage")" "0|archr-update.tar|0"
 check "db signature refused: nothing recorded" "$(cat "${TMP}/state/update-id")" 20261112.6

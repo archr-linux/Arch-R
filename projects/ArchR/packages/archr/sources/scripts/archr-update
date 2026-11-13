@@ -119,7 +119,7 @@
 #     is always removed; the tar only after a successful install. Never
 #     touches the network. Extra reasons:
 #       offline-invalid     unreadable tar or manifest, another channel, or
-#                           pacman rejected the db (signature)    (exit 1)
+#                           pacman rejected the db (signature)    (75)
 #       offline-old         its id is not newer than the installed one (75)
 #       offline-incomplete  this console needs a package the bundle does
 #                           not carry: older than every supported image,
@@ -296,7 +296,7 @@ fail() {
         *) echo "${2}${3:+: ${3}}" ;;
     esac
     case "$1" in
-        busy|network|battery|space|cancelled|offline-old|offline-incomplete) exit 75 ;;
+        busy|network|battery|space|cancelled|offline-invalid|offline-old|offline-incomplete) exit 75 ;;
     esac
     exit 1
 }
