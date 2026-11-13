@@ -45,8 +45,24 @@ cat >"${TMP}/bin/pacman" <<'EOF'
 #!/bin/bash
 # Fake pacman: just enough of -Q, -Sy, -Sup, -Suw and -Su for archr-update.
 echo "pacman $*" >>"${FAKE}/calls"
+# The offline path passes --config: keep a copy, serve from its Server.
+CONF=""
+for ((i = 1; i < $#; i++)); do
+  [ "${!i}" = --config ] && { j=$((i + 1)); CONF="${!j}"; }
+done
+[ -n "${CONF}" ] && cp "${CONF}" "${FAKE}/conf-used"
 case "$1" in
   -Q) cat "${FAKE}/installed" ;;
+  -Syy)
+    echo ":: Synchronizing package databases..."
+    SERVER=$(sed -n 's#^Server = file://##p' "${CONF}")
+    [ -f "${SERVER}/archr.db" ] && [ -f "${SERVER}/archr.db.sig" ] ||
+      { echo "error: failed retrieving file 'archr.db' from file://${SERVER}"; exit 1; }
+    [ -n "${FAKE_SIG_FAIL:-}" ] && {
+      echo "error: archr: signature from \"Someone <x@example.invalid>\" is invalid"
+      echo "error: failed to synchronize all databases (invalid or corrupted database (PGP signature))"
+      exit 1; }
+    exit 0 ;;
   -Sy)
     echo ":: Synchronizing package databases..."
     [ -n "${FAKE_SYNC_FAIL:-}" ] && { echo "error: failed to synchronize all databases (unexpected error)"; exit 1; }
@@ -76,7 +92,10 @@ case "$1" in
     echo ":: Starting full system upgrade..."
     echo "checking package integrity..."
     [ -n "${FAKE_FULL:-}" ] && { echo "error: Partition / too full: 9 blocks needed, 1 blocks free"; exit 1; }
+    CACHE=$([ -n "${CONF}" ] && sed -n 's#^CacheDir = ##p' "${CONF}")
     while read -r n v s; do
+      [ -n "${CACHE}" ] && [ ! -f "${CACHE}/$n-$v-aarch64.pkg.tar.zst" ] &&
+        { echo "error: failed retrieving file '$n-$v-aarch64.pkg.tar.zst' from file:///x : Couldn't open file"; exit 1; }
       echo "upgrading $n..."
       [ -n "${FAKE_INSTALL_FAIL:-}" ] && { echo "error: failed to commit transaction (conflicting files)"; exit 1; }
       sleep "${FAKE_STEP:-0.3}"
@@ -90,6 +109,7 @@ EOF
 printf '#!/bin/sh\nexit ${FAKE_PING:-0}\n' >"${TMP}/bin/ping"
 cat >"${TMP}/bin/curl" <<'EOF'
 #!/bin/sh
+echo "curl $*" >>"${FAKE}/calls"
 [ -f "${FAKE}/changelog" ] || exit 22
 cat "${FAKE}/changelog"
 EOF
@@ -105,6 +125,12 @@ echo "$*" >"${FAKE}/inhibit"
 while [ "${1#--}" != "$1" ]; do shift; done
 exec "$@"
 EOF
+# tar as it is, slowed down to extract when asked (to cancel meanwhile).
+cat >"${TMP}/bin/tar" <<EOF
+#!/bin/bash
+[ "\$1" = -x ] && [ -n "\${FAKE_TAR_SLOW:-}" ] && sleep "\${FAKE_TAR_SLOW}"
+exec $(command -v tar) "\$@"
+EOF
 chmod +x "${TMP}/bin/"*
 printf '2.1.2\n\nLauncher 1.5: "temas" e sons.\nKernel novo.\n' >"${TMP}/changelog"
 echo 80 >"${TMP}/power/battery/capacity"
@@ -116,7 +142,9 @@ run() {
     OS_RELEASE="${TMP}/os-release" UPDATE_LOG="${TMP}/log/archr-update.log" \
     UPDATE_LOCK="${TMP}/run/archr-update.lock" UPDATE_STATE="${TMP}/state" \
     POWER_SUPPLY="${TMP}/power" UPDATE_PROGRESS="${TMP}/run/progress" \
-    UPDATE_CANCEL="${TMP}/run/cancel" TICK=0.2 "$@" bash "${SCRIPT}" "${ARGS[@]}"
+    UPDATE_CANCEL="${TMP}/run/cancel" PACMAN_CONF="${TMP}/pacman.conf" \
+    ARCHR_UPDATE_OFFLINE_DIR="${TMP}/card/update" OFFLINE_WORK="${TMP}/storage/.archr-update-offline" \
+    TICK=0.2 "$@" bash "${SCRIPT}" "${ARGS[@]}"
 }
 # A field of the last JSON line on stdin.
 field() {
@@ -283,6 +311,188 @@ wait_for '"install"' "${TMP}/out"
 for PID in $(pgrep -f "${SCRIPT}"); do kill -TERM "${PID}" 2>/dev/null; done
 wait "${RUN}"
 check "TERM during the install is ignored" "$(field phase <"${TMP}/out") $([ -e "${TMP}/installed-ok" ] && echo installed)" "done installed"
+
+### Update without network: a bundle on the card
+cp "${HERE}/../../sysutils/pacman/config/pacman.conf" "${TMP}/pacman.conf"
+mkdir -p "${TMP}/card/update" "${TMP}/storage"
+CARD="${TMP}/card/update"
+# bundle FILE ID [CHANNEL] [PACKAGE TO LEAVE OUT]: a bundle of the offered packages.
+bundle() {
+  local stage="${TMP}/stage" n v s
+  rm -rf "${stage}"
+  mkdir -p "${stage}"
+  printf 'id=%s\nchannel=%s\ncreated=2026-11-13T12:00:00Z\n' "$2" "${3:-stable}" >"${stage}/archr-update.txt"
+  printf '%s\n\n- Launcher: "temas" novos.\n\n- System: fix.\n20261113.1\n\n- Older fix.\n20261112.6\n\n- Oldest.\n' "$2" >"${stage}/changelog.txt"
+  echo db >"${stage}/archr.db"
+  echo sig >"${stage}/archr.db.sig"
+  while read -r n v s; do
+    [ "${n}" = "${4:-}" ] && continue
+    head -c $((s * 100)) /dev/zero >"${stage}/${n}-${v}-aarch64.pkg.tar.zst"
+  done <"${TMP}/offered"
+  (cd "${stage}" && command tar -cf "$1" archr-update.txt changelog.txt archr.db archr.db.sig ./*.pkg.tar.zst --transform 's#^\./##')
+}
+# Nothing on the card or in the work dir; installed update 20261112.6.
+offline_reset() {
+  reset
+  find "${CARD}" -mindepth 1 -delete
+  find "${TMP}/storage" -mindepth 1 -delete
+  rm -f "${TMP}/conf-used"
+  mkdir -p "${TMP}/state"
+  echo 20261112.6 >"${TMP}/state/update-id"
+}
+count() { ls -A "$1" | wc -l | tr -d ' '; }
+printf 'linux 6.12.94-3\nretroarch 1.21.0-3\n' >"${TMP}/installed"
+printf 'linux 6.12.95-1 3000\nretroarch 1.22.0-1 2000\n' >"${TMP}/offered"
+
+ARGS=(offline --json)
+offline_reset
+OUT=$(run)
+check "offline scan: nothing on the card" "$?|${OUT}" '0|{"found":false}'
+echo junk >"${CARD}/archr-update.tar"
+check "offline scan: an unreadable file is not an update" "$(run)" '{"found":false}'
+bundle "${CARD}/archr-update.tar" 20261113.4
+OUT=$(run)
+check "offline scan: found, exit 0" "$?|$(field found <<<"${OUT}")|$(field file <<<"${OUT}")|$(field id <<<"${OUT}")|$(field channel <<<"${OUT}")|$(field newer <<<"${OUT}")|$(field current <<<"${OUT}")" \
+  "0|true|${CARD}/archr-update.tar|20261113.4|stable|true|20261112.6"
+check "offline scan: changelog down to the installed id" "$(field changelog <<<"${OUT}")" \
+  '["- Launcher: \"temas\" novos.", "- System: fix.", "- Older fix."]'
+bundle "${CARD}/archr-update-20261113.10.tar" 20261113.10
+bundle "${CARD}/archr-update-20261113.9.tar" 20261113.9
+check "offline scan: the newest of several" "$(field id <<<"$(run)")" 20261113.10
+bundle "${CARD}/archr-update-next.tar" 20261120.1 next
+check "offline scan: this console's channel first" "$(field id <<<"$(run)")" 20261113.10
+offline_reset
+bundle "${CARD}/archr-update.tar" 20261120.1 next
+OUT=$(run)
+check "offline scan: another channel is reported as such" "$(field found <<<"${OUT}") $(field channel <<<"${OUT}")" "true next"
+bundle "${CARD}/archr-update.tar" 20261112.6
+OUT=$(run)
+check "offline scan: the installed id is not newer" "$(field newer <<<"${OUT}")|$(field changelog <<<"${OUT}")" "false|[]"
+bundle "${CARD}/archr-update.tar" 20261111.2
+check "offline scan: an older id is not newer" "$(field newer <<<"$(run)")" false
+rm -f "${TMP}/state/update-id"
+echo 20261113 >"${TMP}/state/version"
+check "offline scan: an id recorded as version counts" "$(field current <<<"$(run)")" 20261113
+rm -f "${TMP}/state/version"
+bundle "${CARD}/archr-update.tar" 20261113.4
+OUT=$(run)
+check "offline scan: never updated: newer, the first id's notes" "$(field current <<<"${OUT}")|$(field newer <<<"${OUT}")|$(field changelog <<<"${OUT}")" \
+  '|true|["- Launcher: \"temas\" novos.", "- System: fix."]'
+ARGS=(offline)
+check "offline scan: a human line" "$(run)" \
+  "${CARD}/archr-update.tar brings update 20261113.4 (installed: none). Install it with: archr-update update --from ${CARD}/archr-update.tar"
+
+# update --from: works with no network, and touches none.
+offline_reset
+bundle "${CARD}/archr-update.tar" 20261113.4
+SIZE=$(stat -c %s "${CARD}/archr-update.tar")
+ARGS=(update --from "${CARD}/archr-update.tar" --progress)
+OUT=$(FAKE_PING=1 run)
+check "update --from exits 0 without network" "$?" 0
+check "update --from: every line is JSON" "$(printf '%s\n' "${OUT}" | python3 -c 'import json,sys; [json.loads(l) for l in sys.stdin]; print(1)' 2>&1)" 1
+PHASES=$(printf '%s\n' "${OUT}" | python3 -c '
+import json, sys
+seen = []
+for line in sys.stdin:
+    phase = json.loads(line)["phase"]
+    if not seen or seen[-1] != phase:
+        seen.append(phase)
+print(" ".join(seen))')
+check "update --from: phases" "${PHASES}" "extract sync install hooks done"
+check "update --from: extract reaches 100" "$(grep '"extract"' <<<"${OUT}" | field percent) $(grep '"extract"' <<<"${OUT}" | field total)" "100 ${SIZE}"
+check "update --from: done" "$(field count <<<"${OUT}") $(field reboot_reason <<<"${OUT}") $(field new_version <<<"${OUT}")" "2 kernel 20261113.4"
+check "update --from: no download, no curl" "$(grep -o '^pacman -S[a-zA-Z]*\|^curl' "${TMP}/calls" | tr '\n' ' ')" \
+  "pacman -Syy pacman -Sup pacman -Su "
+check "update --from: [archr] served from the work dir" "$(sed -n '/^\[archr\]/,$p' "${TMP}/conf-used" | grep -v '^#' | grep -v '^$')" \
+  "[archr]
+Server = file://${TMP}/storage/.archr-update-offline"
+check "update --from: cache in the work dir, SigLevel untouched" \
+  "$(grep -c "^CacheDir = ${TMP}/storage/.archr-update-offline/\$" "${TMP}/conf-used") $(grep -c '^CacheDir' "${TMP}/conf-used") $(grep '^SigLevel' "${TMP}/conf-used")" \
+  "1 1 SigLevel    = PackageOptional DatabaseRequired"
+check "update --from: the tar is deleted" "$(count "${CARD}")" 0
+check "update --from: the work dir is removed" "$(count "${TMP}/storage")" 0
+check "update --from: id recorded" "$(cat "${TMP}/state/update-id") $(cat "${TMP}/state/version")" "20261113.4 20261113.4"
+check "update --from: the progress file holds the same lines" "$(cat "${TMP}/run/progress")" "${OUT}"
+bundle "${CARD}/archr-update.tar" 20261113.4
+ARGS=(offline --json)
+check "after the update the same file is not newer" "$(run | field newer)" false
+ARGS=(update --progress --from "${CARD}/archr-update.tar")
+OUT=$(run)
+check "update --from an old file: offline-old, exit 75" "$?|$(field reason <<<"${OUT}")|$(field message <<<"${OUT}")" \
+  "75|offline-old|This update file (20261113.4) is not newer than the installed update (20261113.4)."
+check "an old file stays" "$(ls "${CARD}")" archr-update.tar
+
+offline_reset
+echo junk >"${CARD}/archr-update.tar"
+ARGS=(update --from "${CARD}/archr-update.tar")
+OUT=$(run)
+check "invalid tar: offline-invalid, exit 1" "$?|$(field reason <<<"${OUT}")|$(field changed <<<"${OUT}")" "1|offline-invalid|false"
+check "invalid tar: pacman not run" "$(cat "${TMP}/calls" 2>/dev/null | grep -c 'pacman -S')" 0
+ARGS=(update --from "${TMP}/nowhere.tar")
+check "no such file: offline-invalid" "$(run | field reason)" offline-invalid
+# A tar with a path in it is refused before anything is extracted.
+offline_reset
+bundle "${TMP}/b.tar" 20261113.4
+mkdir -p "${TMP}/stage2/sub"
+echo x >"${TMP}/stage2/sub/evil"
+(cd "${TMP}/stage" && command tar -cf "${CARD}/archr-update.tar" archr-update.txt changelog.txt archr.db archr.db.sig -C "${TMP}/stage2" sub/evil)
+ARGS=(update --from "${CARD}/archr-update.tar")
+check "a tar with a directory: offline-invalid, nothing extracted" "$(run | field reason) $(count "${TMP}/storage")" "offline-invalid 0"
+offline_reset
+bundle "${CARD}/archr-update.tar" 20261120.1 next
+check "another channel: offline-invalid" "$(run | field message)" "This update file is for the next channel; this console is on stable."
+
+offline_reset
+bundle "${CARD}/archr-update.tar" 20261113.4
+OUT=$(FAKE_SIG_FAIL=1 run)
+check "db signature refused: offline-invalid" "$?|$(field reason <<<"${OUT}")|$(field line <<<"${OUT}")" \
+  "1|offline-invalid|error: failed to synchronize all databases (invalid or corrupted database (PGP signature))"
+check "db signature refused: nothing installed, tar kept, work dir removed" \
+  "$(cat "${TMP}/calls" 2>/dev/null | grep -c 'pacman -Su ')|$(ls "${CARD}")|$(count "${TMP}/storage")" "0|archr-update.tar|0"
+check "db signature refused: nothing recorded" "$(cat "${TMP}/state/update-id")" 20261112.6
+
+offline_reset
+bundle "${CARD}/archr-update.tar" 20261113.4 stable retroarch
+OUT=$(run)
+check "missing package: offline-incomplete, exit 75" "$?|$(field reason <<<"${OUT}")|$(field line <<<"${OUT}")|$(field changed <<<"${OUT}")" \
+  "75|offline-incomplete|missing: retroarch|false"
+check "missing package: nothing installed, tar kept" "$(cat "${TMP}/calls" 2>/dev/null | grep -c 'pacman -Su ')|$(ls "${CARD}")" "0|archr-update.tar"
+
+offline_reset
+bundle "${CARD}/archr-update.tar" 20261113.4
+echo 20 >"${TMP}/power/battery/capacity"
+OUT=$(run)
+check "update --from, low battery: refused" "$?|$(field reason <<<"${OUT}")|$(count "${TMP}/storage")" "75|battery|0"
+echo 80 >"${TMP}/power/battery/capacity"
+OUT=$(FAKE_FREE_KB=10 run)
+check "update --from, no room to unpack: space before extracting" "$?|$(field reason <<<"${OUT}")|$(grep -c '"extract","bytes":[1-9]' <<<"${OUT}")" "75|space|0"
+flock -n 8
+mkdir -p "${TMP}/storage/.archr-update-offline"
+check "update --from while another runs: busy, its work dir kept" \
+  "$(run | field reason) $(ls -A "${TMP}/storage")" "busy .archr-update-offline"
+flock -u 8
+
+# Cancel while extracting: by SIGTERM and by the cancel file.
+offline_reset
+bundle "${CARD}/archr-update.tar" 20261113.4
+run FAKE_TAR_SLOW=3 >"${TMP}/out" &
+RUN=$!
+wait_for '"extract"' "${TMP}/out"
+sleep 0.5
+kill -TERM "$(pgrep -P "${RUN}" -f "${SCRIPT}" || echo "${RUN}")" 2>/dev/null
+wait "${RUN}"
+check "cancel during the extract" "$(field reason <"${TMP}/out")" cancelled
+check "cancel: nothing synced, tar kept, work dir removed" \
+  "$(cat "${TMP}/calls" 2>/dev/null | grep -c 'pacman -S')|$(ls "${CARD}")|$(count "${TMP}/storage")" "0|archr-update.tar|0"
+offline_reset
+bundle "${CARD}/archr-update.tar" 20261113.4
+run FAKE_TAR_SLOW=3 >"${TMP}/out" &
+RUN=$!
+wait_for '"extract"' "${TMP}/out"
+touch "${TMP}/run/cancel"
+wait "${RUN}"
+check "cancel file during the extract" "$(field reason <"${TMP}/out") $([ -e "${TMP}/run/cancel" ] && echo left || echo gone)" "cancelled gone"
+rm -f "${TMP}/state/update-id"
 
 ### version: the recorded one only when newer than the image's
 ARGS=(version)

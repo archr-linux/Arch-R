@@ -74,6 +74,57 @@
 #     else /etc/os-release. The one place that decides it; os_version and
 #     archr-launcher's Information page use it.
 #
+#   Installed update id: every successful update records the id it brought
+#   (e.g. 20261113.4) in /var/lib/archr-update/update-id: the network path
+#   when the release's changelog.txt names one, the offline path always (the
+#   bundle's manifest id). Consoles updated before this file existed have
+#   the same id in /var/lib/archr-update/version (changelog.txt's first
+#   line), which is read when it has an id's shape. A console never updated
+#   has none ("current" is empty), and any bundle counts as newer for it.
+#
+#   Update without network (a bundle on the card):
+#     The bundle is one uncompressed tar, archr-update*.tar, in
+#     /storage/roms/update/ (roms/update/ on the card from a PC), made by
+#     scripts/repo/gen-offline-update: archr-update.txt (id=, channel=,
+#     created=), archr.db and archr.db.sig (the repo db and its signature),
+#     changelog.txt and the .pkg.tar.zst files, all top-level.
+#
+#   archr-update offline [--json]
+#     Creates the folder when missing, then reads only the manifest and
+#     changelog of every bundle in it (no extraction) and reports the
+#     newest one (by id; one of this console's channel first). One JSON line and exit 0 in both cases:
+#       {"found":false}
+#       {"found":true,"file":"/storage/roms/update/archr-update.tar",
+#        "id":"20261113.4","channel":"stable","newer":true,
+#        "current":"20261112.6","changelog":["- ...","- ..."]}
+#     newer compares the ids only; a bundle is installable when newer is
+#     true and channel is this console's. changelog: the "- " lines of the
+#     bundle's changelog.txt above the first id not newer than current
+#     (only the first id's lines when current is empty). Without --json,
+#     one human line.
+#
+#   archr-update update --from <tar> [--progress]
+#     JSON progress lines like update --progress (with or without
+#     --progress), with an extract phase before sync and no download:
+#       {"phase":"extract","bytes":..,"total":..,"percent":40}
+#       {"phase":"sync"} {"phase":"install",..} {"phase":"hooks",..}
+#       {"phase":"done",..}
+#     Same lock, battery, space and cancel rules (SIGTERM or the cancel
+#     file stop it while extracting). The bundle is extracted into
+#     /storage/.archr-update-offline (free space: the tar's size plus a
+#     margin; CheckSpace guards the install) and pacman runs with a copy of
+#     /etc/pacman.conf whose [archr] Server is file://<that dir> and whose
+#     CacheDir is that dir; SigLevel is untouched, so pacman checks the db
+#     signature against the archr keyring as it does online. The work dir
+#     is always removed; the tar only after a successful install. Never
+#     touches the network. Extra reasons:
+#       offline-invalid     unreadable tar or manifest, another channel, or
+#                           pacman rejected the db (signature)    (exit 1)
+#       offline-old         its id is not newer than the installed one (75)
+#       offline-incomplete  this console needs a package the bundle does
+#                           not carry: older than every supported image,
+#                           reflash                                (75)
+#
 #   Everything, pacman's output included, is appended to
 #   /storage/.config/archr-update.log. Check and update hold
 #   /run/archr-update.lock (flock) while they run: a second run fails with
@@ -96,6 +147,11 @@
 : "${TICK:=1}"
 : "${DOWNLOAD_TRIES:=3}"
 : "${RETRY_TICKS:=5}"
+: "${PACMAN_CONF:=/etc/pacman.conf}"
+: "${ARCHR_UPDATE_OFFLINE_DIR:=/storage/roms/update}"
+: "${OFFLINE_WORK:=/storage/.archr-update-offline}"
+# Extra pacman options: the offline path's temporary config; empty online.
+PACMAN_ARGS=()
 REPO="https://github.com/archr-linux/archr-repo/releases/download"
 MIN_BATTERY=30
 # Free space kept beyond the download; pacman's CheckSpace guards the install.
@@ -130,12 +186,15 @@ network_ok() {
 
 usage() {
     cat <<EOF
-Usage: ${0##*/} [check [--json]|update [--progress]|info|seed|version]
+Usage: ${0##*/} [check [--json]|update [--progress] [--from TAR]|offline [--json]|info|seed|version]
 
   check     Sync repo metadata and report whether updates are available.
             --json: one JSON report for frontends.
   update    Sync metadata and apply pending updates (pacman -Syu).
             --progress: download, then install, with JSON progress lines.
+            --from TAR: install an update bundle from the card, no network.
+  offline   Look for an update bundle in ${ARCHR_UPDATE_OFFLINE_DIR}.
+            --json: one JSON report for frontends.
   info      Show current OS version, channel, and configured mirror.
   seed      Record this image's packages in an empty pacman database.
   version   Print the system's version.
@@ -237,7 +296,7 @@ fail() {
         *) echo "${2}${3:+: ${3}}" ;;
     esac
     case "$1" in
-        busy|network|battery|space|cancelled) exit 75 ;;
+        busy|network|battery|space|cancelled|offline-old|offline-incomplete) exit 75 ;;
     esac
     exit 1
 }
@@ -326,7 +385,7 @@ list_targets() {
     while read -r name version; do
         installed["${name}"]="${version}"
     done < <(LC_ALL=C pacman -Q 2>/dev/null)
-    out="$(LC_ALL=C pacman -Sup --color never --print-format '%n %v %s %l' 2>"${WORK}/targets")" ||
+    out="$(LC_ALL=C pacman -Sup --color never --print-format '%n %v %s %l' "${PACMAN_ARGS[@]}" 2>"${WORK}/targets")" ||
         return 1
     while read -r name version size location; do
         case "${size}" in
@@ -515,7 +574,7 @@ run_install() {
     # Past this point nothing stops pacman: not this script's signals, not
     # pacman's (ignored dispositions survive exec), not a closed reader.
     trap '' TERM HUP INT
-    (trap '' TERM HUP INT; LC_ALL=C exec pacman -Su --noconfirm --noprogressbar --color never) \
+    (trap '' TERM HUP INT; LC_ALL=C exec pacman -Su --noconfirm --noprogressbar --color never "${PACMAN_ARGS[@]}") \
         >"${WORK}/install" 2>&1 </dev/null &
     PID=$!
     # No sleep, power off or power/suspend key while pacman runs. A holder
@@ -544,6 +603,8 @@ run_install() {
     case "${line}" in
         *"too full"*|*"not enough free disk space"*)
             fail space "Not enough free space to install." "${line}" ;;
+        *"failed retrieving file"*)
+            [ -n "${OFFLINE}" ] && fail offline-incomplete "${INCOMPLETE_MESSAGE}" "${line}" ;;
     esac
     fail install "Install failed." "${line}"
 }
@@ -586,8 +647,249 @@ cmd_update_progress() {
     drop_cache
     if [ -n "${NEW_VERSION}" ]; then
         mkdir -p "${UPDATE_STATE}" && echo "${NEW_VERSION}" >"${UPDATE_STATE}/version"
+        is_update_id "${NEW_VERSION}" && record_update_id "${NEW_VERSION}"
     fi
     logf "update: done"
+    emit "\"phase\":\"done\",\"count\":${COUNT},$(reboot_fields "${reason}"),\"old_version\":$(json "${old}"),\"new_version\":$(json "$(os_version)")"
+}
+
+### Update without network: a bundle on the card
+
+INCOMPLETE_MESSAGE="This update file lacks packages this console needs: the console is older than every image the file supports. Reflash the latest image."
+# The names a bundle holds, all top-level.
+BUNDLE_ENTRY='^(archr-update\.txt|archr\.db|archr\.db\.sig|changelog\.txt|[A-Za-z0-9@._+:-]+\.pkg\.tar\.zst)$'
+
+# An update id: the date, then an optional .N (20261113, 20261113.4).
+is_update_id() {
+    [[ $1 =~ ^[0-9]{8}(\.[0-9]+)?$ ]]
+}
+
+record_update_id() {
+    mkdir -p "${UPDATE_STATE}" && echo "$1" >"${UPDATE_STATE}/update-id"
+}
+
+# The id of the last update this console installed, or nothing.
+installed_update_id() {
+    local id
+    for id in "$(cat "${UPDATE_STATE}/update-id" 2>/dev/null)" \
+              "$(cat "${UPDATE_STATE}/version" 2>/dev/null)"; do
+        is_update_id "${id}" && { echo "${id}"; return 0; }
+    done
+}
+
+# id_newer A B: A is a newer update id than B; any id is newer than none.
+id_newer() {
+    [ -z "$2" ] && return 0
+    [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -n 1)" = "$1" ]
+}
+
+# read_manifest TAR: B_ID and B_CHANNEL from its archr-update.txt, without
+# extracting anything else. Fails on an unreadable tar or manifest.
+read_manifest() {
+    local text
+    B_ID=""
+    B_CHANNEL=""
+    text="$(tar -xOf "$1" archr-update.txt 2>/dev/null | head -c 4096 | tr -d '\r')" || return 1
+    B_ID="$(printf '%s\n' "${text}" | sed -n 's/^id=//p' | head -n 1)"
+    B_CHANNEL="$(printf '%s\n' "${text}" | sed -n 's/^channel=//p' | head -n 1)"
+    is_update_id "${B_ID}" && [[ ${B_CHANNEL} =~ ^[a-z]+$ ]]
+}
+
+# changelog_json TAR CURRENT: the "- " lines of the bundle's changelog.txt
+# above the first id not newer than CURRENT (the first id's only when
+# CURRENT is empty), as a JSON array.
+changelog_json() {
+    local line items="" n=0 seen=""
+    while IFS= read -r line; do
+        line="${line%$'\r'}"
+        if is_update_id "${line}"; then
+            if [ -n "$2" ]; then
+                id_newer "${line}" "$2" || break
+            else
+                [ -n "${seen}" ] && break
+                seen=1
+            fi
+            continue
+        fi
+        case "${line}" in
+            "- "*)
+                items="${items:+${items},}$(json "${line}")"
+                n=$((n + 1))
+                [ "${n}" -ge 100 ] && break
+                ;;
+        esac
+    done < <(tar -xOf "$1" changelog.txt 2>/dev/null | head -c 65536)
+    printf '[%s]' "${items}"
+}
+
+cmd_offline() {
+    local tar best="" best_id="" best_channel="" best_own="" own current newer=false
+    # The folder shows on the card once looked for, for the player to find.
+    mkdir -p "${ARCHR_UPDATE_OFFLINE_DIR}" 2>/dev/null
+    for tar in "${ARCHR_UPDATE_OFFLINE_DIR}"/archr-update*.tar; do
+        [ -f "${tar}" ] && read_manifest "${tar}" || continue
+        own=""
+        [ "${B_CHANNEL}" = "${BRANCH}" ] && own=1
+        # One for this console's channel first, then the newest id.
+        if [ -z "${best}" ] || { [ -n "${own}" ] && [ -z "${best_own}" ]; } ||
+           { [ "${own}" = "${best_own}" ] && id_newer "${B_ID}" "${best_id}"; }; then
+            best="${tar}"
+            best_id="${B_ID}"
+            best_channel="${B_CHANNEL}"
+            best_own="${own}"
+        fi
+    done
+    if [ -z "${best}" ]; then
+        if [ "$1" = --json ]; then
+            echo '{"found":false}'
+        else
+            echo "No update file in ${ARCHR_UPDATE_OFFLINE_DIR}."
+        fi
+        return 0
+    fi
+    current="$(installed_update_id)"
+    id_newer "${best_id}" "${current}" && newer=true
+    if [ "$1" = --json ]; then
+        printf '{"found":true,"file":%s,"id":%s,"channel":%s,"newer":%s,"current":%s,"changelog":%s}\n' \
+            "$(json "${best}")" "$(json "${best_id}")" "$(json "${best_channel}")" "${newer}" \
+            "$(json "${current}")" "$(changelog_json "${best}" "${current}")"
+    elif [ -z "${best_own}" ]; then
+        echo "${best} (update ${best_id}) is for the ${best_channel} channel; this console is on ${BRANCH}."
+    elif [ "${newer}" = true ]; then
+        echo "${best} brings update ${best_id} (installed: ${current:-none}). Install it with: ${0##*/} update --from ${best}"
+    else
+        echo "${best} (update ${best_id}) is not newer than the installed update ${current}."
+    fi
+    return 0
+}
+
+# Only regular files, all top-level, with a bundle's names and its four
+# fixed files.
+bundle_listing_ok() {
+    local kind name fixed=0
+    tar -tvf "$1" >"${WORK}/listing" 2>/dev/null || return 1
+    while read -r kind name; do
+        [ "${kind}" = - ] && [[ ${name} =~ ${BUNDLE_ENTRY} ]] || return 1
+        case "${name}" in
+            archr-update.txt|archr.db|archr.db.sig|changelog.txt) fixed=$((fixed + 1)) ;;
+        esac
+    done < <(awk '{ print substr($1, 1, 1), $NF }' "${WORK}/listing")
+    [ "${fixed}" -eq 4 ]
+}
+
+# Unpacks the bundle into OFFLINE_WORK with extract lines; SIGTERM or the
+# cancel file stops it (tar is ended at once: nothing to keep).
+run_extract() {
+    local rc bytes percent
+    # 9>&-: the lock stays with this script, not with a tar ended later.
+    tar -x -o -f "$1" -C "${OFFLINE_WORK}" >"${WORK}/extract" 2>&1 </dev/null 9>&- &
+    PID=$!
+    while kill -0 "${PID}" 2>/dev/null; do
+        bytes=$(($(du -sk "${OFFLINE_WORK}" 2>/dev/null | awk '{ print $1 + 0 }') * 1024))
+        percent=$((bytes * 100 / TOTAL))
+        [ "${percent}" -gt 99 ] && percent=99
+        emit "\"phase\":\"extract\",\"bytes\":${bytes},\"total\":${TOTAL},\"percent\":${percent}"
+        sleep "${TICK}"
+        [ -e "${UPDATE_CANCEL}" ] && CANCELLED=1
+        [ -n "${CANCELLED}" ] && kill -TERM "${PID}" 2>/dev/null
+    done
+    wait "${PID}"
+    rc=$?
+    PID=""
+    cat "${WORK}/extract" >>"${UPDATE_LOG}" 2>/dev/null
+    [ -n "${CANCELLED}" ] && fail cancelled "Update cancelled."
+    [ "${rc}" -eq 0 ] ||
+        fail offline-invalid "The update file is damaged; copy it again." "$(last_error "${WORK}/extract")"
+    emit "\"phase\":\"extract\",\"bytes\":${TOTAL},\"total\":${TOTAL},\"percent\":100"
+}
+
+# pacman.conf for the bundle: the real one, with the [archr] repo served
+# from the work dir and the cache there too (packages are not copied
+# again). Everything else, SigLevel included, stays as it is.
+offline_conf() {
+    awk -v work="${OFFLINE_WORK}" '
+        /^[[:space:]]*\[/ {
+            section = $0
+            gsub(/[][[:space:]]/, "", section)
+            print
+            if (section == "options") print "CacheDir = " work "/"
+            if (section == "archr") { print "Server = file://" work; found = 1 }
+            next
+        }
+        section == "options" && /^[[:space:]]*CacheDir[[:space:]]*=/ { next }
+        section == "archr" && /^[[:space:]]*(Server|Include)[[:space:]]*=/ { next }
+        { print }
+        END { exit !found }' "${PACMAN_CONF}" >"${WORK}/pacman.conf"
+}
+
+cmd_update_offline() {
+    local tar=$1 low old current space targets reason name file missing=""
+    take_lock
+    # Only the lock's holder owns the work dir and the followed file.
+    OFFLINE=1
+    rm -f "${UPDATE_CANCEL}"
+    : >"${UPDATE_PROGRESS}" && FOLLOWED=1
+    TOTAL=$(stat -c %s "${tar}" 2>/dev/null)
+    case "${TOTAL}" in
+        ""|*[!0-9]*) TOTAL=0 ;;
+    esac
+    emit "\"phase\":\"extract\",\"bytes\":0,\"total\":${TOTAL},\"percent\":0"
+    { [ "${TOTAL}" -gt 0 ] && read_manifest "${tar}" && bundle_listing_ok "${tar}"; } ||
+        fail offline-invalid "This is not a readable Arch R update file; copy it again."
+    [ "${B_CHANNEL}" = "${BRANCH}" ] ||
+        fail offline-invalid "This update file is for the ${B_CHANNEL} channel; this console is on ${BRANCH}."
+    current="$(installed_update_id)"
+    id_newer "${B_ID}" "${current}" ||
+        fail offline-old "This update file (${B_ID}) is not newer than the installed update (${current})."
+    low="$(battery_low)" &&
+        fail battery "Battery at ${low}%; connect the charger (needs ${MIN_BATTERY}%)."
+    old="$(os_version)"
+    logf "update: from ${tar} (${B_ID}, ${TOTAL} bytes)"
+    rm -rf "${OFFLINE_WORK}"
+    mkdir -p "${OFFLINE_WORK%/*}"
+    space=$(df -Pk "${OFFLINE_WORK%/*}" 2>/dev/null | awk 'NR == 2 { print $4 }')
+    if [ -n "${space}" ] && [ $((space * 1024)) -lt $((TOTAL + SPACE_MARGIN)) ]; then
+        fail space "Not enough free space to unpack the update ($((TOTAL / 1048576)) MiB)."
+    fi
+    mkdir -p "${OFFLINE_WORK}" || fail install "Cannot create ${OFFLINE_WORK}."
+    run_extract "${tar}"
+    offline_conf || fail sync "No [archr] repository in ${PACMAN_CONF}."
+    PACMAN_ARGS=(--config "${WORK}/pacman.conf")
+    seed_local_db >>"${UPDATE_LOG}" 2>&1 ||
+        fail seed "No package database for this image; reflash to update."
+    emit '"phase":"sync"'
+    # -yy: the bundle's db replaces the synced one whatever their dates.
+    logged "${WORK}/sync" pacman -Syy --noconfirm --color never "${PACMAN_ARGS[@]}" ||
+        fail offline-invalid "The update file was refused: its package database is damaged or not signed by Arch R." \
+            "$(last_error "${WORK}/sync")"
+    targets="$(list_targets)" ||
+        fail sync "Cannot list the upgrade." "$(last_error "${WORK}/targets")"
+    while read -r name _ _ _ file; do
+        [ -n "${name}" ] && [ ! -f "${OFFLINE_WORK}/${file}" ] && missing="${missing} ${name}"
+    done <<<"${targets}"
+    [ -n "${missing}" ] && fail offline-incomplete "${INCOMPLETE_MESSAGE}" "missing:${missing}"
+    NEW_VERSION="$(sed -n '1s/^[[:space:]]*\([^[:space:]]*\)[[:space:]]*$/\1/p' "${OFFLINE_WORK}/changelog.txt")"
+    case "${NEW_VERSION}" in
+        *[!0-9A-Za-z._-]*) NEW_VERSION="" ;;
+    esac
+    COUNT=0
+    reason=""
+    if [ -n "${targets}" ]; then
+        COUNT=$(wc -l <<<"${targets}")
+        reason="$(reboot_reason <<<"${targets}")"
+        logf "update: ${COUNT} package(s) from ${tar}"
+        low="$(battery_low)" &&
+            fail battery "Battery at ${low}%; connect the charger (needs ${MIN_BATTERY}%)."
+        run_install
+    else
+        logf "update: nothing to do from ${tar}"
+    fi
+    if [ -n "${NEW_VERSION}" ]; then
+        mkdir -p "${UPDATE_STATE}" && echo "${NEW_VERSION}" >"${UPDATE_STATE}/version"
+    fi
+    record_update_id "${B_ID}"
+    rm -f "${tar}"
+    logf "update: done (${B_ID})"
     emit "\"phase\":\"done\",\"count\":${COUNT},$(reboot_fields "${reason}"),\"old_version\":$(json "${old}"),\"new_version\":$(json "$(os_version)")"
 }
 
@@ -635,21 +937,45 @@ if [ "${1:-}" = version ]; then
     exit 0
 fi
 
+# Reads the card only: no lock, no network.
+if [ "${1:-}" = offline ]; then
+    cmd_offline "${2:-}"
+    exit 0
+fi
+
 MODE=plain
 CHANGED=false
+FROM=""
+ARGV="$*"
 case "${1:-update} ${2:-}" in
     "check --json") MODE=json ;;
     "update --progress") MODE=progress ;;
 esac
+# update --from TAR [--progress], in any order: always progress lines.
+if [ "${1:-}" = update ] && [[ " $* " == *" --from "* ]]; then
+    shift
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --from) FROM="${2:-}"; [ $# -ge 2 ] && shift; shift ;;
+            --progress) shift ;;
+            *) usage; exit 2 ;;
+        esac
+    done
+    [ -n "${FROM}" ] || { usage; exit 2; }
+    MODE=progress
+fi
 if [ "${MODE}" != plain ]; then
     # A reader that goes away must not kill the run: writes just fail.
     trap '' PIPE
     mkdir -p "${UPDATE_LOG%/*}" 2>/dev/null
     WORK="$(mktemp -d)" || exit 1
-    trap 'rm -rf "${WORK}"; if [ -n "${FOLLOWED}" ]; then rm -f "${UPDATE_CANCEL}"; fi' EXIT
-    logf "archr-update ${1} ${2} (channel ${BRANCH})"
+    trap 'rm -rf "${WORK}"; if [ -n "${OFFLINE}" ] && [ -n "${OFFLINE_WORK}" ]; then rm -rf "${OFFLINE_WORK}"; fi; if [ -n "${FOLLOWED}" ]; then rm -f "${UPDATE_CANCEL}"; fi' EXIT
+    logf "archr-update ${ARGV} (channel ${BRANCH})"
     if [ "${MODE}" = json ]; then
         cmd_check_json
+    elif [ -n "${FROM}" ]; then
+        trap cancel TERM
+        cmd_update_offline "${FROM}"
     else
         trap cancel TERM
         cmd_update_progress
