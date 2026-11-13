@@ -16,7 +16,7 @@ PKG_NAME="archr"
 # versions; the install silently skipped a PKG_INSTALL dir that did not
 # exist and the image assembly then failed in post_install.
 PKG_VERSION="$(date +%Y%m%d)"
-PKG_REV="6"
+PKG_REV="7"
 PKG_LICENSE="GPLv2"
 PKG_SITE=""
 PKG_URL=""
@@ -185,10 +185,11 @@ EOF
   chmod 0755 ${INSTALL}/usr/bin/* 2>/dev/null ||:
   mkdir -p ${INSTALL}/etc/pacman.d/hooks
   cp ${PKG_DIR}/sources/pacman-hooks/*.hook ${INSTALL}/etc/pacman.d/hooks
-  # Units from system.d/ go to the image only (scripts/install), so a
-  # change to them never reaches an updated device. A drop-in is a new,
-  # packaged file: KillMode=process lets a game save the guard started
-  # survive the guard's restart after an update.
+  # Units from system.d/ reach an updated device through image-files/
+  # (scripts/build, archr-image-files), which never replaces a file a
+  # package owns. A drop-in is a new, packaged file: KillMode=process lets
+  # a game save the guard started survive the guard's restart after an
+  # update.
   mkdir -p ${INSTALL}/usr/lib/systemd/system/archr-battery-guard.service.d
   printf '[Service]\nKillMode=process\n' \
     >${INSTALL}/usr/lib/systemd/system/archr-battery-guard.service.d/10-killmode.conf

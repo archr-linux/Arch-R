@@ -1671,6 +1671,94 @@ add_group() {
 }
 
 # Usage: enable_service <unit> [target]
+# install_convention_files ROOT: copy the package's convention folders
+# (profile.d, system.d, udev.d, autostart, ...) from its own folder and
+# from the project's and the device's folders of the same name, in that
+# order (a later one wins), into ROOT. scripts/install copies them straight
+# into the image; scripts/build also stages them in the package under
+# usr/share/archr/image-files/<package>/, so that an update brings them to
+# a device (archr-image-files puts them in place).
+install_convention_files() {
+  local root="${1}" dir
+  for dir in ${PKG_DIR} \
+    ${PROJECT_DIR}/${PROJECT}/packages/${PKG_NAME} \
+    ${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/packages/${PKG_NAME}; do
+
+    [ -d ${dir} ] || continue
+
+    if [ -d ${dir}/profile.d ]; then
+      mkdir -p ${root}/etc/profile.d
+      cp ${dir}/profile.d/* ${root}/etc/profile.d
+    fi
+
+    if [ -d ${dir}/tmpfiles.d ]; then
+      mkdir -p ${root}/usr/lib/tmpfiles.d
+      cp ${dir}/tmpfiles.d/*.conf ${root}/usr/lib/tmpfiles.d
+    fi
+
+    if [ -d ${dir}/autostart ]; then
+      mkdir -p ${root}/usr/lib/autostart/common
+      cp ${dir}/autostart/* ${root}/usr/lib/autostart/common
+      chmod 0755 ${root}/usr/lib/autostart/common/*
+    fi
+
+    if [ -d ${dir}/daemons ]; then
+      mkdir -p ${root}/usr/lib/autostart/daemons
+      cp ${dir}/daemons/* ${root}/usr/lib/autostart/daemons
+    fi
+
+    if [ -d ${dir}/system.d ]; then
+      mkdir -p ${root}/usr/lib/systemd/system
+      cp -Pr ${dir}/system.d/*.* ${root}/usr/lib/systemd/system
+    fi
+
+    if [ -d ${dir}/udev.d ]; then
+      mkdir -p ${root}/usr/lib/udev/rules.d
+      cp ${dir}/udev.d/*.rules ${root}/usr/lib/udev/rules.d
+    fi
+
+    if [ -d ${dir}/hwdb.d ]; then
+      mkdir -p ${root}/usr/lib/udev/hwdb.d
+      cp ${dir}/hwdb.d/*.hwdb ${root}/usr/lib/udev/hwdb.d
+    fi
+
+    if [ -d ${dir}/sleep.d ]; then
+      mkdir -p ${root}/usr/lib/systemd/system-sleep
+      cp ${dir}/sleep.d/* ${root}/usr/lib/systemd/system-sleep
+    fi
+
+    if [ -d ${dir}/sleep.d.serial ]; then
+      mkdir -p ${root}/usr/lib/systemd/system-sleep.serial
+      cp ${dir}/sleep.d.serial/* ${root}/usr/lib/systemd/system-sleep.serial
+    fi
+
+    if [ -d ${dir}/sysctl.d ]; then
+      mkdir -p ${root}/usr/lib/sysctl.d
+      cp ${dir}/sysctl.d/*.conf ${root}/usr/lib/sysctl.d
+    fi
+
+    if [ -d ${dir}/modules-load.d ]; then
+      mkdir -p ${root}/usr/lib/modules-load.d
+      cp ${dir}/modules-load.d/*.conf ${root}/usr/lib/modules-load.d
+    fi
+
+    if [ -d ${dir}/sysconf.d ]; then
+      mkdir -p ${root}/etc/sysconf.d
+      cp ${dir}/sysconf.d/*.conf ${root}/etc/sysconf.d
+    fi
+
+    if [ -d ${dir}/debug.d ]; then
+      mkdir -p ${root}/usr/share/debugconf
+      cp ${dir}/debug.d/*.conf ${root}/usr/share/debugconf
+    fi
+
+    if [ -d ${dir}/modprobe.d ]; then
+      mkdir -p ${root}/usr/lib/modprobe.d
+      cp ${dir}/modprobe.d/*.conf ${root}/usr/lib/modprobe.d
+    fi
+  done
+}
+
 enable_service() {
   local unit="$1"
   local unit_dir="usr/lib/systemd/system"
