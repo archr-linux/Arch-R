@@ -140,6 +140,10 @@ multi /storage/.config/retroarch/retroarch.cfg.bak "x pass='it\\\\'s SECRET-n7' 
 echo "Kernel panic - not syncing: secret_key=SECRET-pstore" >"${R}/sys/fs/pstore/dmesg-ramoops-0"
 printf 'compressed\000SECRET-compressed' >"${R}/sys/fs/pstore/dmesg-ramoops-1.enc.z"
 touch "${R}/usr/lib/libretro/pcsx_rearmed_libretro.so"
+# The R36S's OTP: its console id is e119e1afb0fc (archr-console-id).
+mkdir -p "${R}/sys/bus/nvmem/devices/rockchip-otp0"
+printf '\x52\x4b\x33\x26\x91\xfe\x21\x55\x52\x4b\x43\x33\x35\x30\x30\x34\x00\x00\x00\x00\x12\x24\x0b\x06\x05\x00\x00\x00\x00\x00\x00\x00' \
+  >"${R}/sys/bus/nvmem/devices/rockchip-otp0/nvmem"
 
 fake() { printf '#!/bin/sh\n%s\n' "$2" >"${TMP}/bin/$1"; chmod +x "${TMP}/bin/$1"; }
 fake journalctl 'case "$*" in *list-boots*) echo "  0 abc Fri"; echo " -1 def Thu";; *-b\ -1*) echo "previous boot psk=SECRET-prev";; *) echo "iwd: PreSharedKey: SECRET-journal"; echo "kernel: normal line";; esac'
@@ -160,6 +164,7 @@ check "size printed" "$(sed -n 's/^SIZE=//p' <<<"${OUT}")" "$(stat -c %s "${R}${
 
 mkdir "${TMP}/x" && (cd "${TMP}/x" && unzip -q "${R}${ZIP}")
 X=$(echo "${TMP}"/x/*)
+check "console id in resumo.txt" "$(grep '^console:' "${X}/resumo.txt")" "console: e119e1afb0fc"
 check "no secret leaks" "$(grep -rao 'SECRET[^ "]*' "${X}" | sed "s#${X}/##")" ""
 check "iwd file never copied" "$(grep -rl 'Passphrase=SECRET' "${X}")" ""
 check "compressed pstore left out" "$(find "${X}" -name '*.enc.z' | wc -l)" "0"
@@ -211,6 +216,63 @@ rm -f "${TMP}/osd"
 PATH="${TMP}/bin:${PATH}" ARCHR_REPORT_ROOT="${R}" bash "${SCRIPT}" --osd >/dev/null 2>&1
 check "--osd: a failure says so" "$(tr '\n' '|' <"${TMP}/osd")" "send report start|send report failed|"
 chmod 700 "${R}/storage/roms/relatorios"
+
+# --- send: the zip to the server, only when asked ---
+REL="${R}/storage/roms/relatorios"
+fake ip 'cat "'"${TMP}"'/route" 2>/dev/null'
+# curl answers with the code in ${TMP}/code and keeps the upload and its
+# arguments.
+fake curl 'url=""; for a; do url=$a; done; echo "$*" >"'"${TMP}"'/curl-args"; for a; do case "$p" in --data-binary) cp "${a#@}" "'"${TMP}"'/upload";; esac; p=$a; done; cat "'"${TMP}"'/code"'
+send() { PATH="${TMP}/bin:${PATH}" ARCHR_REPORT_ROOT="${R}" ARCHR_ERROR_REPORT_URL="https://test.invalid/api" bash "${SCRIPT}" send "$@" 2>>"${TMP}/send-err"; }
+NEWEST=$(ls -1t "${REL}"/*.zip | head -n 1)
+echo "default via 192.168.3.1 dev wlan0" >"${TMP}/route"
+echo 201 >"${TMP}/code"
+OUT=$(send)
+check "send: exit 0" "$?" "0"
+if [[ "${OUT}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}_e119e1afb0fc_[0-9a-f]{4}\.zip$ ]]; then echo "ok   send: remote name ${OUT}"; else echo "FAIL send: remote name ${OUT}"; FAILED=1; fi
+check "send: the newest zip went" "$(cmp -s "${TMP}/upload" "${NEWEST}" && echo same)" "same"
+check "send: PUT to the server, as a zip" "$(grep -c -- "-X PUT -H Content-Type: application/zip --data-binary @${NEWEST} https://test.invalid/api/${OUT}" "${TMP}/curl-args")" "1"
+cp "${NEWEST}" "${TMP}/given.zip"
+echo 204 >"${TMP}/code"
+OUT=$(send "${TMP}/given.zip")
+check "send ZIP: exit 0, that zip" "$?:$(grep -c "@${TMP}/given.zip " "${TMP}/curl-args")" "0:1"
+echo 429 >"${TMP}/code"
+OUT=$(send)
+check "send: rate limited, exit 5 and the code" "$?:${OUT}" "5:429"
+echo 500 >"${TMP}/code"
+OUT=$(send)
+check "send: server error, exit 5" "$?:${OUT}" "5:500"
+echo 000 >"${TMP}/code"
+OUT=$(send)
+check "send: no connection, exit 3" "$?:${OUT}" "3:"
+: >"${TMP}/route"
+rm -f "${TMP}/curl-args"
+echo 201 >"${TMP}/code"
+OUT=$(send)
+check "send: no route, exit 3, nothing sent" "$?:${OUT}:$([ -e "${TMP}/curl-args" ] && echo sent)" "3::"
+echo "default via 192.168.3.1 dev wlan0" >"${TMP}/route"
+OUT=$(send "${TMP}/missing.zip")
+check "send: missing zip, exit 4" "$?:${OUT}" "4:"
+head -c $((5 * 1024 * 1024 + 1)) /dev/zero >"${TMP}/big.zip"
+OUT=$(send "${TMP}/big.zip")
+check "send: over 5 MB, exit 4, nothing sent" "$?:${OUT}:$([ -e "${TMP}/curl-args" ] && echo sent)" "4::"
+head -c $((5 * 1024 * 1024)) /dev/zero >"${TMP}/five.zip"
+OUT=$(send "${TMP}/five.zip")
+check "send: 5 MB exactly goes" "$?" "0"
+rm -f "${TMP}/curl-args"
+printf 'system.error_reports=1\nsystem.error_reports=0\n' >>"${R}/storage/.config/system/configs/system.cfg"
+OUT=$(send)
+check "send: reports off, exit 2, nothing sent" "$?:${OUT}:$([ -e "${TMP}/curl-args" ] && echo sent)" "2::"
+mkdir -p "${TMP}/empty/storage/roms/relatorios" "${TMP}/empty/storage/.config/system/configs"
+OUT=$(PATH="${TMP}/bin:${PATH}" ARCHR_REPORT_ROOT="${TMP}/empty" bash "${SCRIPT}" send 2>/dev/null)
+check "send: no report at all, exit 4" "$?:${OUT}" "4:"
+# No console id: the zip still goes, without it in the name.
+fake archr-console-id 'exit 1'
+sed -i '$d' "${R}/storage/.config/system/configs/system.cfg"
+echo 201 >"${TMP}/code"
+OUT=$(send)
+if [[ "${OUT}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}_[0-9a-f]{4}\.zip$ ]]; then echo "ok   send without an id: ${OUT}"; else echo "FAIL send without an id: ${OUT}"; FAILED=1; fi
+rm -f "${TMP}/bin/archr-console-id"
 
 # sanitize alone, line by line. A quote is open only when the whole line
 # leaves it open: "$(cd ... && pwd)" closes on its own line, so the lines

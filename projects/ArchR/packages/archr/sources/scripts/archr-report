@@ -17,6 +17,14 @@
 #                            (also resumo.txt in the zip).
 #   archr-report --sanitize  stdin to stdout through the secret filter
 #                            below. archr-error-report uses both.
+#   archr-report send [ZIP]  sends ZIP (the newest report when none is
+#                            given) to arch-r.io, only when asked (the
+#                            launcher asks the user first). Prints the name
+#                            it got there; exit 0 sent, 2 reports turned
+#                            off (system.error_reports=0), 3 no network or
+#                            no connection, 4 no such zip or over 5 MB,
+#                            5 the server refused it (its HTTP code printed;
+#                            429 is too many).
 #
 # What goes in: hardware, kernel and dmesg, the journal of this boot and of
 # the previous one (when the journal is persistent), failed services,
@@ -31,13 +39,15 @@
 # credentials) are never copied. Each command runs with a time limit and each log is
 # capped, so the report stays small and the run short.
 #
-# ARCHR_REPORT_ROOT prefixes every file read and written (tests).
+# ARCHR_REPORT_ROOT prefixes every file read and written (tests);
+# ARCHR_ERROR_REPORT_URL replaces the server.
 
 ROOT="${ARCHR_REPORT_ROOT:-}"
 OUT_DIR="${ROOT}/storage/roms/relatorios"
 STAMP=$(date +%Y%m%d-%H%M)
 NAME="archr-relatorio-${STAMP}"
 CAP=$((2 * 1024 * 1024))
+SEND_MAX=$((5 * 1024 * 1024))
 LIMIT=15
 
 # Any line with a hint of a secret goes whole: "<prefix up to the secret
@@ -127,6 +137,58 @@ sanitize() {
       }
     }'
 }
+# The console's id (archr-console-id, beside this script when it is not
+# on PATH); nothing when there is none.
+console_id() {
+  local cmd
+  cmd=$(command -v archr-console-id) || cmd="${0%/*}/archr-console-id"
+  ARCHR_CONSOLE_ID_ROOT="${ROOT}" timeout 5 "${cmd}" 2>/dev/null | grep -xE '[0-9a-f]{12}'
+}
+
+# send [ZIP]: the zip to the server, as <date>_<time>_<console id>_<4 random
+# hex>.zip (without the id when there is none). The exit codes are above.
+send() {
+  local zip=${1:-} cfg="${ROOT}/storage/.config/system/configs/system.cfg" url id code remote
+  url="${ARCHR_ERROR_REPORT_URL:-https://arch-r.io/api/reports}"
+  # Error reports turned off covers this too (on when the key is missing).
+  if [ "$(sed -n 's/^system.error_reports=//p' "${cfg}" 2>/dev/null | tail -n 1)" = 0 ]; then
+    echo "archr-report: reports are turned off" >&2
+    return 2
+  fi
+  [ -n "${zip}" ] || zip=$(ls -1t "${OUT_DIR}"/*.zip 2>/dev/null | head -n 1)
+  if [ -z "${zip}" ] || [ ! -f "${zip}" ]; then
+    echo "archr-report: no report to send${zip:+ (${zip})}" >&2
+    return 4
+  fi
+  if [ "$(stat -c %s "${zip}")" -gt "${SEND_MAX}" ]; then
+    echo "archr-report: ${zip##*/} is over 5 MB" >&2
+    return 4
+  fi
+  if [ -z "$(timeout 10 ip route show default 2>/dev/null)" ]; then
+    echo "archr-report: no network" >&2
+    return 3
+  fi
+  id=$(console_id) && id="_${id}"
+  remote="$(date +%F_%H-%M-%S)${id}_$(od -An -N2 -tx1 /dev/urandom | tr -d ' \n').zip"
+  code=$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 10 --max-time 180 -X PUT \
+    -H 'Content-Type: application/zip' --data-binary "@${zip}" "${url}/${remote}" 2>/dev/null)
+  case "${code}" in
+    2??)
+      echo "${remote}"
+      return 0
+      ;;
+    "" | 000)
+      echo "archr-report: could not reach the server" >&2
+      return 3
+      ;;
+    *)
+      echo "${code}"
+      echo "archr-report: the server refused ${zip##*/} (${code})" >&2
+      return 5
+      ;;
+  esac
+}
+
 # The machine in one screen, "name: value" per line: what an error report
 # (archr-error-report) carries and the zip's resumo.txt. Only facts, no
 # names or addresses.
@@ -135,6 +197,7 @@ state() {
   model=$(tr -d '\0' <"${ROOT}/proc/device-tree/model" 2>/dev/null)
   compat=$(tr '\0' ' ' <"${ROOT}/proc/device-tree/compatible" 2>/dev/null)
   echo "device: ${model:-unknown}"
+  f=$(console_id) && echo "console: ${f}"
   echo "compatible: ${compat% }"
   (
     . "${ROOT}/etc/os-release" 2>/dev/null
@@ -163,6 +226,7 @@ case "${1:-}" in
   # stdin to stdout through the filter below, for other report tools.
   --sanitize) sanitize; exit ;;
   --state) state; exit 0 ;;
+  send) send "${2:-}"; exit ;;
 esac
 
 # The cards (--osd): "report start", then "report done" or "report failed"
