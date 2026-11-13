@@ -52,6 +52,8 @@ rm -f gptokeyb
 cp /storage/.config/PortMaster/control.txt /storage/roms/ports/PortMaster/control.txt
 cp /storage/.config/PortMaster/mapper.txt /storage/roms/ports/PortMaster/mapper.txt
 [ -f /storage/.config/PortMaster/mod_ArchR.txt ] && cp /storage/.config/PortMaster/mod_ArchR.txt /storage/roms/ports/PortMaster/mod_ArchR.txt
+# gl4es settings for ports that bundle it (see the file: panfrost).
+cp /usr/config/PortMaster/libgl_ArchR.txt /storage/roms/ports/PortMaster/libgl_ArchR.txt
 cp /storage/.config/PortMaster/gamecontrollerdb.txt /storage/roms/ports/PortMaster/gamecontrollerdb.txt
 cp /usr/bin/oga_controls* /storage/roms/ports/PortMaster/
 
