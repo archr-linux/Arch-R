@@ -19,10 +19,24 @@ PORT_32BIT="${PORT_32BIT:-"N"}"
 # comes back). Under sway it has to nest Weston in the running compositor,
 # which it does for ROCKNIX only: say so to westonwrap alone, without
 # exporting it to the game.
+#
+# A pm_message box the port opened before starting the game (first-run
+# extraction, Pinball Crush) stays fullscreen above it under sway: ports on
+# westonwrap never call pm_platform_helper, which closes it. Close it here:
+# "exit" through its fifo, kill -9 if it is still up (it ignores TERM, as
+# PortMasterDialogExit knows), and remove the fifo so the port's pm_finish
+# does not block writing to a pipe nobody reads.
 case "$0" in
 */westonwrap*.sh)
     export -n CFW_NAME
     CFW_NAME=ROCKNIX
+    if pgrep -f "[p]ugwash .*fifo_control" >/dev/null 2>&1; then
+        [ -p /dev/shm/portmaster/pm_input ] &&
+            timeout 2 sh -c 'echo exit >/dev/shm/portmaster/pm_input' 2>/dev/null
+        sleep 0.5
+        pkill -9 -f "[p]ugwash .*fifo_control" >/dev/null 2>&1
+        rm -f /dev/shm/portmaster/pm_input /dev/shm/portmaster/pm_done
+    fi
     ;;
 esac
 
