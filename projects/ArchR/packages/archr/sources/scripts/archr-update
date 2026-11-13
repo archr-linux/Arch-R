@@ -94,6 +94,8 @@
 : "${UPDATE_PROGRESS:=/run/archr-update.progress}"
 : "${UPDATE_CANCEL:=/run/archr-update.cancel}"
 : "${TICK:=1}"
+: "${DOWNLOAD_TRIES:=3}"
+: "${RETRY_TICKS:=5}"
 REPO="https://github.com/archr-linux/archr-repo/releases/download"
 MIN_BATTERY=30
 # Free space kept beyond the download; pacman's CheckSpace guards the install.
@@ -413,7 +415,29 @@ cancel() {
     [ -n "${PID}" ] && kill -INT "${PID}" 2>/dev/null
 }
 
+# A download that stalls or drops (weak Wi-Fi, the link coming back after
+# sleep) is tried again, up to DOWNLOAD_TRIES times: pacman keeps the
+# partial files and resumes them.
 run_download() {
+    local try=1
+    while :; do
+        download_once && break
+        [ -n "${CANCELLED}" ] && fail cancelled "Download cancelled."
+        [ "${try}" -ge "${DOWNLOAD_TRIES}" ] &&
+            fail download "Download failed." "$(last_error "${WORK}/download")"
+        logf "download failed (try ${try} of ${DOWNLOAD_TRIES}): $(last_error "${WORK}/download"); trying again"
+        try=$((try + 1))
+        # A pause in ticks, so a cancel is seen at once.
+        for _ in $(seq 1 "${RETRY_TICKS}"); do
+            sleep "${TICK}"
+            [ -e "${UPDATE_CANCEL}" ] && CANCELLED=1
+            [ -n "${CANCELLED}" ] && fail cancelled "Download cancelled."
+        done
+    done
+    emit "\"phase\":\"download\",\"package\":\"\",\"bytes\":${TOTAL},\"total\":${TOTAL},\"percent\":100,\"speed\":0"
+}
+
+download_once() {
     local rc state bytes package speed=0 previous percent waited=0 now then
     LC_ALL=C pacman -Suw --noconfirm --noprogressbar --color never >"${WORK}/download" 2>&1 &
     PID=$!
@@ -447,9 +471,7 @@ run_download() {
     rc=$?
     PID=""
     cat "${WORK}/download" >>"${UPDATE_LOG}" 2>/dev/null
-    [ -n "${CANCELLED}" ] && fail cancelled "Download cancelled."
-    [ "${rc}" -eq 0 ] || fail download "Download failed." "$(last_error "${WORK}/download")"
-    emit "\"phase\":\"download\",\"package\":\"\",\"bytes\":${TOTAL},\"total\":${TOTAL},\"percent\":100,\"speed\":0"
+    [ -z "${CANCELLED}" ] && [ "${rc}" -eq 0 ]
 }
 
 # New complete lines of pacman's output: package starts and hook steps.

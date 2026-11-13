@@ -60,7 +60,9 @@ case "$1" in
     mkdir -p "${PACMAN_CACHE}/download-XyZ"
     while read -r n v s; do
       f="$n-$v-aarch64.pkg.tar.zst"
-      if [ "$n" = "${FAKE_DOWNLOAD_FAIL:-}" ]; then
+      if [ "$n" = "${FAKE_DOWNLOAD_FAIL:-}" ] ||
+         { [ "$n" = "${FAKE_DOWNLOAD_FAIL_ONCE:-}" ] && [ ! -e "${FAKE}/failed-once" ]; }; then
+        touch "${FAKE}/failed-once"
         echo "error: failed retrieving file '$f' from example.invalid : Could not resolve host"
         exit 1
       fi
@@ -130,7 +132,7 @@ wait_for() {
   done
 }
 reset() {
-  rm -rf "${TMP}/cache"/* "${TMP}/state" "${TMP}/calls" "${TMP}/installed-ok" "${TMP}/inhibit"
+  rm -rf "${TMP}/cache"/* "${TMP}/state" "${TMP}/calls" "${TMP}/installed-ok" "${TMP}/inhibit" "${TMP}/failed-once"
 }
 
 ### check --json
@@ -221,6 +223,11 @@ check "download failure: reason and pacman line" "$(field reason <<<"${OUT}")|$(
   "download|error: failed retrieving file 'retroarch-1.22.0-1-aarch64.pkg.tar.zst' from example.invalid : Could not resolve host|false"
 check "download failure installs nothing" "$(grep -c 'pacman -Su ' "${TMP}/calls")" 0
 check "an interrupted download stays for the next run" "$(find "${TMP}/storage-cache" -name '*.pkg.tar*' | wc -l | tr -d ' ')" 1
+check "download failure: tried three times" "$(grep -c 'pacman -Suw' "${TMP}/calls")" 3
+
+reset
+OUT=$(FAKE_DOWNLOAD_FAIL_ONCE=retroarch run)
+check "a dropped download is tried again and installs" "$?|$(grep -c 'pacman -Suw' "${TMP}/calls")|$(field phase <<<"$(tail -n 1 <<<"${OUT}")")" "0|2|done"
 
 reset
 OUT=$(FAKE_INSTALL_FAIL=1 run)
