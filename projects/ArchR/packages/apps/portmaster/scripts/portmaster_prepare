@@ -41,8 +41,14 @@ if [ ! -d "/storage/roms/ports/PortMaster" ]; then
     chmod +x /storage/roms/ports/PortMaster/PortMaster.sh
 fi
 
-#We dont use tasksetter, delete it
-rm -rf /storage/roms/ports/PortMaster/tasksetter
+# Ports source PortMaster's tasksetter (it pins a port to the fastest cores
+# and is a no-op on a single cluster); without it they print "tasksetter:
+# No such file or directory" on every start. Older builds deleted it: put it
+# back from the bundled release.
+if [ -d /storage/roms/ports/PortMaster ] && [ ! -f /storage/roms/ports/PortMaster/tasksetter ]; then
+    unzip -o -q -j /usr/config/PortMaster/release/PortMaster.zip PortMaster/tasksetter \
+        -d /storage/roms/ports/PortMaster 2>/dev/null || :
+fi
 
 #Use PortMasters gptokeyb
 rm -f gptokeyb

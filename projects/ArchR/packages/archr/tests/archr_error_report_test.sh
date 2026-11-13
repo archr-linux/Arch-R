@@ -305,6 +305,17 @@ Stack trace:
 0: sh: line 1: addr2line: command not found
 1: sh: line 1: addr2line: command not found"
 rm -f "${Q}"/*.txt "${R}/storage/.cache/error-reports/"{seen,today}
+port 0 24 "${NOISE}
+[ALOG:4 Unity] Unity Purchasing: Failed to initialize Unity Analytics. The Analytics service has not been initialized."
+check "Unity's offline analytics line is not a failure" "$(count "${Q}")" "0"
+port 0 3 "${NOISE}
+gmloader/main.cpp:160: Failure opening APK '/storage/roms/ports/lostpotato/game.port': No such file"
+check "a GameMaker port with no game of the user's: no report" "$(count "${Q}")" "0"
+port 0 3 "${NOISE}
+gmloader/main.cpp:160: Failure opening APK '/storage/roms/ports/lostpotato/game.port': No such file
+Segmentation fault (core dumped)"
+check "nor for the crash that follows a missing game" "$(count "${Q}")" "0"
+rm -f "${Q}"/*.txt "${R}/storage/.cache/error-reports/"{seen,today}
 port 0 58 "${NOISE}
 ${TRACE}"
 check "a port's own TERM handler is the exit hotkey: no report" "$(count "${Q}")" "0"

@@ -245,6 +245,8 @@ PORT_NOISE+='|Message translations failed to load'
 PORT_NOISE+='|line [0-9]+: +[0-9]+ (Killed|Terminated|Hangup|Interrupt)'
 # A crash handler symbolizing its stack trace: the image has no addr2line.
 PORT_NOISE+='|addr2line: command not found'
+# Unity games log their analytics/store service failing offline (Huntdown).
+PORT_NOISE+='|Unity (Analytics|Purchasing|Services)'
 # Lines that only look like errors: they count on a run that ended
 # within SHORT seconds (nothing was played).
 PORT_SOFT='[Ee]rror|ERROR|[Ff]ail|[Cc]annot|[Uu]nable to|not found|No such file'
@@ -307,6 +309,10 @@ port() {
   # errors; before 1.2.10 only the message) says so on the screen: the
   # user's to fix, not a failure.
   grep -aqE 'TERMINAL ERROR NXE200[12]|ERROR: no APK, APKM, APKS, XAPK' <<<"${own}" && return 0
+  # A GameMaker port (gmloader) with no game of the user's in its folder
+  # (Deltarune, Lost Potato): the port's install notes say to copy it.
+  printf '%s\n%s\n' "${OUTPUT}" "${own}" |
+    grep -aqE "gmloader.*Failure opening APK '[^']+': No such file" && return 0
   failures=$(printf '%s\n%s\n' "${OUTPUT}" "${own}" | port_failures "${seconds}" | awk '!seen[$0]++' | head -n 20)
   # Nothing failed: a clean exit, or one from outside.
   if [ -z "${failures}" ]; then
