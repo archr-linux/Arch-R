@@ -16,7 +16,7 @@ PKG_NAME="archr"
 # versions; the install silently skipped a PKG_INSTALL dir that did not
 # exist and the image assembly then failed in post_install.
 PKG_VERSION="$(date +%Y%m%d)"
-PKG_REV="11"
+PKG_REV="12"
 PKG_LICENSE="GPLv2"
 PKG_SITE=""
 PKG_URL=""

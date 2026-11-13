@@ -2,10 +2,8 @@
 # Copyright (C) 2026 ArchR (https://github.com/archr-linux/Arch-R)
 
 PKG_NAME="archr-launcher"
-PKG_VERSION="6db93961922316212e393aca33c8801f420c43f7"
-PKG_SHA256="62647967c0c5aa81431576e934b251c85802d999060c51b9d6d1310444d377a2"
-# 2: rebuilt with the ScreenScraper developer login (release 1 lacked it).
-PKG_REV="2"
+PKG_VERSION="16a15e9cf7c0f90a36445ee8f3679c9fc2ab524b"
+PKG_SHA256="a113531dddc27b5633411cb3fec814b8cf401b35976ba146150540926025fa36"
 PKG_ARCH="aarch64"
 # Bundled fonts retain their separate OFL licenses.
 PKG_LICENSE="GPL-2.0-or-later"

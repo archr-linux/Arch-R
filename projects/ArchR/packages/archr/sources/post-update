@@ -17,6 +17,8 @@ tocon "Rebuilding library cache..."
 ### Rebuild the library cache
 rm -f /storage/.cache/ld.so.cache
 ldconfig -X
+# Made under this boot's GPU libraries (gpudriver --start reads it).
+/usr/bin/gpudriver >/storage/.cache/ld.so.cache.driver 2>/dev/null
 
 echo "Sync configuration files..." >>${LOG}
 tocon "Re-sync configuration files..."

@@ -46,3 +46,8 @@ if [ "${EMULATION_DEVICE}" = "yes" ]; then
 fi
 
 PKG_DEPENDS_TARGET+=" ${ADDITIONAL_PACKAGES_32BIT}"
+
+### 32-bit MangoHud for 32-bit games (the aarch64 mangohud ships it)
+if [ "${OPENGLES_SUPPORT}" = yes ] && [ "${EMULATION_DEVICE}" = "yes" ]; then
+  PKG_DEPENDS_TARGET+=" mangohud"
+fi

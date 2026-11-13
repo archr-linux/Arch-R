@@ -279,6 +279,38 @@ show_osd() {
   archr-levels "${1}" osd >/dev/null 2>&1
 }
 
+### MangoHud hotkey. The overlay only exists in a game runemu wrapped with
+### it, and runemu wraps only on panfrost with MangoHud turned on: say so,
+### in the launcher's language, instead of toggling nothing in silence.
+MANGOHUD_SUPPORT_FILE="${MANGOHUD_SUPPORT_FILE:-/storage/.config/profile.d/075-mangohud-supported}"
+mangohud_note() {
+  local lang
+  lang=$(get_setting system.language)
+  case "${1}:${lang}" in
+    panfrost:pt*) echo "MangoHud precisa do driver Panfrost: Configurações › Sistema › Driver de GPU" ;;
+    panfrost:es*) echo "MangoHud necesita el controlador Panfrost: Configuración › Sistema › Controlador GPU" ;;
+    panfrost:ru*) echo "MangoHud работает только с драйвером Panfrost: Настройки › Система › Драйвер GPU" ;;
+    panfrost:*)   echo "MangoHud needs the Panfrost driver: Settings › System › GPU driver" ;;
+    off:pt*) echo "MangoHud desligado: Configurações › Jogos › Ajustes do MangoHud" ;;
+    off:es*) echo "MangoHud desactivado: Configuración › Juegos › Ajustes de MangoHud" ;;
+    off:ru*) echo "MangoHud выключен: Настройки › Игры › Настройки MangoHud" ;;
+    off:*)   echo "MangoHud is off: Settings › Games › MangoHud settings" ;;
+  esac
+}
+mangohud_hotkey() {
+  if ! grep -qs '^DEVICE_MANGOHUD_SUPPORT="true"' "${MANGOHUD_SUPPORT_FILE}"; then
+    mako-notify "$(mangohud_note panfrost)"
+    return
+  fi
+  mangohud_set toggle
+  # On for the system or for this game (runemu's per-game setting): a
+  # running game then has MangoHud loaded.
+  if [ "$(get_setting archr.mangohud.enabled)" != "1" ] \
+     && ! grep -qs libMangoHud /proc/[0-9]*/maps; then
+    mako-notify "$(mangohud_note off)"
+  fi
+}
+
 ### Volume and brightness while a button is held: archr-levels steps once
 ### now, then keeps going, faster and faster, until the release. A hold
 ### lasts 400 ms unless renewed: a timer here renews it every 200 ms while
@@ -824,7 +856,7 @@ watch_inputs | grep --line-buffered "EV_KEY\|EV_SW\|error reading" | while next_
      (${FUNCTION_HOTKEY_MANGOHUD_EVENT})
         if [ "${HOTKEY_A_PRESSED}" = true ] && ${HOTKEY_MANGOHUD_ENABLED}; then
           ${DEBUG} && log $0 "${FUNCTION_HOTKEY_MANGOHUD_EVENT}: Config MangoHud"
-          /usr/bin/mangohud_set toggle
+          mangohud_hotkey
         fi
       ;;
      (${FUNCTION_HOTKEY_BTN_BACK_EVENT}|${FUNCTION_HOTKEY_KEY_RECORD_EVENT})

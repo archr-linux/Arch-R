@@ -725,7 +725,13 @@ if [ "${DEVICE_MANGOHUD_SUPPORT}" == "true" ]; then
     # Enable GPU profiling and MangoHud with the current overlay settings
     /usr/bin/mangohud_set apply || log $0 "MangoHud settings not applied"
     gpu_profiling "on"
-    RUNTHIS="/usr/bin/mangohud ${RUNTHIS}"
+    if [ "${RABIN}" = "retroarch32" ] && [ -f /usr/lib32/mangohud/libMangoHud_shim.so ]; then
+      # 32-bit RetroArch: /usr/bin/mangohud preloads /usr/$LIB/mangohud,
+      # which is lib, the 64-bit one, for both; use the 32-bit build.
+      RUNTHIS="env MANGOHUD=1 LD_PRELOAD=/usr/lib32/mangohud/libMangoHud_shim.so ${RUNTHIS}"
+    else
+      RUNTHIS="/usr/bin/mangohud ${RUNTHIS}"
+    fi
     ${VERBOSE} && log $0 "Enabling MangoHud"
   fi
 fi

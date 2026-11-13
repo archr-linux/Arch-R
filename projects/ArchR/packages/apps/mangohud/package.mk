@@ -3,6 +3,7 @@
 
 PKG_NAME="mangohud"
 PKG_VERSION="d7654ebcefb3bdb106d581c937417aa2007eaeeb" # v0.8.3-rc1 + a few fixes
+PKG_REV="2"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/flightlessmango/MangoHud"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
@@ -65,7 +66,24 @@ pre_configure_target() {
   rm -rf ${PKG_BUILD}/subprojects/spdlog_patch_1.14.1-1.zip
 }
 
+# 32-bit games (retroarch32 with pcsx_rearmed32, PSX's default core on
+# RK3326) need a 32-bit MangoHud: the arm build makes it and keeps it out of
+# the arm image's /usr/lib (lib32 copies that whole tree), and the aarch64
+# package ships it in /usr/lib32/mangohud. runemu preloads that shim for
+# retroarch32; the shim loads libMangoHud_opengl.so from its own folder.
 post_makeinstall_target() {
+  if [ "${TARGET_ARCH}" = arm ]; then
+    mv ${INSTALL}/usr/lib32/mangohud ${INSTALL}/usr/lib-mangohud32
+    rm -rf ${INSTALL}/usr/bin ${INSTALL}/usr/share ${INSTALL}/usr/lib ${INSTALL}/usr/lib32 ${INSTALL}/etc
+    return 0
+  fi
+  local arm="${ROOT}/build.${DISTRO}-${DEVICE}.arm/install_pkg/${PKG_NAME}-${PKG_VERSION}"
+  if [ "${ENABLE_32BIT}" = true ]; then
+    [ -f "${arm}/usr/lib-mangohud32/libMangoHud_shim.so" ] || die "${PKG_NAME}: build it for ARCH=arm first"
+    mkdir -p ${INSTALL}/usr/lib32/mangohud
+    cp -a ${arm}/usr/lib-mangohud32/*.so ${INSTALL}/usr/lib32/mangohud/
+  fi
+
   mkdir -p ${INSTALL}/usr/bin
   cp -rf ${PKG_DIR}/sources/* ${INSTALL}/usr/bin
   chmod +x ${INSTALL}/usr/bin/*

@@ -126,7 +126,8 @@ int main(int argc, char* argv[]) {
     uint32_t replaces_id = 0;
     const char* icon = "";
     const char* summary = argv[1];
-    const char* body = argv[1];
+    // mako draws the summary and then the body: the text once, as summary.
+    const char* body = "";
     int32_t timeout = 2000;
 
     dbus_message_iter_append_basic(&args, DBUS_TYPE_STRING, &app_name);

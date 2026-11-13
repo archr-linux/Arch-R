@@ -367,6 +367,19 @@ case "$1" in
     # does NOT think the current boot crashed.
     rm -f "${SENTINEL}" 2>/dev/null
     sync 2>/dev/null
+
+    # The library cache holds the libraries as they were when it was made,
+    # and libmali hides libGL behind /dev/null: a cache made under libmali
+    # has no libGL.so.1. 64-bit programs still find it in /usr/lib, their
+    # default path; 32-bit ones (retroarch32 with MangoHud, gl4es ports)
+    # do not, as their default path is /usr/lib too. Rebuild the cache
+    # when this boot's driver is not the one it was made under.
+    CACHE_DRIVER="/storage/.cache/ld.so.cache.driver"
+    BOUND="$(get_setting ${GPU_DRIVER_SETTING_KEY})"
+    if [ ! -e /storage/.cache/ld.so.cache ] || [ "$(cat "${CACHE_DRIVER}" 2>/dev/null)" != "${BOUND}" ]; then
+      ldconfig -X && echo "${BOUND}" >"${CACHE_DRIVER}"
+      log_event "library cache rebuilt for ${BOUND}"
+    fi
     ;;
   "libmali"|"panfrost")
     if ! select_driver "$1"; then
