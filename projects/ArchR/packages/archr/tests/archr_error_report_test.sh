@@ -55,6 +55,11 @@ cat >"${R}/usr/share/archr/systems.cfg" <<'EOF'
     <fullname>Nintendo 64</fullname>
 EOF
 echo 'video_driver = "gl"' >"${R}/tmp/.retroarch.cfg"
+# The R36S's OTP: its console id is e119e1afb0fc (archr-console-id).
+mkdir -p "${R}/sys/bus/nvmem/devices/rockchip-otp0"
+printf '\x52\x4b\x33\x26\x91\xfe\x21\x55\x52\x4b\x43\x33\x35\x30\x30\x34\x00\x00\x00\x00\x12\x24\x0b\x06\x05\x00\x00\x00\x00\x00\x00\x00' \
+  >"${R}/sys/bus/nvmem/devices/rockchip-otp0/nvmem"
+CID=e119e1afb0fc
 
 fake() { printf '#!/bin/bash\n%s\n' "$2" >"${B}/$1"; chmod +x "${B}/$1"; }
 fake archr-report "ARCHR_REPORT_ROOT='${R}' exec bash '${SCRIPTS}/archr-report' \"\$@\""
@@ -95,6 +100,8 @@ check "what" "$(field what)" "retroarch/mupen64plus_next"
 check "system with its name" "$(field system)" "n64 (Nintendo 64)"
 check "game kept (games are public)" "$(field game)" "Super Mario 64 (USA).z64"
 check "exit with the signal and the time" "$(field exit)" "139 (SIGSEGV) after 42 s"
+check "console id right after when" "$(sed -n '/^when: /{n;p}' "${F}")" "console: ${CID}"
+check "console id in the state too" "$(grep -c "^console: ${CID}$" "${F}")" "2"
 for want in "--- run output" "Segmentation fault" "unhandled exception" "device: Game Console R36S" \
   "archr: 20261110" "gpu: libmali" 'video_driver = "gl"' "query: -Qo /usr/bin/retroarch" "--- command ---"; do
   if grep -qF -- "${want}" "${F}"; then echo "ok   has ${want}"; else echo "FAIL lacks ${want}"; FAILED=1; fi
@@ -177,9 +184,19 @@ rm -f "${TMP}/uploads"/*
 report send
 check "sent: queue empty, three in sent" "$(count "${Q}") $(count "${S}")" "0 3"
 U=$(ls "${TMP}/uploads" | head -n 1)
-if [[ "${U}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}_[0-9a-f]{4}\.txt$ ]]; then echo "ok   upload name ${U}"; else echo "FAIL upload name ${U}"; FAILED=1; fi
-check "upload is the queued text" "$(cmp -s "${TMP}/uploads/${U}" "${S}/${U%_*}.txt" && echo same)" "same"
+if [[ "${U}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}_${CID}_[0-9a-f]{4}\.txt$ ]]; then echo "ok   upload name ${U}"; else echo "FAIL upload name ${U}"; FAILED=1; fi
+check "upload is the queued text" "$(cmp -s "${TMP}/uploads/${U}" "${S}/${U%_"${CID}"_*}.txt" && echo same)" "same"
 check "sent today" "$(cut -d' ' -f3 "${R}/storage/.cache/error-reports/today")" "3"
+# No console id (archr-console-id fails): the report still goes, under
+# the old name.
+fake archr-console-id 'exit 1'
+game 1 'error: no id\n' noid.z64
+rm -f "${TMP}/uploads"/*
+report send
+U=$(ls "${TMP}/uploads" | head -n 1)
+if [[ "${U}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}_[0-9a-f]{4}\.txt$ ]]; then echo "ok   no id: old upload name ${U}"; else echo "FAIL no id: upload name ${U}"; FAILED=1; fi
+check "no id: no console line" "$(grep -c '^console:' "${S}/${U%_*}.txt")" "0"
+rm -f "${B}/archr-console-id"
 # Ten sent a day at most: the rest waits for tomorrow.
 echo "$(date +%F) 0 9" >"${R}/storage/.cache/error-reports/today"
 for n in 7 8; do game 1 "error: send ${n}${n}x\n" "s${n}.z64"; sleep 1; done
