@@ -291,6 +291,27 @@ function portmaster_ready() {
         ( . /usr/bin/portmaster_prepare ) >/dev/null 2>>${OUTPUT_LOG}
 }
 
+# PortMaster's bind_directories/bind_files mount a port's save folder (in the
+# ports folder) over a path such as ~/.config or /tmp and never take it back. A port deleted
+# afterwards leaves that path on a dead folder, and the next port that uses it
+# without binding (Sword of Jade after another OHRRPGCE port) cannot write there.
+# Before a port: drop binds whose folder is gone. After it: drop the binds it made.
+MOUNTINFO=${MOUNTINFO:-/proc/self/mountinfo}
+function port_binds() {
+        # mountinfo: field 4 is the folder mounted, 5 where; spaces come as \040.
+        awk -v want="$1" '$5 !~ "^/storage/roms(/|$)" && $4 ~ "/ports/" &&
+                (want != "dead" || $4 ~ "//deleted$") { print $5 }' "${MOUNTINFO}" | sort -u
+}
+function port_unbind() {
+        local target
+        while IFS= read -r target; do
+                [ -n "${target}" ] || continue
+                target=$(printf '%b' "${target}")
+                umount -l "${target}" 2>/dev/null &&
+                        ${VERBOSE} && log $0 "Unmounted the port bind on ${target}"
+        done
+}
+
 function clear_screen() {
         ${VERBOSE} && log $0 "Clearing screen"
         clear
@@ -598,6 +619,8 @@ case ${EMULATOR} in
       ;;
       "ports")
         portmaster_ready
+        port_binds dead | port_unbind
+        PORT_BINDS_BEFORE=$(port_binds)
         if [[ "${ROMNAME,,}" == *".appimage" ]]; then
           RUNTHIS='${EMUPERF} "${ROMNAME}"'
         else
@@ -765,6 +788,10 @@ else
           kill -TERM "${PERF_PROBE}" 2>/dev/null
           wait "${PERF_PROBE}" 2>/dev/null
         fi
+fi
+
+if [ "${PLATFORM}" = "ports" ]; then
+  comm -13 <(printf '%s\n' "${PORT_BINDS_BEFORE}") <(port_binds) | port_unbind
 fi
 
 ### A failed run is reported, unless reports are off. Its own unit: this
