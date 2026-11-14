@@ -1,0 +1,46 @@
+From: Douglas Teles <dga.teles@gmail.com>
+Date: Sat, 14 Nov 2026 16:00:00 -0300
+Subject: [PATCH] arm64: dts: rockchip: rk3326: keep a crashed boot's log, reset a hung one
+
+Users report consoles that freeze at random (in a game, in a menu, while
+booting) and stay black until the reset button, and those boots leave
+nothing behind: the journal is volatile and no ramoops region exists,
+though the kernel has PSTORE_RAM and userspace already reports what
+/sys/fs/pstore keeps.
+
+Reserve 1 MiB for ramoops at 0x1f000000, inside the RAM of every RK3326
+board (the smallest show ~730 MiB), with room for the console log and
+oops records, and enable the SoC watchdog so userspace (systemd's
+RuntimeWatchdogSec) can reset a console that stops answering.
+
+Signed-off-by: Douglas Teles <dga.teles@gmail.com>
+---
+--- a/arch/arm64/boot/dts/rockchip/rk3326.dtsi
++++ b/arch/arm64/boot/dts/rockchip/rk3326.dtsi
+@@ -6,6 +6,26 @@
+ 
+ #include "px30.dtsi"
+ 
++/ {
++	reserved-memory {
++		#address-cells = <2>;
++		#size-cells = <2>;
++		ranges;
++
++		ramoops@1f000000 {
++			compatible = "ramoops";
++			reg = <0x0 0x1f000000 0x0 0x100000>;
++			record-size = <0x20000>;
++			console-size = <0x80000>;
++			pmsg-size = <0x20000>;
++		};
++	};
++};
++
++&wdt {
++	status = "okay";
++};
++
+ &display_subsystem {
+ 	ports = <&vopb_out>;
+ };

@@ -145,6 +145,25 @@ check "launcher crash" "$(count "${Q}")" "5"
 report module ../x 1
 check "a bad module id is refused" "$(count "${Q}")" "5"
 
+# --- a boot that ended without a shutdown: a freeze, a reset, a power cut ---
+M="${R}/storage/.cache/error-reports/running"
+report boot
+check "first boot: nothing to report" "$(count "${Q}")" "5"
+check "the boot leaves its mark" "$([ -f "${M}" ] && echo yes)" "yes"
+report shutdown
+check "a clean shutdown takes it away" "$([ -f "${M}" ] && echo yes)" ""
+report boot
+check "after a clean shutdown: nothing" "$(count "${Q}")" "5"
+printf 'Kernel panic - not syncing: sysrq triggered crash\n' >"${R}/sys/fs/pstore/dmesg-ramoops-0"
+report boot
+check "a new panic is the kernel report, not a second one" "$(count "${Q}")" "6"
+printf '[ 120.5] mmc0: card stopped responding\n' >"${R}/sys/fs/pstore/console-ramoops-0"
+report boot
+check "an old panic left in pstore: not sent again, and the freeze is" "$(count "${Q}")" "7"
+check "as such" "$(grep -h '^exit: ' "$(grep -l '^exit: abrupt' "${Q}"/*.txt)")" "exit: abrupt"
+check "with the end of its console log" "$(grep -ch 'card stopped responding' "$(grep -l '^exit: abrupt' "${Q}"/*.txt)")" "1"
+rm -f "${R}/sys/fs/pstore/console-ramoops-0" "${R}/sys/fs/pstore/dmesg-ramoops-0"
+
 # --- the daily limit: 10 created a day ---
 for n in 1 2 3 4 5 6 7; do game 1 "error: case ${n}${n}${n}x\n" "g${n}.z64"; done
 check "ten a day" "$(count "${Q}")" "10"

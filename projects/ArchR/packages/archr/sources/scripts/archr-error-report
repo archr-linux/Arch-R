@@ -18,6 +18,9 @@
 #   archr-error-report unit UNIT       a service failed (OnFailure= of archr-*, iwd,
 #                                      connman and sway)
 #   archr-error-report kernel          at boot: an oops or panic kept in pstore
+#   archr-error-report boot            at boot: the kernel report, and a report
+#                                      when the last boot never shut down
+#   archr-error-report shutdown        at a clean shutdown: the boot's mark goes
 #   archr-error-report launcher RC     the launcher exited with RC (its session)
 #   archr-error-report module ID RC    a launcher module exited with RC
 #   archr-error-report send            the queue goes out (archr-error-report.path:
@@ -549,10 +552,14 @@ kernel() {
   done
   [ -n "${found}" ] || return 0
   # Records stay in pstore until cleared: each is reported at one boot only.
+  # The mark is the oops/panic records alone when there are any: the console
+  # record is rewritten at every boot, and a mark that took it in sent an old
+  # panic again after each reboot.
   # shellcheck disable=SC2086 # the list of files
-  mark=$(cat ${found} | sha1sum | cut -c1-16)
+  mark=$( (cat "${ROOT}"/sys/fs/pstore/dmesg-* 2>/dev/null || cat ${found}) | sha1sum | cut -c1-16)
   [ "$(cat "${DIR}/pstore" 2>/dev/null)" = "${mark}" ] && return 0
   mkdir -p "${DIR}" && echo "${mark}" >"${DIR}/pstore"
+  KERNEL_NEW=1
   # shellcheck disable=SC2086
   grep -aq 'Kernel panic' ${found} && kind=panic
   build() {
@@ -569,6 +576,53 @@ kernel() {
   # shellcheck disable=SC2086
   SIGNATURE=$(cat ${found} | grep -aE 'Kernel panic|Internal error:|Unable to handle|BUG:|pc :|lr :' |
     sed -E 's/^\[[ 0-9.]*\] *//' | errors 4 | sign kernel "${kind}")
+  queue "${SIGNATURE}" build
+}
+
+# Every boot leaves a mark that only a clean shutdown takes away (the
+# kernel report's service runs "boot" and, as it stops, "shutdown"). A mark
+# found at boot is a boot that ended without one: a freeze that the
+# watchdog or the reset button ended, or the power cut. Consoles froze and
+# stayed black until reset with nothing left behind; this tells how often,
+# with the end of that boot's console log when pstore kept it. A panic in
+# pstore is the kernel report instead.
+BOOTMARK="${DIR}/running"
+
+boot() {
+  local previous=""
+  [ -f "${BOOTMARK}" ] && previous=$(head -c 200 "${BOOTMARK}" 2>/dev/null)
+  mkdir -p "${DIR}" && date '+%Y-%m-%d %H:%M:%S %z' >"${BOOTMARK}"
+  enabled || return 0
+  KERNEL_NEW=
+  kernel
+  # A panic this boot found new explains the end; an old record left in
+  # pstore from an earlier one does not.
+  [ -n "${previous}" ] && [ -z "${KERNEL_NEW}" ] && abrupt "${previous}"
+  return 0
+}
+
+shutdown() {
+  rm -f "${BOOTMARK}"
+}
+
+abrupt() {
+  local since=$1
+  build() {
+    local f
+    echo "event: kernel"
+    echo "what: previous boot ended without a shutdown (a freeze, a reset or a power cut)"
+    echo "exit: abrupt"
+    echo "signature: ${SIGNATURE}"
+    echo "previous boot started: ${since}"
+    common
+    for f in "${ROOT}"/sys/fs/pstore/console-*; do
+      [ -f "${f}" ] || continue
+      section "pstore ${f##*/} (the end of that boot)"
+      tail -c 60000 "${f}" | tr -d '\0'
+    done
+  }
+  # Each such boot is its own report: the signature carries when it began.
+  SIGNATURE=$(printf '%s\n' "${since}" | sign kernel abrupt)
   queue "${SIGNATURE}" build
 }
 
@@ -713,6 +767,8 @@ case "${1:-}" in
     shift
     "${event}" "$@"
     ;;
+  boot) boot ;;
+  shutdown) shutdown ;;
   send) send ;;
   *)
     sed -n '10,25s/^# \{0,3\}//p' "$0" >&2

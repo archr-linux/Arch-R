@@ -1,11 +1,15 @@
 [Unit]
-Description=Report a kernel crash kept in pstore
-ConditionDirectoryNotEmpty=/sys/fs/pstore
+Description=Report a crash or a freeze of the previous boot
 RequiresMountsFor=/storage
 
+# "boot" reports a panic kept in pstore, or a boot that never shut down,
+# and marks this one; "shutdown", run as the unit stops at a clean
+# shutdown, takes the mark away.
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/archr-error-report kernel
+RemainAfterExit=yes
+ExecStart=/usr/bin/archr-error-report boot
+ExecStop=/usr/bin/archr-error-report shutdown
 Nice=10
 IOSchedulingClass=idle
 

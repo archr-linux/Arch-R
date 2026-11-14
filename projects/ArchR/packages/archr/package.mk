@@ -16,7 +16,7 @@ PKG_NAME="archr"
 # versions; the install silently skipped a PKG_INSTALL dir that did not
 # exist and the image assembly then failed in post_install.
 PKG_VERSION="$(date +%Y%m%d)"
-PKG_REV="16"
+PKG_REV="17"
 PKG_LICENSE="GPLv2"
 PKG_SITE=""
 PKG_URL=""
@@ -225,6 +225,13 @@ EOF
   # in its log, which the report carries (no core dumps on the console).
   mkdir -p ${INSTALL}/usr/lib/sysctl.d
   echo "debug.exception-trace=1" >${INSTALL}/usr/lib/sysctl.d/60-archr-error-report.conf
+  # A console that froze stayed black until the reset button. systemd
+  # feeds the SoC watchdog (enabled in the device tree, patch 047), which
+  # resets a console whose PID 1 stops answering for 30 s; the next boot
+  # reports that it ended without a shutdown (archr-error-report boot).
+  mkdir -p ${INSTALL}/usr/lib/systemd/system.conf.d
+  printf '[Manager]\nRuntimeWatchdogSec=30s\nRebootWatchdogSec=2min\n' \
+    >${INSTALL}/usr/lib/systemd/system.conf.d/60-archr-watchdog.conf
 }
 
 post_install() {
