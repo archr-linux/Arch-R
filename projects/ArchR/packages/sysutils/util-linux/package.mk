@@ -93,6 +93,10 @@ post_configure_target() {
   sed -i 's/^SUBDIRS = po /SUBDIRS = /' Makefile
 }
 
+post_configure_init() {
+  sed -i 's/^SUBDIRS = po /SUBDIRS = /' Makefile
+}
+
 post_makeinstall_target() {
   if [ "${SWAP_SUPPORT}" = "yes" ]; then
     mkdir -p ${INSTALL}/etc

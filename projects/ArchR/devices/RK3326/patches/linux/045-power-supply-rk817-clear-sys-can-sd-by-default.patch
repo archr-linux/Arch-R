@@ -1,0 +1,51 @@
+From: Chris Morgan <macromorgan@hotmail.com>
+Date: Wed, 22 Apr 2026 15:56:57 -0500
+Subject: [PATCH] power: supply: rk817: Clear SYS_CAN_SD register by default
+
+The BSP driver for the rk817 charger by default clears the SYS_CAN_SD
+register unless a specific attribute is set in the device tree. This
+register tells the PMIC that the system voltage can be shut down in
+battery off mode.
+
+Though the BSP sets this value by default, it also has a device tree
+value to override it.
+
+When this value is not cleared, it can result in a persistent power
+drain while the device is off, as observed by users.
+
+Taken from ROCKNIX (patches/mainline-rockchip/007), with the
+rockchip,gate-function-disable binding of their 006. The BSP kernel the
+R36S shipped with (ArkOS, dArkOS) clears the bit unconditionally.
+
+Reported-by: Zetarancio <zetarancio@users.noreply.github.com>
+Fixes: 11cb8da0189b ("power: supply: Add charger driver for Rockchip RK817")
+Signed-off-by: Chris Morgan <macromorgan@hotmail.com>
+---
+--- a/drivers/power/supply/rk817_charger.c
++++ b/drivers/power/supply/rk817_charger.c
+@@ -1196,6 +1196,15 @@
+ 	regmap_write_bits(rk808->regmap, RK817_PMIC_CHRG_IN, RK817_USB_ILIM_EN,
+ 			  (0x01 << 3));
+ 
++	/*
++	 * Shutdown the system voltage in bat_off mode, unless
++	 * gate-function-disable is set.
++	 */
++	if (!device_property_read_bool(charger->dev,
++				       "rockchip,gate-function-disable"))
++		regmap_clear_bits(rk808->regmap,
++				  RK817_PMIC_CHRG_TERM, RK817_SYS_CAN_SD);
++
+ 	return 0;
+ }
+ 
+--- a/include/linux/mfd/rk808.h
++++ b/include/linux/mfd/rk808.h
+@@ -1178,6 +1178,7 @@
+ #define RK817_USB_ILIM_EN		(0x01 << 3)
+ #define RK817_USB_ILIM_SEL		(0x07 << 0)
+ #define RK817_PMIC_CHRG_TERM		0xe6
++#define RK817_SYS_CAN_SD		(0x01 << 7)
+ #define RK817_CHRG_TERM_ANA_DIG		(0x01 << 2)
+ #define RK817_CHRG_TERM_ANA_SEL		(0x03 << 0)
+ #define RK817_CHRG_EN			(0x01 << 6)

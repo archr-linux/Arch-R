@@ -1,0 +1,145 @@
+From: Douglas Teles <dga.teles@gmail.com>
+Date: Sat, 14 Nov 2026 12:00:00 -0300
+Subject: [PATCH] power: supply: rk817-battery: raise a counter left low
+ while the PMIC was off
+
+The RK817 is off while the console is off. On boards that charge
+through a separate charger IC (R36S and clones) a charge taken then
+never reaches the columb counter: a pack run flat, charged off and
+switched on reads 0% at 4.1 V ("boot: counter 5504 uAh, saved soc 161,
+fcc 3200 mAh, battery 4107390 uV" in a user report), and a partial
+charge reads as the soc it was left at. The relax pair would correct
+it, but a handheld in use rarely rests, and the full-charge calibration
+(044) needs a charge finished while on.
+
+Once per boot, after 30 s on battery at a steady load (20 to 800 mA of
+discharge, inside the pack's voltage range), estimate the open circuit
+voltage from the loaded one and the pack's rated internal resistance
+(180 mOhm; the R36S sags as if 0.3 Ohm), taking the lowest estimate of
+the window, so it errs low. Tested on an R36S: counter forced to 5%
+with the pack near 93%, rebooted on battery: raised to 84% 50 s after
+boot; a normal reboot with a right counter left it alone. If the ocv table puts it more
+than 20% above the counter, raise the counter to it.
+
+Only upwards and only once, unlike the loaded-voltage floor reverted on
+2026-11-06: a charge never seen can only add; a counter above the
+voltage (an aged pack whose real capacity is under fcc) is left to the
+relax pair and the low voltage shutdown; a counter that is right is
+never touched; and it never runs while charging or plugged in.
+
+dArkOS and dArkOSen drop the counter and report a linear 3.3-3.9 V
+percentage instead; ROCKNIX's 9001 seeds from PWRON_VOL below 1%, but
+that reads high when switched on plugged in and misses partial charges.
+
+Signed-off-by: Douglas Teles <dga.teles@gmail.com>
+---
+--- a/drivers/power/supply/rk817_charger.c
++++ b/drivers/power/supply/rk817_charger.c
+@@ -108,6 +108,11 @@
+ 	/* Polls in a row an external charger has held the pack full. */
+ 	int ext_full_polls;
+ 
++	/* Boot check for a counter left low while the PMIC was off. */
++	int low_ctr_polls;
++	int low_ctr_ocv_uv;
++	bool low_ctr_done;
++
+ 	/* Stamped at system suspend to correct the gauge across sleep. */
+ 	time64_t slp_boottime;
+ 	int slp_charge_uah;
+@@ -919,6 +924,87 @@
+ 	rk817_record_battery_nvram_values(charger);
+ }
+ 
++/* 30 s of 2 s polls on battery before the loaded voltage is trusted. */
++#define RK817_LOW_CTR_POLLS		15
++/* Steady discharge: above the gauge's noise, the menu's load, not a game. */
++#define RK817_LOW_CTR_MIN_UA		20000
++#define RK817_LOW_CTR_MAX_UA		800000
++/* The voltage this far above the counter means charge it never saw. */
++#define RK817_LOW_CTR_GAP		20000
++
++/*
++ * The PMIC is off while the console is off, and on boards with a separate
++ * charger IC (R36S and clones) a charge taken then never reaches the
++ * counter: a pack run flat, charged off and switched on reads 0% while
++ * nearly full, and a partial charge reads as the soc it was left at. The
++ * relax pair would correct it, but a handheld in use rarely rests, and
++ * the full-charge calibration needs a charge finished while on.
++ *
++ * Once per boot, after 30 s on battery at a steady load, estimate the open
++ * circuit voltage from the loaded one and the pack's internal
++ * resistance (the lowest estimate of the window); if it puts the soc more than 20%
++ * above the counter, raise the counter to it. Only upwards: a charge never
++ * seen can only add, and a counter above the voltage (an aged pack whose
++ * real capacity is under fcc) is left to the relax pair and the low
++ * voltage shutdown. A counter that is right is never touched, and the
++ * check never runs while charging (positive current) or plugged in.
++ */
++static void rk817_bat_low_counter(struct rk817_charger *charger)
++{
++	struct rk808 *rk808 = charger->rk808;
++	struct power_supply_battery_info *info = charger->bat_info;
++	int ocv_uv, ocv_soc, res_uohm, tmp;
++	u8 bulk_reg[4];
++
++	if (charger->low_ctr_done || !info || !charger->battery_present)
++		return;
++
++	if (charger->plugged_in ||
++	    charger->cur_avg_ua > -RK817_LOW_CTR_MIN_UA ||
++	    charger->cur_avg_ua < -RK817_LOW_CTR_MAX_UA ||
++	    charger->volt_avg_uv < info->voltage_min_design_uv ||
++	    charger->volt_avg_uv > info->constant_charge_voltage_max_uv) {
++		charger->low_ctr_polls = 0;
++		return;
++	}
++
++	/*
++	 * The rated resistance; the pack, its contacts and the board sag
++	 * more than that (0.3 ohm measured on an R36S), so the estimate
++	 * still errs low, and the load cap keeps the term small.
++	 */
++	res_uohm = max(info->factory_internal_resistance_uohm, 0);
++	ocv_uv = charger->volt_avg_uv -
++		 (int)div_s64((s64)charger->cur_avg_ua * res_uohm, 1000000);
++
++	if (!charger->low_ctr_polls || ocv_uv < charger->low_ctr_ocv_uv)
++		charger->low_ctr_ocv_uv = ocv_uv;
++	if (++charger->low_ctr_polls < RK817_LOW_CTR_POLLS)
++		return;
++	charger->low_ctr_done = true;
++
++	ocv_soc = power_supply_batinfo_ocv2cap(info, charger->low_ctr_ocv_uv,
++					       20);
++	if (ocv_soc < 0)
++		return;
++	ocv_soc *= 1000;
++	if (ocv_soc - charger->soc <= RK817_LOW_CTR_GAP)
++		return;
++
++	dev_info(charger->dev,
++		 "counter left low: %d uV at %d uA is soc %d, counter %d: raised\n",
++		 charger->volt_avg_uv, charger->cur_avg_ua, ocv_soc,
++		 charger->soc);
++	charger->soc = ocv_soc;
++	charger->charge_now_uah = ocv_soc * charger->fcc_mah / 100;
++	tmp = CHARGE_TO_ADC(ocv_soc * charger->fcc_mah / 100000,
++			    charger->res_div);
++	put_unaligned_be32(tmp, bulk_reg);
++	regmap_bulk_write(rk808->regmap, RK817_GAS_GAUGE_Q_INIT_H3,
++			  bulk_reg, 4);
++	rk817_record_battery_nvram_values(charger);
++}
++
+ static int
+ rk817_read_or_set_full_charge_on_boot(struct rk817_charger *charger,
+ 				struct power_supply_battery_info *bat_info)
+@@ -1217,6 +1303,7 @@
+ 	rk817_read_props(charger);
+ 	rk817_bat_ocv_recalibrate(charger);
+ 	rk817_bat_ext_full(charger);
++	rk817_bat_low_counter(charger);
+ 
+ 	/* Every 2 seconds, so charger plug/unplug shows up promptly. */
+ 	queue_delayed_work(system_wq, &charger->work, msecs_to_jiffies(2000));
