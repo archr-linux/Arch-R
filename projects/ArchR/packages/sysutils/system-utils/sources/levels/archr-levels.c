@@ -242,6 +242,11 @@ static void sink_found(pa_context *c, const pa_sink_info *i, int eol, void *u)
 		return;
 	if (!eol && i) {
 		pa_cvolume cv;
+		unsigned ch, same = i->volume.channels > 0;
+		for (ch = 0; ch < i->volume.channels; ch++)
+			same &= i->volume.values[ch] == target;
+		if (same)
+			return; /* already there: a change event of our own */
 		dl_pa_cvolume_set(&cv, i->volume.channels ? i->volume.channels : 1, target);
 		pa_operation *op = dl_pa_context_set_sink_volume_by_index(c, i->index, &cv, sink_set, NULL);
 		if (op) {
@@ -267,12 +272,18 @@ static void push_volume(void)
 
 /* A sink that appears, or a new default, starts at the session's remembered
  * or default volume, not at the level: the card's sink can show up after the
- * boot's restore, and a profile switch makes a new one. Give it the level. */
+ * boot's restore, and a profile switch makes a new one. Give it the level.
+ * A sink that changes is checked too: WirePlumber restores the route's own
+ * volume after the sink appears, and takes a saved 0 for none (its default,
+ * 0.4^3, sounds like half): a console shut down at the lowest volume came
+ * back playing at half while the level read 0. sink_found leaves a sink
+ * already at the level alone, so our own changes end there. */
 static void sink_event(pa_context *c, pa_subscription_event_type_t t, uint32_t index, void *u)
 {
 	(void)c, (void)index, (void)u;
 	int facility = t & PA_SUBSCRIPTION_EVENT_FACILITY_MASK, type = t & PA_SUBSCRIPTION_EVENT_TYPE_MASK;
-	if ((facility == PA_SUBSCRIPTION_EVENT_SINK && type == PA_SUBSCRIPTION_EVENT_NEW) ||
+	if ((facility == PA_SUBSCRIPTION_EVENT_SINK &&
+	     (type == PA_SUBSCRIPTION_EVENT_NEW || type == PA_SUBSCRIPTION_EVENT_CHANGE)) ||
 	    (facility == PA_SUBSCRIPTION_EVENT_SERVER && type == PA_SUBSCRIPTION_EVENT_CHANGE)) {
 		queued = 1;
 		if (!busy)
