@@ -16,7 +16,7 @@ PKG_NAME="archr"
 # versions; the install silently skipped a PKG_INSTALL dir that did not
 # exist and the image assembly then failed in post_install.
 PKG_VERSION="$(date +%Y%m%d)"
-PKG_REV="17"
+PKG_REV="18"
 PKG_LICENSE="GPLv2"
 PKG_SITE=""
 PKG_URL=""
@@ -48,6 +48,12 @@ makeinstall_target() {
   ### Chip names for archr-usb-advisor; the image build adds usb-advisor.tsv.
   install -Dm644 ${PKG_DIR}/sources/usb-advisor-chips.tsv ${INSTALL}/usr/share/archr/usb-advisor-chips.tsv
   ln -sf /storage/.config/system ${INSTALL}/system
+  ### /sbin is /usr/sbin here, but glibc puts ldconfig in /usr/bin.
+  ### Python's ctypes.util.find_library runs /sbin/ldconfig -p; without
+  ### it every lookup returns None (PySDL2 ports: "could not find any
+  ### library for SDL2").
+  mkdir -p ${INSTALL}/usr/sbin
+  ln -sf ../bin/ldconfig ${INSTALL}/usr/sbin/ldconfig
   find ${INSTALL}/usr/config/system/ -type f -exec chmod o+x {} \;
 
   mkdir -p ${INSTALL}/usr/bin/
