@@ -40,6 +40,15 @@ case "$0" in
     ;;
 esac
 
+# PortMaster's Solarus runtime (Yarntown, Ocean's Heart, every Solarus game)
+# brings an old LuaJIT that panics with "bad light userdata pointer" when
+# memory sits above 47 bits, as it does on this 48-bit kernel. The port's
+# script puts the runtime's folder in LD_LIBRARY_PATH after this file, so
+# preload Arch R's LuaJIT (2.1, which handles those addresses) instead.
+if [ -f "/usr/lib/libluajit-5.1.so.2" ] && grep -qs 'runtime="solarus-' "$0" 2>/dev/null; then
+    export LD_PRELOAD="/usr/lib/libluajit-5.1.so.2${LD_PRELOAD:+:$LD_PRELOAD}"
+fi
+
 if [[ "$PORT_32BIT" == "Y" ]]; then
     export SPA_PLUGIN_DIR="/usr/lib32/spa-0.2"
     export PIPEWIRE_MODULE_DIR="/usr/lib32/pipewire-0.3/"
