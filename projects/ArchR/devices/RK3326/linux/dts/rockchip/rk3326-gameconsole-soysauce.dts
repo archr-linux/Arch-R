@@ -295,3 +295,30 @@
 &pmic_int {
 	rockchip,pins = <0 RK_PA7 RK_FUNC_GPIO &pcfg_pull_up>;
 };
+
+/*
+ * SD card power as the Y3506 boards ship it (every vendor DTB, V03 to
+ * V06): the card at 3.3 V and its I/O switching between 3.3 V and 1.8 V.
+ * The R36S values inherited from r3xs.dtsi (card up to 3.0 V, I/O fixed at
+ * 1.8 V) suit the R36S, whose stock DTB has them, not this board: a card
+ * starts at 3.3 V signaling and must get back to it to recover, and
+ * Soysauce users saw the console freeze at random until reset, even while
+ * booting, the way every task waits on a card that stopped answering.
+ */
+&vccio_sd {
+	regulator-min-microvolt = <1800000>;
+	regulator-max-microvolt = <3300000>;
+
+	regulator-state-mem {
+		regulator-suspend-microvolt = <3300000>;
+	};
+};
+
+&vcc_sd {
+	regulator-min-microvolt = <3300000>;
+	regulator-max-microvolt = <3300000>;
+
+	regulator-state-mem {
+		regulator-suspend-microvolt = <3300000>;
+	};
+};
