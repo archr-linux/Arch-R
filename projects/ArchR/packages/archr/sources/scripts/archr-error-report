@@ -263,6 +263,10 @@ PORT_NOISE+='|Unity (Analytics|Purchasing|Services)'
 # splash naming each step it reaches.
 PORT_NOISE+="|gmloader/main.cpp:[0-9]+: Failed initializing module '[^']*'\.\$"
 PORT_NOISE+='|^nxsplash: attempt=[0-9]+ phase=[A-Za-z_-]+$'
+# westonwrap (weston_pkg) probes glxinfo; on libmali libGL is shadowed on
+# purpose, so the probe fails and its version test gets an empty string.
+PORT_NOISE+='|^glxinfo: error while loading shared libraries: /usr/lib(32)?/libGL\.so\.1: file too short$'
+PORT_NOISE+='|^/tmp/weston/westonwrap\.sh: line [0-9]+: \[: : integer expected$'
 # Lines that only look like errors: they count on a run that ended
 # within SHORT seconds (nothing was played).
 PORT_SOFT='[Ee]rror|ERROR|[Ff]ail|[Cc]annot|[Uu]nable to|not found|No such file'

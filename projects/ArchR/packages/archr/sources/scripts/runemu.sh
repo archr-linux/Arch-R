@@ -116,6 +116,14 @@ export ARCHR_ENTRY_STATE="${ENTRYSTATE}"
 BASEROMNAME=${ROMNAME##*/}
 GAMEFOLDER="${ROMNAME//${BASEROMNAME}}"
 
+### MAME 2003-Plus, the default for arcade, opens only .zip: given a .7z it
+### reports every file of the set as NOT FOUND. Every other arcade core reads
+### .7z; FinalBurn Neo is the one that plays best on this hardware.
+if [ "${EMULATOR}" = "retroarch" ] && [ "${CORE}" = "mame2003_plus" ] &&
+   [[ "${ROMNAME,,}" == *.7z ]] && [ -f /usr/lib/libretro/fbneo_libretro.so ]; then
+  CORE="fbneo"
+fi
+
 ### Define the variables used throughout the script
 BLUETOOTH_STATE=$(get_setting controllers.bluetooth.enabled)
 VERBOSE=false
