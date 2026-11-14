@@ -1,0 +1,22 @@
+diff --color -ruN orig/src/option_parser.cpp new/src/option_parser.cpp
+--- a/src/option_parser.cpp	2026-11-14 04:45:35.132022375 -0300
++++ b/src/option_parser.cpp	2026-11-14 04:45:35.167888882 -0300
+@@ -234,9 +234,17 @@
+ 
+   mount    = cfg.mountpoint;
+   branches = cfg.branches->to_paths();
++  // A branch bound from the mountpoint before the union is mounted (Arch R's
++  // unified storage: /storage/roms is bound to /run/archr/sd1-roms, then
++  // the union is mounted on /storage/roms) is the same directory, yet it
++  // never reaches the union: it is its own mount. Only a branch reached
++  // through the mountpoint's path would loop.
++  mount = mount.lexically_normal();
+   for(const auto &branch : branches)
+     {
+-      if(std::filesystem::equivalent(branch,mount,ec))
++      const fs::path b = branch.lexically_normal();
++      auto rel = b.lexically_relative(mount);
++      if(b == mount || (!rel.empty() && *rel.begin() != ".."))
+         {
+           std::string errstr;
+ 

@@ -3,6 +3,8 @@
 
 PKG_NAME="mergerfs"
 PKG_VERSION="2.42.0"
+# 2: unified storage mounts again (0001: the mount-loop check by path).
+PKG_REV="2"
 PKG_SHA256="546d6eed694d48ef13e058a46c6fb3da34dc9dfc48ee51af6487f353787780bd"
 PKG_LICENSE="ISC"
 PKG_SITE="https://github.com/trapexit/mergerfs"

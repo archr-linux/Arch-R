@@ -220,6 +220,9 @@ queue() {
   fi
   echo "${_signature} 1 ${TODAY}" >>"${DIR}/seen"
   bump created
+  # On the card before it enters the queue: a console turned off right after
+  # left a 0-byte report behind, which then went out empty.
+  sync "${_tmp}" 2>/dev/null || :
   mv -f "${_tmp}" "${QUEUE}/${_name}"
   echo "archr-error-report: queued ${_name} (${_signature})" >&2
 }
@@ -267,6 +270,8 @@ PORT_NOISE+='|^nxsplash: attempt=[0-9]+ phase=[A-Za-z_-]+$'
 # purpose, so the probe fails and its version test gets an empty string.
 PORT_NOISE+='|^glxinfo: error while loading shared libraries: /usr/lib(32)?/libGL\.so\.1: file too short$'
 PORT_NOISE+='|^/tmp/weston/westonwrap\.sh: line [0-9]+: \[: : integer expected$'
+# Rockbox's SDL resolution shim logs every call it intercepts, SDL_CreateWindow included.
+PORT_NOISE+='|^\[SDL2 PATCH LIBRARY\]'
 # Lines that only look like errors: they count on a run that ended
 # within SHORT seconds (nothing was played).
 PORT_SOFT='[Ee]rror|ERROR|[Ff]ail|[Cc]annot|[Uu]nable to|not found|No such file'
@@ -666,6 +671,11 @@ send() {
   id=$(console_id) && id="_${id}"
   for f in "${QUEUE}"/*.txt; do
     [ -f "${f}" ] || continue
+    # Empty (cut by a power-off before it reached the card): nothing to send.
+    if [ ! -s "${f}" ]; then
+      rm -f "${f}"
+      continue
+    fi
     read -r _ sent <<<"$(counts)"
     [ "${sent}" -lt "${DAILY}" ] || break
     name=${f##*/}

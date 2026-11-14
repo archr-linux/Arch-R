@@ -86,6 +86,13 @@ if [ "${INITRAMFS_PARTED_SUPPORT}" = "yes" ]; then
   PKG_CONFIGURE_OPTS_INIT+=" --enable-mkfs --enable-libuuid --enable-btrfs"
 fi
 
+# The translations are off (--disable-nls), but po/ is still built, and with
+# the build container's gettext its Makefile comes out without top_builddir
+# ("No rule to make target '/config.status'"). Skip it.
+post_configure_target() {
+  sed -i 's/^SUBDIRS = po /SUBDIRS = /' Makefile
+}
+
 post_makeinstall_target() {
   if [ "${SWAP_SUPPORT}" = "yes" ]; then
     mkdir -p ${INSTALL}/etc
