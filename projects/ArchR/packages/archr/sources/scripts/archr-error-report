@@ -275,6 +275,8 @@ PORT_NOISE+='|^glxinfo: error while loading shared libraries: /usr/lib(32)?/libG
 PORT_NOISE+='|^/tmp/weston/westonwrap\.sh: line [0-9]+: \[: : integer expected$'
 # Rockbox's SDL resolution shim logs every call it intercepts, SDL_CreateWindow included.
 PORT_NOISE+='|^\[SDL2 PATCH LIBRARY\]'
+# X-Moto on its first run: no stats or favourites yet.
+PORT_NOISE+='|Oups, updateDB_[a-z]+\(\) failed: failed to load XML'
 # Lines that only look like errors: they count on a run that ended
 # within SHORT seconds (nothing was played).
 PORT_SOFT='[Ee]rror|ERROR|[Ff]ail|[Cc]annot|[Uu]nable to|not found|No such file'

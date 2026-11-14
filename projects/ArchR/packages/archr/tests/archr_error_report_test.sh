@@ -283,7 +283,9 @@ Failed, waiting to try again
 localStorage load file "/storage/.local/share/eludi/arcajs/asteroludi.json" error: Couldn'"'"'t open /storage/.local/share/eludi/arcajs/asteroludi.json: No such file or directory
 (<unknown>:610135): Gtk-WARNING **: 10:39:18.965: gtk_disable_setlocale() must be called before gtk_init()
 arm_release_ver: g24p0-00eac0, rk_so_ver: 10
-WARN: WindowControllerOpen(0): already opened'
+WARN: WindowControllerOpen(0): already opened
+** Error ** : Oups, updateDB_stats() failed: failed to load XML stats.xml
+** Error ** : Oups, updateDB_favorite() failed: failed to load XML favoriteLevels.xml'
 port() {
   printf 'old run: Segmentation fault\n' >"${R}/var/log/exec.log"
   local offset
