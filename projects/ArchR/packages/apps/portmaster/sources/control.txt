@@ -107,6 +107,20 @@ case "${QUIRK_DEVICE}" in
   ;;
 esac
 
+# oga_controls (old ports: OpenLara, C-Dogs, Rocks'n'Diamonds...) opens one
+# fixed joypad path per name and crashes when it is missing. The RK3326
+# handhelds Arch R runs use different joypad drivers: take the name whose
+# path this one has (the R36S has odroidgo3: "ogs", not "oga").
+if [ ! -e "/dev/input/by-path/platform-odroidgo2-joypad-event-joystick" ] && [ "$param_device" = "oga" ]; then
+  for pm_joypad in ogs:odroidgo3-joypad rg552:singleadc-joypad; do
+    if [ -e "/dev/input/by-path/platform-${pm_joypad#*:}-event-joystick" ]; then
+      param_device="${pm_joypad%%:*}"
+      break
+    fi
+  done
+  unset pm_joypad
+fi
+
 get_controls() {
     # Set controller file to be generated
     export SDL_GAMECONTROLLERCONFIG_FILE="/tmp/gamecontrollerdb.txt"
