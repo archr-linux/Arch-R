@@ -41,7 +41,7 @@ CTL="${TMP}/conf/PSP/SYSTEM/controls.ini"
 # run SYSTEM.CFG-LINES...: one start of a game with those settings
 run() {
   printf '%s\n' "$@" >"${TMP}/system.cfg"
-  bash "${TMP}/start.sh" "/roms/psp/Game.iso" psp >/dev/null 2>&1 || fail "start_ppsspp.sh exited with $?"
+  bash "${TMP}/start.sh" "/roms/psp/${GAMEFILE:-Game.iso}" psp >/dev/null 2>&1 || fail "start_ppsspp.sh exited with $?"
 }
 key() { sed -n "s/^${1} = //p" "$2"; }
 
@@ -81,6 +81,19 @@ run "psp.frame_skip=2"
 expect "cap set" "2" "$(key FrameSkip "${INI}")"
 
 # vsync off and on; a config from an older package has no VerticalSync.
+# God of War skips buffer effects unless a setting says otherwise: 7-8 fps
+# with them on the R36S, 17-19 without (its cutscenes go black).
+GOW="God of War - Chains of Olympus (USA).iso"
+GAMEFILE="${GOW}" run "psp.vsync=1"
+expect "gow skips buffer effects" "True" "$(key SkipBufferEffects "${INI}")"
+expect "gow fixed skip" "1" "$(key FrameSkip "${INI}")"
+GAMEFILE="${GOW}" run "psp[\"${GOW}\"].skip_buffer_effects=0"
+expect "gow game setting wins" "False" "$(key SkipBufferEffects "${INI}")"
+GAMEFILE="${GOW}" run "psp.skip_buffer_effects=0"
+expect "gow platform setting wins" "False" "$(key SkipBufferEffects "${INI}")"
+run "psp.vsync=1"
+expect "other games keep buffer effects" "False" "$(key SkipBufferEffects "${INI}")"
+
 run "psp.vsync=0"
 expect "vsync off" "False" "$(key VerticalSync "${INI}")"
 sed -i '/^VerticalSync =/d' "${INI}"

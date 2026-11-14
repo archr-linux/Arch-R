@@ -28,6 +28,14 @@ FPS=$(get_setting show_fps "${PLATFORM}" "${GAME}")
 IRES=$(get_setting internal_resolution "${PLATFORM}" "${GAME}")
 GRENDERER=$(get_setting graphics_backend "${PLATFORM}" "${GAME}")
 SKIPB=$(get_setting skip_buffer_effects "${PLATFORM}" "${GAME}")
+# God of War runs at 7-8 fps on the R36S with buffer effects; skipping them
+# gives 17-19 from an ISO (a CHD in LZMA costs more), and its cutscenes go
+# black. A setting for the game or the platform (0 or 1) still decides.
+if [ -z "${SKIPB}" ]; then
+  case "${GAME}" in
+    *"God of War"*) SKIPB=1 ;;
+  esac
+fi
 VSYNC=$(get_setting vsync "${PLATFORM}" "${GAME}")
 CLOCK_SPEED=$(get_setting clock_speed "${PLATFORM}" "${GAME}")
 

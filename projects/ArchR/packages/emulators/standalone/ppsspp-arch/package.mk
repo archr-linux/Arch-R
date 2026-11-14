@@ -4,6 +4,7 @@
 
 PKG_NAME="ppsspp-arch"
 PKG_REPLACES="ppsspp-sa"
+PKG_REV="2"
 PKG_SITE="https://github.com/hrydgard/ppsspp"
 PKG_URL="${PKG_SITE}.git"
 PKG_VERSION="afbc66a318b86432642b532c575241f3716642ef" # v1.20.2
