@@ -89,6 +89,9 @@ FUNCTION_VOLUME_DOWN_EVENT='*('${KEY_VOLUME_DOWN}'), value *'
 # says the device is already suspended.
 : "${FAKE_SUSPEND:=/usr/bin/archr-fake-suspend}"
 : "${FAKE_SUSPEND_FLAG:=/var/run/power-fake-suspend-active.flag}"
+# The launcher's controller tester takes every button: while this flag holds
+# the PID of a live launcher no shortcut runs (a stale flag is ignored).
+: "${HOTKEYS_PAUSED_FLAG:=/run/archr/hotkeys-paused}"
 
 FUNCTION_POWER_RELEASED_EVENT='*(KEY_POWER), value 0'
 FUNCTION_POWER_PRESSED_EVENT='*(KEY_POWER), value 1'
@@ -676,6 +679,17 @@ watch_inputs | grep --line-buffered "EV_KEY\|EV_SW\|error reading" | while next_
     # tap while it saves finds the unit running.
     # (A case, as below: [[ == ]] would read "*(...)" as an extglob.)
     LINE_DEV=${line%% *}
+    # The power and volume keys are not the controller's: they stay.
+    if [[ "${line}" != *"(KEY_POWER)"* && "${line}" != *"(KEY_VOLUME"* ]] &&
+       [ -e "${HOTKEYS_PAUSED_FLAG}" ] && read -r PAUSED_BY <"${HOTKEYS_PAUSED_FLAG}" &&
+       [ -n "${PAUSED_BY}" ] && kill -0 "${PAUSED_BY}" 2>/dev/null; then
+      HOTKEY_A_PRESSED=false HOTKEY_B_PRESSED=false HOTKEY_C_PRESSED=false
+      FN_A_PRESSED=false FN_B_PRESSED=false
+      VOLUME_UP_PRESSED=false VOLUME_DOWN_PRESSED=false
+      SWITCHER_ARMED=false
+      report_reset
+      continue
+    fi
     case ${line} in
       (*"(BTN_MODE), value "[01]|*"(BTN_TL), value "[01]|*"(BTN_TR), value "[01]) report_key ;;
     esac

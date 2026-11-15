@@ -28,6 +28,7 @@ J_CONF="${TMP}/system.cfg"
 log() { :; }
 FAKE_SUSPEND="${TMP}/bin/suspend"
 FAKE_SUSPEND_FLAG="${TMP}/suspended.flag"
+HOTKEYS_PAUSED_FLAG="${TMP}/paused.flag"
 IDLE_UNIT=1
 REPORT_HOLD=1
 RUNEMU="${TMP}/runemu.sh"
@@ -201,5 +202,19 @@ check "another pad gone does not cancel the chord" "$(report 3)" "--osd"
 check "the report's unit is capped" \
   "$(grep -o 'RuntimeMaxSec=120 -p MemoryMax=128M -p CPUQuota=50%' "${TMP}/units" | sort -u)" \
   "RuntimeMaxSec=120 -p MemoryMax=128M -p CPUQuota=50%"
+
+# The launcher's controller tester pauses the shortcuts while it lives;
+# a flag left by a launcher that died pauses nothing; power still works.
+events "0.5 ${POWER}"
+UNPAUSED=$(run 2)
+echo $$ >"${TMP}/paused.flag"
+events "${CHORD[@]}" "1.5 $(key BTN_MODE 0)"
+check "paused: the report chord does nothing" "$(report 3)" ""
+events "0.5 ${POWER}"
+check "paused: the power button works as ever" "$(run 2)" "${UNPAUSED}"
+echo 999999 >"${TMP}/paused.flag"
+events "${CHORD[@]}" "1.5 $(key BTN_MODE 0)"
+check "a stale flag pauses nothing" "$(report 3)" "--osd"
+rm -f "${TMP}/paused.flag"
 
 exit ${FAILED}
