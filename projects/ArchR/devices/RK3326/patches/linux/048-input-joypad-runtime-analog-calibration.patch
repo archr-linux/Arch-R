@@ -1,0 +1,275 @@
+From: ArchR <noreply@arch-r.io>
+Subject: [PATCH] input: odroidgo3-joypad: runtime analog calibration
+
+A calibration attribute on the joypad device reads each axis (raw ADC,
+center, tuning per side, deadzone) and takes a measured center, the
+tuning that brings each side to the full range and a deadzone per
+stick, or "reset" for the device-tree values. A measured center stays
+fixed when the device opens again; the default still reads it there.
+Shared with the archr-joypad drivers (archr-joypad-cal.h). Defaults are
+unchanged: the per-axis deadzone starts at button-adc-deadzone.
+
+diff --color -Naur a/drivers/input/joystick/archr-joypad-cal.h b/drivers/input/joystick/archr-joypad-cal.h
+--- a/drivers/input/joystick/archr-joypad-cal.h	1969-12-31 21:00:00.000000000 -0300
++++ b/drivers/input/joystick/archr-joypad-cal.h	2026-11-14 23:08:53.016075818 -0300
+@@ -0,0 +1,200 @@
++/* SPDX-License-Identifier: GPL-2.0-or-later */
++/*
++ * ARCH-R joypad driver: runtime analog calibration
++ *
++ * Copyright (C) 2026 ARCH-R (https://github.com/archr-linux/ArchR/)
++ *
++ * Shared by archr-joypad and archr-singleadc-joypad. Include it after
++ * struct bt_adc and struct joypad. struct bt_adc needs raw, open_cal,
++ * cal_fixed, deadzone, dt_tuning_n and dt_tuning_p; struct joypad needs
++ * adcs, lock and bt_adc_deadzone, and the driver defines ARCHR_CAL_COUNT(j),
++ * its number of analog axes. A stick's two axes are paired by name (x/y,
++ * rx/ry, z/rz).
++ *
++ * sysfs, on the joypad's platform device:
++ *   calibration  read: one line per axis
++ *                  "<axis> raw=<r> center=<c> fixed=<0|1> neg=<%> pos=<%>
++ *                   deadzone=<d> max=<m> invert=<0|1>"
++ *                write: "<axis> [center=<c>|center=auto] [neg=<%>] [pos=<%>]
++ *                        [deadzone=<d>]", or "reset" (device-tree values,
++ *                        center read again when the device opens)
++ * raw and center are ADC readings (scaled); neg/pos the tuning in percent
++ * that maps each side to the full range; deadzone, per stick, in raw units.
++ */
++
++#define ARCHR_CAL_TUNING_MAX	1000
++
++static const char *archr_cal_axis_name(int report_type)
++{
++	switch (report_type) {
++	case ABS_X:	return "x";
++	case ABS_Y:	return "y";
++	case ABS_RX:	return "rx";
++	case ABS_RY:	return "ry";
++	case ABS_Z:	return "z";
++	case ABS_RZ:	return "rz";
++	default:	return "?";
++	}
++}
++
++/* The other axis of the same stick. */
++static const char *archr_cal_pair_name(int report_type)
++{
++	switch (report_type) {
++	case ABS_X:	return "y";
++	case ABS_Y:	return "x";
++	case ABS_RX:	return "ry";
++	case ABS_RY:	return "rx";
++	case ABS_Z:	return "rz";
++	case ABS_RZ:	return "z";
++	default:	return "";
++	}
++}
++
++/* Device-tree values, kept so "reset" can return to them. */
++static void archr_cal_init(struct joypad *joypad)
++{
++	int i;
++
++	for (i = 0; i < ARCHR_CAL_COUNT(joypad); i++) {
++		struct bt_adc *adc = &joypad->adcs[i];
++
++		adc->dt_tuning_n = adc->tuning_n;
++		adc->dt_tuning_p = adc->tuning_p;
++		adc->deadzone = joypad->bt_adc_deadzone;
++		adc->cal_fixed = false;
++	}
++}
++
++/* Called where the device opens: the measured center wins over the reading. */
++static void archr_cal_opened(struct bt_adc *adc, int value)
++{
++	adc->open_cal = value;
++	if (!adc->cal_fixed)
++		adc->cal = value;
++}
++
++static struct bt_adc *archr_cal_find(struct joypad *joypad, const char *name)
++{
++	int i;
++
++	for (i = 0; i < ARCHR_CAL_COUNT(joypad); i++)
++		if (!strcmp(archr_cal_axis_name(joypad->adcs[i].report_type), name))
++			return &joypad->adcs[i];
++	return NULL;
++}
++
++static ssize_t calibration_show(struct device *dev,
++				struct device_attribute *attr, char *buf)
++{
++	struct joypad *joypad = dev_get_drvdata(dev);
++	int i, len = 0;
++
++	for (i = 0; i < ARCHR_CAL_COUNT(joypad); i++) {
++		struct bt_adc *adc = &joypad->adcs[i];
++
++		len += sysfs_emit_at(buf, len,
++			"%s raw=%d center=%d fixed=%d neg=%d pos=%d deadzone=%d max=%d invert=%d\n",
++			archr_cal_axis_name(adc->report_type), adc->raw, adc->cal,
++			adc->cal_fixed, adc->tuning_n, adc->tuning_p,
++			adc->deadzone, adc->max, adc->invert);
++	}
++	return len;
++}
++
++static ssize_t calibration_store(struct device *dev,
++				 struct device_attribute *attr,
++				 const char *buf, size_t count)
++{
++	struct joypad *joypad = dev_get_drvdata(dev);
++	struct bt_adc *adc;
++	char line[128], *p, *tok;
++	int center = 0, neg = -1, pos = -1, dz = -1, i;
++	bool set_center = false, auto_center = false;
++
++	if (count >= sizeof(line))
++		return -EINVAL;
++	memcpy(line, buf, count);
++	line[count] = '\0';
++	p = strim(line);
++
++	mutex_lock(&joypad->lock);
++	if (!strcmp(p, "reset")) {
++		for (i = 0; i < ARCHR_CAL_COUNT(joypad); i++) {
++			adc = &joypad->adcs[i];
++			adc->tuning_n = adc->dt_tuning_n;
++			adc->tuning_p = adc->dt_tuning_p;
++			adc->deadzone = joypad->bt_adc_deadzone;
++			adc->cal_fixed = false;
++			if (adc->open_cal)
++				adc->cal = adc->open_cal;
++		}
++		mutex_unlock(&joypad->lock);
++		return count;
++	}
++
++	tok = strsep(&p, " \t");
++	adc = tok ? archr_cal_find(joypad, tok) : NULL;
++	if (!adc)
++		goto invalid;
++
++	/* Parse everything first: a bad field changes nothing. */
++	while ((tok = strsep(&p, " \t")) != NULL) {
++		if (!*tok)
++			continue;
++		if (!strcmp(tok, "center=auto"))
++			auto_center = true;
++		else if (sscanf(tok, "center=%d", &center) == 1)
++			set_center = true;
++		else if (sscanf(tok, "neg=%d", &neg) == 1) {
++			if (neg < 1 || neg > ARCHR_CAL_TUNING_MAX)
++				goto invalid;
++		} else if (sscanf(tok, "pos=%d", &pos) == 1) {
++			if (pos < 1 || pos > ARCHR_CAL_TUNING_MAX)
++				goto invalid;
++		} else if (sscanf(tok, "deadzone=%d", &dz) == 1) {
++			if (dz < 0 || dz >= adc->max)
++				goto invalid;
++		} else
++			goto invalid;
++	}
++
++	if (auto_center) {
++		adc->cal_fixed = false;
++		if (adc->open_cal)
++			adc->cal = adc->open_cal;
++	} else if (set_center) {
++		adc->cal = center;
++		adc->cal_fixed = true;
++	}
++	if (neg > 0)
++		adc->tuning_n = neg;
++	if (pos > 0)
++		adc->tuning_p = pos;
++	if (dz >= 0) {
++		/* The deadzone belongs to the stick: both of its axes. */
++		struct bt_adc *pair = archr_cal_find(joypad,
++				archr_cal_pair_name(adc->report_type));
++
++		adc->deadzone = dz;
++		if (pair)
++			pair->deadzone = dz;
++	}
++	mutex_unlock(&joypad->lock);
++	return count;
++
++invalid:
++	mutex_unlock(&joypad->lock);
++	return -EINVAL;
++}
++
++static DEVICE_ATTR_RW(calibration);
++
++static struct attribute *archr_cal_attrs[] = {
++	&dev_attr_calibration.attr,
++	NULL,
++};
++
++static const struct attribute_group archr_cal_attr_group = {
++	.attrs = archr_cal_attrs,
++};
+diff --color -Naur a/drivers/input/joystick/odroidgo3-joypad.c b/drivers/input/joystick/odroidgo3-joypad.c
+--- a/drivers/input/joystick/odroidgo3-joypad.c	2026-11-14 23:08:53.014066730 -0300
++++ b/drivers/input/joystick/odroidgo3-joypad.c	2026-11-14 23:08:53.030191358 -0300
+@@ -82,6 +82,9 @@
+ 	int amux_ch;
+ 	/* adc data tuning value([percent), p = positive, n = negative */
+ 	int tuning_p, tuning_n;
++	/* runtime calibration (archr-joypad-cal.h) */
++	int raw, open_cal, deadzone, dt_tuning_p, dt_tuning_n;
++	bool cal_fixed;
+ };
+ 
+ struct analog_mux {
+@@ -148,6 +151,9 @@
+ 	int debug_ch;
+ };
+ 
++#define ARCHR_CAL_COUNT(j)	((j)->amux_count)
++#include "archr-joypad-cal.h"
++
+ /*----------------------------------------------------------------------------*/
+ //
+ // set to the value in the boot.ini file. (if exist)
+@@ -551,11 +557,12 @@
+ 				__func__, nbtn);
+ 			continue;
+ 		}
++		adc->raw = adc->value;
+ 		adc->value = adc->value - adc->cal;
+ 
+ 		/* Joystick Deadzone check */
+-		if (joypad->bt_adc_deadzone) {
+-			if (abs(adc->value) < joypad->bt_adc_deadzone)
++		if (adc->deadzone) {
++			if (abs(adc->value) < adc->deadzone)
+ 				adc->value = 0;
+ 		}
+ 
+@@ -610,7 +617,7 @@
+ 				__func__, nbtn);
+ 			continue;
+ 		}
+-		adc->cal = adc->value;
++		archr_cal_opened(adc, adc->value);
+ 		dev_info(joypad->dev, "%s : adc[%d] adc->cal = %d\n",
+ 			__func__, nbtn, adc->cal);
+ 	}
+@@ -1053,6 +1060,12 @@
+ 	mutex_init(&joypad->lock);
+ 	platform_set_drvdata(pdev, joypad);
+ 
++	/* runtime analog calibration (archr-joypad-cal.h) */
++	archr_cal_init(joypad);
++	error = devm_device_add_group(dev, &archr_cal_attr_group);
++	if (error)
++		dev_warn(dev, "calibration sysfs failed (%d)\n", error);
++
+ 	error = sysfs_create_group(&pdev->dev.kobj, &joypad_attr_group);
+ 	if (error) {
+ 		dev_err(dev, "create sysfs group fail, error: %d\n",

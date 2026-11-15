@@ -1,0 +1,133 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 ArchR (https://github.com/archr-linux/Arch-R)
+#
+# Analog stick calibration of the built-in controller, through the joypad
+# driver's sysfs "calibration" attribute (odroidgo3-joypad, archr-joypad,
+# archr-singleadc-joypad). Holds for the launcher, every emulator and port:
+# the driver applies it to the events they read.
+#
+#   archr-joypad-cal path              the sysfs file, or exit 2 (no support)
+#   archr-joypad-cal status            the driver's lines, one per axis:
+#        <axis> raw= center= fixed= neg= pos= deadzone= max= invert=
+#   archr-joypad-cal fit AXIS CENTER MIN MAX [DEADZONE%]
+#        from a measurement (raw ADC readings: rest, lowest, highest), sets
+#        the center and the tuning that brings each side to the full range;
+#        DEADZONE% (of the shorter side's travel) sets the stick's deadzone
+#   archr-joypad-cal set AXIS key=value...   passes through to the driver
+#   archr-joypad-cal save              keeps the current values for next boot
+#   archr-joypad-cal apply             applies the saved values (boot)
+#   archr-joypad-cal reset             device-tree values, saved file removed
+#
+# Saved file: /storage/.config/archr/joypad-calibration, for this board only
+# (its device-tree compatible is in it).
+
+CONF="${ARCHR_JOYPAD_CAL_CONF:-/storage/.config/archr/joypad-calibration}"
+SYSFS="${ARCHR_JOYPAD_CAL_SYSFS:-/sys/bus/platform/devices}"
+COMPAT="${ARCHR_JOYPAD_CAL_COMPAT:-/proc/device-tree/compatible}"
+# A side measured this far from the edge still reaches the full range.
+MARGIN=97
+
+find_attr() {
+  local f
+  for f in "${SYSFS}"/*/calibration; do
+    [ -f "${f}" ] && { echo "${f}"; return 0; }
+  done
+  return 2
+}
+
+board() { tr '\0' '\n' <"${COMPAT}" 2>/dev/null | head -n1; }
+
+# Per-axis deadzone (odroidgo3-joypad) or radial, rescaled (the others).
+radial() {
+  local drv
+  drv=$(basename "$(readlink -f "$(dirname "$1")/driver")" 2>/dev/null)
+  [ "${drv#odroidgo3_joypad}" = "${drv}" ]
+}
+
+field() { sed -n "s/^$2 .*[[:space:]]$3=\(-\{0,1\}[0-9]*\).*/\1/p" "$1"; }
+
+write() {
+  echo "$2" >"$1" 2>/dev/null || { echo "archr-joypad-cal: refused: $2" >&2; return 1; }
+}
+
+cmd_fit() {
+  local attr=$1 axis=$2 center=$3 min=$4 max=$5 dzp=$6 top dz neg pos
+  [[ "${center}" =~ ^[0-9]+$ && "${min}" =~ ^[0-9]+$ && "${max}" =~ ^[0-9]+$ ]] &&
+    [ "${min}" -lt "${center}" ] && [ "${max}" -gt "${center}" ] ||
+    { echo "archr-joypad-cal: fit needs MIN < CENTER < MAX" >&2; return 1; }
+  [ -z "${dzp}" ] || [[ "${dzp}" =~ ^[0-9]+$ && "${dzp}" -lt 50 ]] ||
+    { echo "archr-joypad-cal: DEADZONE% is 0 to 49" >&2; return 1; }
+  top=$(field "${attr}" "${axis}" max)
+  [ -n "${top}" ] || { echo "archr-joypad-cal: no axis ${axis}" >&2; return 1; }
+  read -r neg pos dz < <(awk -v c="${center}" -v lo="${min}" -v hi="${max}" -v top="${top}" \
+      -v dzp="${dzp}" -v m="${MARGIN}" -v radial="$(radial "${attr}" && echo 1 || echo 0)" '
+    function tune(range,  r) {
+      r = range * m / 100
+      if (radial && dz > 0) return int(100 * (top - dz) / (r - dz) + 0.999)
+      return int(100 * top / r + 0.999)
+    }
+    BEGIN {
+      span = (c - lo < hi - c) ? c - lo : hi - c
+      dz = (dzp == "") ? 0 : int(span * dzp / 100 + 0.5)
+      n = tune(c - lo); p = tune(hi - c)
+      if (n > 1000) n = 1000; if (p > 1000) p = 1000
+      print n, p, (dzp == "" ? -1 : dz)
+    }')
+  if [ "${dz}" -ge 0 ]; then
+    write "${attr}" "${axis} center=${center} neg=${neg} pos=${pos} deadzone=${dz}"
+  else
+    write "${attr}" "${axis} center=${center} neg=${neg} pos=${pos}"
+  fi
+}
+
+cmd_save() {
+  local attr=$1 tmp
+  mkdir -p "$(dirname "${CONF}")"
+  tmp="${CONF}.new"
+  {
+    echo "# archr-joypad-cal v1"
+    echo "board=$(board)"
+    awk '{
+      line = $1
+      for (i = 2; i <= NF; i++) { split($i, kv, "="); v[kv[1]] = kv[2] }
+      if (v["fixed"] == 1) line = line " center=" v["center"]
+      print line " neg=" v["neg"] " pos=" v["pos"] " deadzone=" v["deadzone"]
+    }' "${attr}"
+  } >"${tmp}" && sync "${tmp}" 2>/dev/null && mv -f "${tmp}" "${CONF}"
+}
+
+cmd_apply() {
+  local attr=$1 line saved
+  [ -f "${CONF}" ] || return 0
+  saved=$(sed -n 's/^board=//p' "${CONF}")
+  if [ "${saved}" != "$(board)" ]; then
+    echo "archr-joypad-cal: saved for ${saved}, this is $(board): not applied" >&2
+    return 0
+  fi
+  while read -r line; do
+    case ${line} in ''|'#'*|board=*) continue ;; esac
+    write "${attr}" "${line}" || :
+  done <"${CONF}"
+}
+
+main() {
+  local attr
+  if ! attr=$(find_attr); then
+    [ "$1" = apply ] && return 0
+    echo "archr-joypad-cal: this controller has no calibration" >&2
+    return 2
+  fi
+  case $1 in
+    path)   echo "${attr}" ;;
+    status) cat "${attr}" ;;
+    fit)    shift; cmd_fit "${attr}" "$@" ;;
+    set)    shift; write "${attr}" "$*" ;;
+    save)   cmd_save "${attr}" ;;
+    apply)  cmd_apply "${attr}" ;;
+    reset)  write "${attr}" reset && rm -f "${CONF}" ;;
+    *)      sed -n '9,23s/^# \{0,1\}//p' "$0"; return 1 ;;
+  esac
+}
+
+main "$@"

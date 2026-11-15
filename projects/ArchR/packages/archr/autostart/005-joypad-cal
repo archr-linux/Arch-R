@@ -1,0 +1,7 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 ArchR (https://github.com/archr-linux/Arch-R)
+
+### The analog sticks calibration saved in Settings › System › Test controller
+### (archr-joypad-cal); nothing when none was saved.
+/usr/bin/archr-joypad-cal apply

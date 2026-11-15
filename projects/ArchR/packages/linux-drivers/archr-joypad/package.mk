@@ -2,7 +2,7 @@
 # Copyright (C) 2024 ArchR (https://github.com/archr-linux/Arch-R)
 
 PKG_NAME="archr-joypad"
-PKG_VERSION="4a8392c1a15a9cf2cab43750c3246d53d6410301"
+PKG_VERSION="26fd2d42c7d00fdb4669e89c251d27e72b9e13f8"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/archr-linux/archr-joypad"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
