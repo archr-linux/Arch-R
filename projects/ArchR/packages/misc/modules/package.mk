@@ -3,7 +3,7 @@
 
 PKG_NAME="modules"
 PKG_VERSION=""
-PKG_REV="2"
+PKG_REV="3"
 PKG_LICENSE="custom"
 PKG_SITE=""
 PKG_URL=""
@@ -37,6 +37,7 @@ makeinstall_target() {
   mkdir -p ${INSTALL}/usr/config/modules
   cp -rf ${PKG_DIR}/sources/* ${INSTALL}/usr/config/modules
   chmod 0755 ${INSTALL}/usr/config/modules/*
+  install -Dm755 ${PKG_DIR}/scripts/archr-sync-modules ${INSTALL}/usr/bin/archr-sync-modules
 }
 
 post_makeinstall_target() {

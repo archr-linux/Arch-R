@@ -52,11 +52,15 @@ fi
 
 rsync -a --delete ${EXCLUDE} /usr/config/system/ /storage/.config/system/
 rsync -a --ignore-existing /usr/config/game /storage/.config/
-rsync -a /usr/config/modules /storage/.config/
 
 echo "Sync modules..." >>${LOG}
 tocon "Update tool modules..."
-rsync -a /usr/config/modules/* /storage/.config/modules/
+### Keeps the user's own Tools and their gamelist entries (issue #54).
+if [ -x /usr/bin/archr-sync-modules ]; then
+  /usr/bin/archr-sync-modules
+else
+  rsync -a /usr/config/modules/* /storage/.config/modules/
+fi
 cp -f /usr/config/retroarch/retroarch-core-options.cfg /storage/.config/retroarch/retroarch-core-options.cfg
 
 ### Apply developer ssh keys if they exist

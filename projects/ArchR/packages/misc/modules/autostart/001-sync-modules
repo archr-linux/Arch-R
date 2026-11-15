@@ -5,4 +5,5 @@
 # Minimal OS variable loading for performance
 . /etc/profile.d/001-functions
 
-rsync -a --delete /usr/config/modules/ /storage/.config/modules/
+### Built-in Tools refreshed, the user's own kept (issue #54).
+/usr/bin/archr-sync-modules

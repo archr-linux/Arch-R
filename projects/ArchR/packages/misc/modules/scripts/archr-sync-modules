@@ -1,0 +1,106 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 ArchR (https://github.com/archr-linux/Arch-R)
+#
+# Brings the built-in Tools of /usr/config/modules to /storage/.config/modules
+# without touching what the user added there (issue #54):
+#   - built-in files are copied over;
+#   - a built-in file is removed only when the previous sync installed it and
+#     this release no longer ships it (.archr-builtin keeps that list);
+#   - gamelist.xml is the built-in one plus every user entry whose path is not
+#     a built-in one and whose file is still there (or an absolute path).
+# Usage: archr-sync-modules [SRC DST]   (defaults: the paths above)
+
+import os
+import shutil
+import subprocess
+import sys
+import xml.etree.ElementTree as ET
+
+SRC = sys.argv[1] if len(sys.argv) > 2 else '/usr/config/modules'
+DST = sys.argv[2] if len(sys.argv) > 2 else '/storage/.config/modules'
+MANIFEST = '.archr-builtin'
+GAMELIST = 'gamelist.xml'
+
+
+def files_under(root):
+    out = set()
+    for base, dirs, files in os.walk(root):
+        for name in files + [d for d in dirs if os.path.islink(os.path.join(base, d))]:
+            rel = os.path.relpath(os.path.join(base, name), root)
+            if rel not in (GAMELIST, MANIFEST):
+                out.add(rel)
+    return out
+
+
+def write_atomic(path, data):
+    tmp = path + '.new'
+    with open(tmp, 'wb') as f:
+        f.write(data)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+
+
+def entry_path(game):
+    return (game.findtext('path') or '').strip()
+
+
+def norm(p):
+    return os.path.normpath(p[2:] if p.startswith('./') else p)
+
+
+def merge_gamelist(src_file, dst_file, dropped):
+    try:
+        base = ET.parse(src_file).getroot()
+    except (OSError, ET.ParseError):
+        return None
+    builtin = {norm(entry_path(g)) for g in base.findall('game')}
+    try:
+        user = ET.parse(dst_file).getroot()
+    except (OSError, ET.ParseError):
+        user = None
+    if user is not None:
+        for game in user.findall('game'):
+            p = entry_path(game)
+            if not p or norm(p) in builtin or norm(p) in dropped:
+                continue
+            if not os.path.isabs(p) and not os.path.lexists(os.path.join(DST, norm(p))):
+                continue
+            base.append(game)
+    return b'<?xml version="1.0"?>\n' + ET.tostring(base, encoding='utf-8') + b'\n'
+
+
+def main():
+    if not os.path.isdir(SRC):
+        return 0
+    os.makedirs(DST, exist_ok=True)
+    builtin = files_under(SRC)
+    manifest = os.path.join(DST, MANIFEST)
+    try:
+        with open(manifest, encoding='utf-8') as f:
+            previous = {line.rstrip('\n') for line in f if line.strip()}
+    except OSError:
+        previous = set()
+
+    # Built-ins this release dropped; never a file the user added.
+    dropped = {p for p in previous - builtin if '..' not in p.split(os.sep)}
+    for rel in sorted(dropped):
+        path = os.path.join(DST, rel)
+        if os.path.islink(path) or os.path.isfile(path):
+            os.remove(path)
+        elif os.path.isdir(path):
+            shutil.rmtree(path, ignore_errors=True)
+
+    subprocess.run(['rsync', '-a', '--exclude', '/' + GAMELIST, '--exclude', '/' + MANIFEST,
+                    SRC + '/', DST + '/'], check=False)
+
+    merged = merge_gamelist(os.path.join(SRC, GAMELIST), os.path.join(DST, GAMELIST), dropped)
+    if merged is not None:
+        write_atomic(os.path.join(DST, GAMELIST), merged)
+    write_atomic(manifest, ''.join(p + '\n' for p in sorted(builtin)).encode())
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
