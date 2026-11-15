@@ -7,7 +7,12 @@ Before=network.target
 Wants=network.target
 
 [Service]
-Environment=STATE_DIRECTORY=/var/lib/iwd
+# The card's folder itself, not the /var/lib/iwd link to it: iwd watches its
+# state directory with IN_ONLYDIR|IN_DONT_FOLLOW, which fails on a link, and a
+# profile written while iwd runs (a network joined from Settings, the boot's
+# rejoin of the saved one) then stayed unseen until iwd restarted ("No Agent
+# registered"). /var/lib/iwd still links here for everything else.
+Environment=STATE_DIRECTORY=/storage/.cache/iwd
 Type=dbus
 BusName=net.connman.iwd
 ExecStart=/usr/lib/iwd

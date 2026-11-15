@@ -9,7 +9,8 @@ PKG_URL="https://www.kernel.org/pub/linux/network/wireless/iwd-${PKG_VERSION}.ta
 # 2: DisableRoamingScan in main.conf (issue #51).
 # 3: no crash when a USB dongle drops while iwd sets it up (error reports).
 # 5: recreate the persistent state bridge after /var is mounted as tmpfs.
-PKG_REV="5"
+# 6: iwd reads the card folder itself; it cannot watch a link (new profiles unseen).
+PKG_REV="6"
 
 pre_configure_target() {
   export LIBS="-lncurses -ltinfo"
