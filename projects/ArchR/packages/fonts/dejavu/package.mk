@@ -3,6 +3,7 @@
 
 PKG_NAME="dejavu"
 PKG_VERSION="2.37"
+PKG_REV="2"
 PKG_LICENSE="Bitstream"
 PKG_SITE="https://sourceforge.net/projects/dejavu/files/dejavu/${PKG_VERSION}"
 PKG_URL="${PKG_SITE}/${PKG_NAME}-fonts-ttf-${PKG_VERSION}.tar.bz2"
@@ -12,5 +13,9 @@ PKG_TOOLCHAIN="manual"
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/share/fonts/truetype/dejavu/
-  cp -rf ${PKG_BUILD}/ttf/DejaVuSansCondensed.ttf ${INSTALL}/usr/share/fonts/truetype/dejavu/
+  ### Sans, Bold and Mono too: ports and Python apps made on Debian-based
+  ### systems open them at this path (GameStoreBR drew no text without).
+  for font in DejaVuSansCondensed DejaVuSans DejaVuSans-Bold DejaVuSansMono DejaVuSansMono-Bold; do
+    cp -f ${PKG_BUILD}/ttf/${font}.ttf ${INSTALL}/usr/share/fonts/truetype/dejavu/
+  done
 }
