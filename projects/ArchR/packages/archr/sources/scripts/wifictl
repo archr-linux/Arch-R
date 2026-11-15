@@ -213,7 +213,7 @@ list_wifi() {
 connect_wifi() {
   wait_for_wifi
 
-  iwctl device ${WIFI_DEV} set-property Mode station 2>/dev/null
+  iwctl device ${WIFI_DEV} set-property Mode station >/dev/null 2>&1
   sleep 1
 
   # Validar a passphrase. WPA-PSK exige 8..63 bytes de printable ASCII
@@ -313,7 +313,7 @@ connect_wifi() {
   # tenta conectar mesmo assim (a rede pode ser oculta).
   SSID_SEEN=0
   for i in $(seq 1 6); do
-    iwctl station ${WIFI_DEV} scan 2>/dev/null
+    iwctl station ${WIFI_DEV} scan >/dev/null 2>&1
     sleep 2
     if /usr/bin/iwd_get-networks 2>/dev/null | grep -qF "${SSID}"; then
       SSID_SEEN=1
@@ -354,7 +354,7 @@ connect_wifi() {
          ! connected_to_target; then
         echo "== primeira tentativa falhou, tentando de novo"
         sleep 3
-        iwctl station ${WIFI_DEV} scan 2>/dev/null
+        iwctl station ${WIFI_DEV} scan >/dev/null 2>&1
         sleep 2
         IWCTL_TIMEOUT=30 iwctl --dont-ask station ${WIFI_DEV} connect "${SSID}" 2>&1
       fi
@@ -402,7 +402,11 @@ connect_wifi() {
   # estação já estava em outra rede o teste retornaria sucesso falso.
   # Comparar também o "Connected network" com o SSID solicitado. 30s:
   # dongles lentos levam mais que os 15s antigos para associar + 4-way.
-  for i in $(seq 1 30); do
+  # 50s: um RTL8188 recusa a primeira associação ("Operation failed"), o
+  # iwd põe o AP de lado por 10s ([Blacklist] InitialTimeout) e entra
+  # sozinho na tentativa seguinte, ~45s depois do início (R36S local,
+  # 2026-11-15: desistíamos 4s antes de ele conectar).
+  for i in $(seq 1 50); do
     SHOW=$(iwctl station ${WIFI_DEV} show 2>/dev/null)
     STATE=$(printf '%s\n' "${SHOW}" | awk '/^[[:space:]]*State[[:space:]]/ {print $NF}')
     NET=$(printf '%s\n' "${SHOW}" | sed -n 's/^[[:space:]]*Connected network[[:space:]]*//p')
@@ -576,10 +580,10 @@ case "${1}" in
     has_ap_mode
     ;;
   scan)
-    iwctl station ${WIFI_DEV} scan 2>/dev/null
+    iwctl station ${WIFI_DEV} scan >/dev/null 2>&1
     ;;
   scanlist)
-    iwctl station ${WIFI_DEV} scan 2>/dev/null
+    iwctl station ${WIFI_DEV} scan >/dev/null 2>&1
     sleep 2
     if [ "${2}" = "--detail" ]; then
       wait_for_wifi

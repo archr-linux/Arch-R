@@ -16,7 +16,7 @@ PKG_NAME="archr"
 # versions; the install silently skipped a PKG_INSTALL dir that did not
 # exist and the image assembly then failed in post_install.
 PKG_VERSION="$(date +%Y%m%d)"
-PKG_REV="21"
+PKG_REV="22"
 PKG_LICENSE="GPLv2"
 PKG_SITE=""
 PKG_URL=""
@@ -238,6 +238,13 @@ EOF
   mkdir -p ${INSTALL}/usr/lib/systemd/system.conf.d
   printf '[Manager]\nRuntimeWatchdogSec=30s\nRebootWatchdogSec=2min\n' \
     >${INSTALL}/usr/lib/systemd/system.conf.d/60-archr-watchdog.conf
+  # That report also carries the end of the boot that froze: the journal
+  # is kept on the card (/var/log is /storage/.cache/log), info and up,
+  # 8 MB at most. /usr/lib/systemd/journald.conf.d is archr-debug's link
+  # to /storage, so this one lives in /etc; archr-debug's 50- wins over it.
+  mkdir -p ${INSTALL}/etc/systemd/journald.conf.d
+  printf '[Journal]\nStorage=persistent\nSystemMaxUse=8M\nSystemMaxFileSize=2M\nSystemKeepFree=256M\nMaxLevelStore=info\n' \
+    >${INSTALL}/etc/systemd/journald.conf.d/40-archr-journal.conf
 }
 
 post_install() {

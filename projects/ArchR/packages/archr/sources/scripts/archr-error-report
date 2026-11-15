@@ -610,7 +610,7 @@ shutdown() {
 abrupt() {
   local since=$1
   build() {
-    local f
+    local f boots
     echo "event: kernel"
     echo "what: previous boot ended without a shutdown (a freeze, a reset or a power cut)"
     echo "exit: abrupt"
@@ -622,6 +622,16 @@ abrupt() {
       section "pstore ${f##*/} (the end of that boot)"
       tail -c 60000 "${f}" | tr -d '\0'
     done
+    # The journal is persistent (journald.conf.d/40-archr-journal.conf), so
+    # it keeps the end of that boot, less what had not reached the card
+    # (up to ~30 s). Its first and last entries tell it is that boot: one
+    # that froze before the journal moved to the card is not there.
+    boots=$(run journalctl --list-boots -q --no-pager)
+    if [ "$(printf '%s\n' "${boots}" | grep -c .)" -ge 2 ]; then
+      section "journal of that boot (last 150 lines)"
+      echo "boot: $(printf '%s\n' "${boots}" | tail -n 2 | head -n 1 | sed 's/^[[:space:]]*//')"
+      run journalctl -b -1 -n 150 --no-pager -q -o short-monotonic | tail -n 150
+    fi
   }
   # Each such boot is its own report: the signature carries when it began.
   SIGNATURE=$(printf '%s\n' "${since}" | sign kernel abrupt)

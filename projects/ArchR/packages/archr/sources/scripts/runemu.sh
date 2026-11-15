@@ -299,6 +299,39 @@ function portmaster_ready() {
         ( . /usr/bin/portmaster_prepare ) >/dev/null 2>>${OUTPUT_LOG}
 }
 
+# A port copied from a PC or unpacked by hand often loses the execute bit on
+# its programs, and the script stops at "Permission denied". Before a port:
+# its folder (the one whose port.json lists the script, else the script's
+# GAMEDIR) gets +x on programs that lack it: ELF files and #! scripts, among
+# files with no extension or a program-like one. Nothing else is touched.
+function port_dir() {
+        local script=$1 base=${1##*/} json dir
+        for json in "${script%/*}"/*/port.json; do
+                [ -f "${json}" ] || continue
+                jq -e --arg s "${base}" '.items // [] | index($s)' "${json}" >/dev/null 2>&1 && {
+                        echo "${json%/port.json}"
+                        return
+                }
+        done
+        dir=$(sed -n 's#^[[:space:]]*GAMEDIR=.*/\([^/"$ ]*\)"\{0,1\}[[:space:]]*$#\1#p' "${script}" 2>/dev/null | head -n 1)
+        [ -n "${dir}" ] && [ -d "${script%/*}/${dir}" ] && echo "${script%/*}/${dir}"
+}
+function port_exec_bits() {
+        local dir file magic
+        dir=$(port_dir "$1")
+        [ -n "${dir}" ] || return 0
+        find "${dir}" -maxdepth 4 -type f ! -perm -u+x \( ! -name '*.*' -o -name '*.sh' \
+                -o -name '*.aarch64' -o -name '*.arm64' -o -name '*.armhf' -o -name '*.bin' \
+                -o -name '*.elf' -o -name '*.x86' -o -name '*.x86_64' \) -size +0 -print0 2>/dev/null |
+        while IFS= read -r -d '' file; do
+                magic=$(head -c 4 "${file}" 2>/dev/null | od -An -c | tr -d ' ')
+                case "${magic}" in
+                        177ELF|'#!'*) chmod u+x,go+x "${file}" 2>/dev/null &&
+                                ${VERBOSE} && log $0 "Execute bit set on ${file}" ;;
+                esac
+        done
+}
+
 # PortMaster's bind_directories/bind_files mount a port's save folder (in the
 # ports folder) over a path such as ~/.config or /tmp and never take it back. A port deleted
 # afterwards leaves that path on a dead folder, and the next port that uses it
@@ -635,6 +668,7 @@ case ${EMULATOR} in
           RUNTHIS='${EMUPERF} ${RUN_SHELL} "${ROMNAME}"'
         fi
         chmod +x "${ROMNAME}"
+        port_exec_bits "${ROMNAME}"
         sed -i "/^ACTIVE_GAME=/c\ACTIVE_GAME=\"${ROMNAME}\"" /storage/.config/PortMaster/mapper.txt
         sed -i "/^ACTIVE_PLATFORM=/c\ACTIVE_PLATFORM=\"${PLATFORM}\"" /storage/.config/PortMaster/mapper.txt
       ;;

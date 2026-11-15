@@ -158,10 +158,14 @@ printf 'Kernel panic - not syncing: sysrq triggered crash\n' >"${R}/sys/fs/pstor
 report boot
 check "a new panic is the kernel report, not a second one" "$(count "${Q}")" "6"
 printf '[ 120.5] mmc0: card stopped responding\n' >"${R}/sys/fs/pstore/console-ramoops-0"
+printf ' -1 abc Sun 2026-11-15 11:48:13 -03 Sun 2026-11-15 11:49:40 -03\n  0 def Sun 2026-11-15 11:49:47 -03 Sun 2026-11-15 11:50:00 -03\n' >"${TMP}/journal"
 report boot
 check "an old panic left in pstore: not sent again, and the freeze is" "$(count "${Q}")" "7"
 check "as such" "$(grep -h '^exit: ' "$(grep -l '^exit: abrupt' "${Q}"/*.txt)")" "exit: abrupt"
 check "with the end of its console log" "$(grep -ch 'card stopped responding' "$(grep -l '^exit: abrupt' "${Q}"/*.txt)")" "1"
+check "and the end of its journal" "$(grep -c '^--- journal of that boot' "$(grep -l '^exit: abrupt' "${Q}"/*.txt)")" "1"
+check "naming that boot" "$(grep -c '^boot: -1 abc Sun 2026-11-15 11:48:13' "$(grep -l '^exit: abrupt' "${Q}"/*.txt)")" "1"
+rm -f "${TMP}/journal"
 rm -f "${R}/sys/fs/pstore/console-ramoops-0" "${R}/sys/fs/pstore/dmesg-ramoops-0"
 
 # --- the daily limit: 10 created a day ---
