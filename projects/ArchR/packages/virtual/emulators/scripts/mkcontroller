@@ -71,7 +71,10 @@ else
   righttriggerminus=""
 fi
 
-cat <<EOF >/storage/.config/profile.d/098-controller
+### Written aside and renamed: a reset in the middle of the write left
+### NUL bytes, and /etc/profile then stopped every boot on the file.
+CONTROLLER_CFG=/storage/.config/profile.d/098-controller
+cat <<EOF >"${CONTROLLER_CFG}.new"
 DEVICE_BTN_SOUTH="${b}"
 DEVICE_BTN_EAST="${a}"
 DEVICE_BTN_NORTH="${x}"
@@ -100,6 +103,8 @@ DEVICE_BTN_AR_UP="${rightanalogup}"
 DEVICE_BTN_AR_LEFT="${rightanalogleft}"
 DEVICE_BTN_AR_RIGHT="${rightanalogright}"
 EOF
+sync "${CONTROLLER_CFG}.new" 2>/dev/null
+mv -f "${CONTROLLER_CFG}.new" "${CONTROLLER_CFG}"
 
 rm /tmp/${OUTFILE}
 

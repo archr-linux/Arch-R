@@ -5,7 +5,7 @@
 
 PKG_NAME="busybox"
 PKG_VERSION="1.36.1"
-PKG_REV="2"
+PKG_REV="3"
 # Needs the coreutils that owns /usr/bin/paste and restores it after this
 # busybox drops it (see coreutils' 80-archr-paste.hook).
 PKG_PACMAN_DEPENDS="coreutils>=9.6-2"

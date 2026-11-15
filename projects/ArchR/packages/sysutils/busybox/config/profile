@@ -17,7 +17,15 @@ fi
 
 # Read user config files
 for CONFIG in /storage/.config/profile.d/*; do
+  case ${CONFIG} in *.new|*.broken) continue ;; esac
   if [ -f "${CONFIG}" ] ; then
+    # A file a reset left half written (NUL bytes) is "binary" to the
+    # shell and would stop every login shell, the boot's autostart
+    # included: set it aside (its writer makes it again).
+    if [ "$(tr -d '\000' <"${CONFIG}" | wc -c)" != "$(wc -c <"${CONFIG}")" ]; then
+      mv -f "${CONFIG}" "${CONFIG}.broken" 2>/dev/null
+      continue
+    fi
     . ${CONFIG}
   fi
 done
