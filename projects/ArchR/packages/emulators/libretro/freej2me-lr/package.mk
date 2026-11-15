@@ -4,6 +4,8 @@
 
 PKG_NAME="freej2me-lr"
 PKG_VERSION="1.52"
+# 2: freej2me.sh installs the JDK through the /opt/jdk link (it never landed)
+PKG_REV="2"
 PKG_SITE="https://github.com/TASEmulators/freej2me-plus"
 PKG_URL="${PKG_SITE}/archive/refs/tags/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain apache-ant:host libXtst"

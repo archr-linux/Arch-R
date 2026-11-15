@@ -24,10 +24,14 @@ if [ -L /opt/jdk ]; then
   fi
 fi
 
-mkdir -p ${JDKDEST}
+# The link's target (/storage/jdk) is made here: a mkdir -p of the link
+# itself fails while the target is missing, the JDK then never landed and
+# every launch downloaded it again.
+JDKREAL=$(readlink -f "${JDKDEST}")
+mkdir -p "${JDKREAL}" || exit 1
 
 # Check if the jdk does not already exists
-[ "$(ls -A ${JDKDEST})" ] && JDKINSTALLED="yes" || JDKINSTALLED="no"
+[ -x "${JDKREAL}/bin/java" ] && JDKINSTALLED="yes" || JDKINSTALLED="no"
 
 if [ ${JDKINSTALLED} == "no" ]; then
   echo -e "GET http://google.com HTTP/1.0\n\n" | nc google.com 80 > /dev/null 2>&1
@@ -36,18 +40,18 @@ if [ ${JDKINSTALLED} == "no" ]; then
       exit 1
   fi
   echo "Downloading JDK please be patient..." > /dev/console
-  cd ${JDKDEST}/..
+  cd "${JDKREAL}/.." || exit 1
   wget "https://cdn.azul.com/zulu-embedded/bin/${JDKNAME}-linux_aarch64.tar.gz" > /dev/console 2>&1
   echo "Inflating JDK please be patient..." > /dev/console
   tar xvfz ${JDKNAME}-linux_aarch64.tar.gz ${JDKNAME}-linux_aarch64/lib > /dev/console 2>&1
   tar xvfz ${JDKNAME}-linux_aarch64.tar.gz ${JDKNAME}-linux_aarch64/bin > /dev/console 2>&1
   tar xvfz ${JDKNAME}-linux_aarch64.tar.gz ${JDKNAME}-linux_aarch64/conf > /dev/console 2>&1
   rm ${JDKNAME}-linux_aarch64/lib/*.zip
-  mv ${JDKNAME}-linux_aarch64/* jdk
+  mv ${JDKNAME}-linux_aarch64/* "${JDKREAL}/"
   rm -rf ${JDKNAME}-linux_aarch64*
 
   for del in jmods include demo legal man DISCLAIMER LICENSE readme.txt release Welcome.html; do
-      rm -rf ${JDKDEST}/${del}
+      rm -rf "${JDKREAL:?}/${del}"
   done
   echo "JDK done! loading core!" > /dev/console
   cp -rf /usr/config/game/freej2me/freej2me-lr.jar /storage/roms/bios
