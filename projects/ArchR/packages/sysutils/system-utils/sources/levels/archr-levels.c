@@ -213,6 +213,12 @@ static pa_threaded_mainloop *ml;
 static pa_context *ctx;
 static pa_volume_t target;
 static int queued, busy; /* a level waits for the connection; requests in flight */
+/* A sink that appeared (or a new connection): set it even when it already
+ * reads the level. WirePlumber can recreate the card's node at boot and keep
+ * the route's volume (what the pulse side reads) without handing it to the
+ * new node, which then plays at full volume while it reads the level; one
+ * step away and back makes PipeWire apply it (R36S, 2026-11-15). */
+static int nudge;
 /* The connection failed or was refused: the main loop connects again after
  * retry_ms (100 ms, doubling to 2 s while it keeps failing). wake_fd stops
  * its poll so it notices. All of these are under the mainloop lock. */
@@ -245,9 +251,15 @@ static void sink_found(pa_context *c, const pa_sink_info *i, int eol, void *u)
 		unsigned ch, same = i->volume.channels > 0;
 		for (ch = 0; ch < i->volume.channels; ch++)
 			same &= i->volume.values[ch] == target;
-		if (same)
+		pa_volume_t to = target;
+		if (same && !nudge)
 			return; /* already there: a change event of our own */
-		dl_pa_cvolume_set(&cv, i->volume.channels ? i->volume.channels : 1, target);
+		if (same) {
+			/* The step away; the change event it raises sets the level. */
+			to = target > PA_VOLUME_MUTED ? target - 1 : target + 1;
+			nudge = 0;
+		}
+		dl_pa_cvolume_set(&cv, i->volume.channels ? i->volume.channels : 1, to);
 		pa_operation *op = dl_pa_context_set_sink_volume_by_index(c, i->index, &cv, sink_set, NULL);
 		if (op) {
 			busy++;
@@ -285,6 +297,8 @@ static void sink_event(pa_context *c, pa_subscription_event_type_t t, uint32_t i
 	if ((facility == PA_SUBSCRIPTION_EVENT_SINK &&
 	     (type == PA_SUBSCRIPTION_EVENT_NEW || type == PA_SUBSCRIPTION_EVENT_CHANGE)) ||
 	    (facility == PA_SUBSCRIPTION_EVENT_SERVER && type == PA_SUBSCRIPTION_EVENT_CHANGE)) {
+		if (type == PA_SUBSCRIPTION_EVENT_NEW || facility == PA_SUBSCRIPTION_EVENT_SERVER)
+			nudge = 1;
 		queued = 1;
 		if (!busy)
 			push_volume();
@@ -319,6 +333,7 @@ static void state_changed(pa_context *c, void *u)
 			dl_pa_operation_unref(op);
 		/* A new connection may face a restarted server: the level again. */
 		queued = 1;
+		nudge = 1;
 		push_volume();
 	} else if (!PA_CONTEXT_IS_GOOD(s))
 		connection_lost();
