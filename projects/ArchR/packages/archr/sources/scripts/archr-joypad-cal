@@ -45,6 +45,13 @@ radial() {
   [ "${drv#odroidgo3_joypad}" = "${drv}" ]
 }
 
+# The board's own scale for one side of an axis (abs_<axis>-n|p-tuning in
+# its device tree, a big-endian u32): a fit never goes below it, so a stick
+# that reaches the edge keeps the speed it had from the factory.
+factory() {
+  local f="$(dirname "$1")/of_node/abs_$2-$3-tuning"
+  [ -r "${f}" ] && od -An -tu4 --endian=big -N4 "${f}" 2>/dev/null | tr -d ' '
+}
 field() { sed -n "s/^$2 .*[[:space:]]$3=\(-\{0,1\}[0-9]*\).*/\1/p" "$1"; }
 
 write() {
@@ -74,6 +81,10 @@ cmd_fit() {
       if (n > 1000) n = 1000; if (p > 1000) p = 1000
       print n, p, (dzp == "" ? -1 : dz)
     }')
+  local fn fp
+  fn=$(factory "${attr}" "${axis}" n); fp=$(factory "${attr}" "${axis}" p)
+  [[ "${fn}" =~ ^[0-9]+$ ]] && [ "${neg}" -lt "${fn}" ] && neg=${fn}
+  [[ "${fp}" =~ ^[0-9]+$ ]] && [ "${pos}" -lt "${fp}" ] && pos=${fp}
   if [ "${dz}" -ge 0 ]; then
     write "${attr}" "${axis} center=${center} neg=${neg} pos=${pos} deadzone=${dz}"
   else

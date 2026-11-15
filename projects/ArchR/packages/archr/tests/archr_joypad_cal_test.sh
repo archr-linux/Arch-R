@@ -37,6 +37,15 @@ check "fit with a deadzone" '[ "$(cat "${A}")" = "x center=1810 neg=204 pos=209 
 check "fit refuses MIN >= CENTER" '! bash "${CAL}" fit x 1810 1900 2700 2>/dev/null'
 check "fit refuses a 50% deadzone" '! bash "${CAL}" fit x 1810 900 2700 50 2>/dev/null'
 
+# The factory scale (device tree) is the floor: 280 > the fitted 204/209.
+make_dev odroidgo3-joypad odroidgo3_joypad
+A="${T}/real/odroidgo3-joypad/calibration"
+mkdir -p "${T}/real/odroidgo3-joypad/of_node"
+printf '\x00\x00\x01\x18' >"${T}/real/odroidgo3-joypad/of_node/abs_x-n-tuning"
+printf '\x00\x00\x00\x64' >"${T}/real/odroidgo3-joypad/of_node/abs_x-p-tuning"
+bash "${CAL}" fit x 1810 900 2700
+check "fit keeps the factory scale as the floor" '[ "$(cat "${A}")" = "x center=1810 neg=280 pos=209" ]'
+
 make_dev joypad archr-singleadc-joypad
 A="${T}/real/joypad/calibration"
 # Radial driver rescales after the deadzone: 100 * (1800 - dz) / (travel * 97% - dz).
