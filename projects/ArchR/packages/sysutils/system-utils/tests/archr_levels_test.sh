@@ -190,6 +190,28 @@ check "failed write: file" "$(grep '^display.brightness=' "${TMP}/system.cfg")" 
 ${L} brightness 90 >/dev/null
 sleep 2
 
+# The mute: the user's (audio.mute), saved like a level once settled, and
+# ended by a volume step.
+rm -f "${TMP}/saves"
+check "mute off at start" "$(${L} mute)" 0
+check "mute on" "$(${L} mute 1)" 1
+check "mute reads back" "$(${L} mute)" 1
+${L} mute 2 2>/dev/null && { echo "FAIL: mute 2 accepted"; FAILED=1; }
+sleep 2
+check "mute saved" "$(saves)" "audio.mute=1"
+rm -f "${TMP}/saves"
+${L} brightness 70 >/dev/null
+check "brightness keeps the mute" "$(${L} mute)" 1
+${L} volume +2 >/dev/null
+check "a volume step ends the mute" "$(${L} mute)" 0
+sleep 2
+check "unmute saved with the level" "$(saves | grep -c '^audio.mute=0$')" 1
+stop
+start
+check "mute read from system.cfg" "$(${L} mute)" 0
+${L} brightness 90 >/dev/null
+sleep 2
+
 # A hold: one tap, then 25 %/s, faster after 950 ms; release stops it.
 rm -f "${TMP}/saves"
 : >"${TMP}/osd"

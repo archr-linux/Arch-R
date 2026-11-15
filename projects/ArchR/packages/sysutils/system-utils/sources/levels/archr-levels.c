@@ -11,6 +11,7 @@
 //                                         faster until "release"
 //   archr-levels renew                    the button is still down
 //   archr-levels release
+//   archr-levels mute [0|1]               print or set the mute (audio.mute)
 //
 // A hold lasts RENEW_MS after it starts or after the last "renew": the
 // caller renews it while the button is down, so a lost release (the caller
@@ -28,6 +29,10 @@
 // server not up yet, or restarted) is retried on its own with a short
 // backoff, the level applied again once it is back. It talks to the
 // session's server only (PULSE_SERVER, else XDG_RUNTIME_DIR/pulse/native).
+// The mute is the user's too (Settings, audio.mute): it goes out with the
+// level whenever a sink appears or the server comes back, so a mute that
+// something else left in WirePlumber's saved state (a fake suspend cut short
+// by a reset) does not survive the boot. A volume step ends the mute.
 // Commands only talk to the daemon (systemd restarts it): without it they
 // fail with a clear message instead of racing it for system.cfg.
 //
@@ -191,7 +196,8 @@ static struct level *find(const char *kind)
 	X(pa_context_set_state_callback) X(pa_context_connect) X(pa_context_get_state) X(pa_context_unref) \
 	X(pa_context_get_sink_info_by_name) X(pa_context_set_sink_volume_by_index)                       \
 	X(pa_operation_unref) X(pa_sw_volume_from_dB) X(pa_cvolume_set)                                 \
-	X(pa_context_set_subscribe_callback) X(pa_context_subscribe)
+	X(pa_context_set_subscribe_callback) X(pa_context_subscribe)                                   \
+	X(pa_context_set_sink_mute_by_name)
 #define DECLARE(f) static __typeof__(f) *dl_##f;
 PULSE(DECLARE)
 
@@ -219,6 +225,19 @@ static int queued, busy; /* a level waits for the connection; requests in flight
  * new node, which then plays at full volume while it reads the level; one
  * step away and back makes PipeWire apply it (R36S, 2026-11-15). */
 static int nudge;
+/* The user's mute: -1 until system.cfg is read; the value being written. */
+static int muted = -1, mute_saved, mute_writing = -1;
+
+/* The mute on the default sink. Runs where the context may be used: the
+ * mainloop's callbacks, or under its lock. */
+static void push_mute(void)
+{
+	if (muted < 0)
+		return;
+	pa_operation *op = dl_pa_context_set_sink_mute_by_name(ctx, "@DEFAULT_SINK@", muted, NULL, NULL);
+	if (op)
+		dl_pa_operation_unref(op);
+}
 /* The connection failed or was refused: the main loop connects again after
  * retry_ms (100 ms, doubling to 2 s while it keeps failing). wake_fd stops
  * its poll so it notices. All of these are under the mainloop lock. */
@@ -297,8 +316,10 @@ static void sink_event(pa_context *c, pa_subscription_event_type_t t, uint32_t i
 	if ((facility == PA_SUBSCRIPTION_EVENT_SINK &&
 	     (type == PA_SUBSCRIPTION_EVENT_NEW || type == PA_SUBSCRIPTION_EVENT_CHANGE)) ||
 	    (facility == PA_SUBSCRIPTION_EVENT_SERVER && type == PA_SUBSCRIPTION_EVENT_CHANGE)) {
-		if (type == PA_SUBSCRIPTION_EVENT_NEW || facility == PA_SUBSCRIPTION_EVENT_SERVER)
+		if (type == PA_SUBSCRIPTION_EVENT_NEW || facility == PA_SUBSCRIPTION_EVENT_SERVER) {
 			nudge = 1;
+			push_mute();
+		}
 		queued = 1;
 		if (!busy)
 			push_volume();
@@ -334,6 +355,7 @@ static void state_changed(pa_context *c, void *u)
 		/* A new connection may face a restarted server: the level again. */
 		queued = 1;
 		nudge = 1;
+		push_mute();
 		push_volume();
 	} else if (!PA_CONTEXT_IS_GOOD(s))
 		connection_lost();
@@ -392,17 +414,39 @@ static long pulse_retry(long now)
 	return wake;
 }
 
-static void set_volume(int level)
+/* The mainloop, started on first use: 0 when PulseAudio cannot be used. */
+static int pulse_up(void)
 {
 	if (!ml) {
 		if (!load_pulse())
-			return;
+			return 0;
 		ml = dl_pa_threaded_mainloop_new();
 		if (!ml || dl_pa_threaded_mainloop_start(ml) < 0) {
 			ml = NULL;
-			return;
+			return 0;
 		}
 	}
+	return 1;
+}
+
+static void set_mute(int on)
+{
+	muted = on;
+	if (!pulse_up())
+		return;
+	dl_pa_threaded_mainloop_lock(ml);
+	pa_context_state_t s = ctx ? dl_pa_context_get_state(ctx) : PA_CONTEXT_FAILED;
+	if (s == PA_CONTEXT_READY)
+		push_mute();
+	else if (!ctx)
+		connect_pulse(); /* the mute goes out once ready */
+	dl_pa_threaded_mainloop_unlock(ml);
+}
+
+static void set_volume(int level)
+{
+	if (!pulse_up())
+		return;
 	dl_pa_threaded_mainloop_lock(ml);
 	target = level ? dl_pa_sw_volume_from_dB(-VOLUME_RANGE_DB * (100 - level) / 100.0) : PA_VOLUME_MUTED;
 	queued = 1;
@@ -503,9 +547,9 @@ static const char WRITER[] =
 
 static pid_t store(char **pairs, int count)
 {
-	char *argv[4 + 2 * (2 + SCREENS) + 1] = { "/bin/bash", "-c", (char *)WRITER, "archr-levels" };
+	char *argv[4 + 2 * (3 + SCREENS) + 1] = { "/bin/bash", "-c", (char *)WRITER, "archr-levels" };
 	int n = 4;
-	for (int i = 0; i < count && i < 2 * (2 + SCREENS); i++)
+	for (int i = 0; i < count && i < 2 * (3 + SCREENS); i++)
 		argv[n++] = pairs[i];
 	argv[n] = NULL;
 	pid_t pid;
@@ -519,10 +563,18 @@ static pid_t store(char **pairs, int count)
  * the next settle. */
 static void flush(void)
 {
-	char *pairs[2 * (2 + SCREENS)], values[1 + SCREENS][8];
+	char *pairs[2 * (3 + SCREENS)], values[1 + SCREENS][8], mute_value[2];
 	int n = 0;
 	if (writer)
 		return;
+	mute_writing = -1;
+	if (muted >= 0 && muted != mute_saved) {
+		mute_writing = muted;
+		mute_value[0] = muted ? '1' : '0';
+		mute_value[1] = 0;
+		pairs[n++] = "audio.mute";
+		pairs[n++] = mute_value;
+	}
 	for (int i = 0; i <= SCREENS; i++) {
 		struct level *l = &levels[i];
 		l->writing = -1;
@@ -550,6 +602,9 @@ static int written(int status)
 			levels[i].saved = levels[i].writing;
 		levels[i].writing = -1;
 	}
+	if (ok && mute_writing >= 0)
+		mute_saved = mute_writing;
+	mute_writing = -1;
 	if (ok)
 		unmarked = 0;
 	writer = 0;
@@ -627,6 +682,14 @@ static int command(char *text, struct level **snapshot, int *sequenced)
 	}
 	*sequenced = n > 1 && !strcmp(word[n - 1], "seq");
 	n -= *sequenced;
+	if (n && !strcmp(word[0], "mute")) {
+		if (n == 1)
+			return muted > 0;
+		if (n != 2 || (strcmp(word[1], "0") && strcmp(word[1], "1")))
+			return -1;
+		set_mute(word[1][0] == '1');
+		return muted;
+	}
 	struct level *l = n ? find(word[0]) : NULL;
 	if (!l)
 		return -1;
@@ -646,6 +709,8 @@ static int command(char *text, struct level **snapshot, int *sequenced)
 		int dir = !strcmp(word[2], "up") ? 1 : !strcmp(word[2], "down") ? -1 : 0;
 		if (!dir)
 			return -1;
+		if (!l->screen && muted > 0)
+			set_mute(0);
 		apply(l, l->value + dir * TAP, show);
 		long now = now_ms();
 		hold.level = l, hold.dir = dir, hold.show = show;
@@ -665,6 +730,8 @@ static int command(char *text, struct level **snapshot, int *sequenced)
 		v += l->value;
 	if (hold.level == l)
 		hold.level = NULL;
+	if (!l->screen && muted > 0)
+		set_mute(0);
 	apply(l, v, show);
 	return l->value;
 }
@@ -742,6 +809,9 @@ static int serve(void)
 		unlink(a.sun_path);
 		return 1;
 	}
+	long saved_mute = 0;
+	cfg_get("audio.mute", &saved_mute);
+	muted = mute_saved = saved_mute != 0;
 	migrate();
 	ready_for_systemd();
 	struct sigaction sa = { .sa_handler = stop };
@@ -853,7 +923,7 @@ int main(int argc, char **argv)
 		return 1;
 	}
 	if (!strcmp(reply, "error")) {
-		fprintf(stderr, "usage: archr-levels [volume|brightness[N] [N|+N|-N|restore|hold up|down] [osd] [seq] | renew | release]\n");
+		fprintf(stderr, "usage: archr-levels [volume|brightness[N] [N|+N|-N|restore|hold up|down] [osd] [seq] | mute [0|1] | renew | release]\n");
 		return 1;
 	}
 	if (strcmp(argv[1], "release") && strcmp(argv[1], "renew"))

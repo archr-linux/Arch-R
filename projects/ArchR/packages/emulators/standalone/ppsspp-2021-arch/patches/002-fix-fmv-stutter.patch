@@ -1,0 +1,13 @@
+diff --git a/Core/HW/MediaEngine.cpp b/Core/HW/MediaEngine.cpp
+index e845f5cad..22bb88fd7 100644
+--- a/Core/HW/MediaEngine.cpp
++++ b/Core/HW/MediaEngine.cpp
+@@ -316,7 +316,7 @@ bool MediaEngine::openContext(bool keepReadPos) {
+ 	}
+ 	av_dict_free(&open_opt);
+ 
+-	if (!SetupStreams()) {
++	if (true) {
+ 		// Fallback to old behavior.  Reads too much and corrupts when game doesn't read fast enough.
+ 		// SetupStreams sometimes work for newer FFmpeg 3.1+ now, but sometimes framerate is missing.
+ 		WARN_LOG_REPORT_ONCE(setupStreams, ME, "Failed to read valid video stream data from header");
