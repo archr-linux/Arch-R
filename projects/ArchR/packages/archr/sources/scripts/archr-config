@@ -4,7 +4,7 @@
 . /etc/os-release
 
 if [ ! "$1" ];then
-	echo -e "usage : archr-config [command] [args]\nWith command in\n\toverscan [enable|disable]\n\tlsaudio\n\tgetaudio\n\taudio [hdmi|jack|auto|custom|x,y]\n\tcanupdate\n\tupdate\n\twifi [enable|disable] ssid key\n\tstorage [current|list|INTERNAL|ANYEXTERNAL|RAM|DEV UUID]\n\tsetRootPassword [password]\n\tgetRootPassword\n\ttz [|tz]"
+	echo -e "usage : archr-config [command] [args]\nWith command in\n\toverscan [enable|disable]\n\tlsaudio\n\tgetaudio\n\taudio [hdmi|jack|auto|custom|x,y]\n\tcanupdate\n\tupdate\n\twifi [enable|disable] ssid key\n\tstorage [current|list|INTERNAL|ANYEXTERNAL|RAM|DEV UUID]\n\tsetRootPassword [password]\n\tgetRootPassword\n\ttz [|tz]\n\ttime [YYYY-MM-DD HH:MM]"
 	exit 1
 fi
 configFile="/storage/.config/system/configs/config.txt"
@@ -327,6 +327,27 @@ if [ "$command" == "tz" ];then
 	exit 1
     fi
     exit $?
+fi
+
+# The clock by hand, local time: for a console without network whose RTC
+# lost the date (a first boot in the past cannot load the ArchR package key,
+# created later). The RTC keeps it across power off; NTP corrects it again
+# once there is network.
+if [ "$command" == "time" ];then
+    if test "$mode" == ""
+    then
+	date '+%Y-%m-%d %H:%M'
+	exit 0
+    fi
+    if ! [[ "${mode}" =~ ^20[2-9][0-9]-[01][0-9]-[0-3][0-9]\ [0-2][0-9]:[0-5][0-9]$ ]] ||
+	! date -d "${mode}" >/dev/null 2>&1
+    then
+	echo "archr-config: invalid time ${mode}, expected YYYY-MM-DD HH:MM" >&2
+	exit 1
+    fi
+    date -s "${mode}:00" >/dev/null || exit 1
+    hwclock -w -u 2>/dev/null || echo "archr-config: the RTC kept its old time" >&2
+    exit 0
 fi
 
 exit 10

@@ -28,19 +28,31 @@ mkdir -p "${PACMAN_ROOT}/logs"
 
 echo "ArchR: Pacman directory structure created."
 
-# Initialize and populate the GPG keyring with the ArchR master key
-# (offline; archr-keyring ships the keyring file).
-if [ ! -s /etc/pacman.d/gnupg/trustdb.gpg ]; then
-  echo "ArchR: Initializing pacman keyring..."
-  pacman-key --init 2>/dev/null || true
-
+# Initialize the keyring and load the ArchR master key (offline; the
+# archr-keyring package ships the file). Checked by the key itself, not by
+# the keyring's files: a first boot with the clock in the past (RTC lost, no
+# network yet) cannot load a key created "later", and the keyring is then
+# there without it. Without the key this boot is not marked done, so the next
+# one (with the clock set by NTP or by hand) tries again; archr-update loads
+# it too before every sync.
+ARCHR_KEY="0CB282379EBB394EF380AEB98A762D5706C602A1"
+KEY_OK=1
+if ! pacman-key --list-keys "${ARCHR_KEY}" >/dev/null 2>&1; then
+  if [ ! -s /etc/pacman.d/gnupg/trustdb.gpg ]; then
+    echo "ArchR: Initializing pacman keyring..."
+    pacman-key --init 2>/dev/null || true
+  fi
   if [ -f /usr/share/pacman/keyrings/archr.gpg ]; then
-    echo "ArchR: Populating keyring with ArchR master key..."
+    echo "ArchR: Populating keyring with the ArchR master key..."
     pacman-key --populate archr 2>/dev/null || true
-    echo "ArchR: Keyring populated."
   else
     echo "ArchR: WARNING: archr keyring not found at /usr/share/pacman/keyrings/archr.gpg"
-    echo "ArchR: Package signature verification will fail until archr-keyring is reinstalled."
+  fi
+  if pacman-key --list-keys "${ARCHR_KEY}" >/dev/null 2>&1; then
+    echo "ArchR: Keyring populated."
+  else
+    KEY_OK=0
+    echo "ArchR: WARNING: ArchR key not loaded (clock $(date +%F)); trying again next boot."
   fi
 fi
 
@@ -54,5 +66,5 @@ else
   echo "ArchR: Run 'archr-update check' when online."
 fi
 
-touch "${PACMAN_ROOT}/.initialized"
+[ "${KEY_OK}" = 1 ] && touch "${PACMAN_ROOT}/.initialized"
 echo "ArchR: Pacman initialization complete."

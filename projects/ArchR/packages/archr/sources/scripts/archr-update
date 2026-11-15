@@ -369,10 +369,33 @@ logged() {
     return ${rc}
 }
 
+# The ArchR package key (master 0CB28237..., signing subkey ...2FDF8F1252)
+# in pacman's keyring. pacman-init loads it at the first boot, but a first
+# boot with the clock in the past (RTC lost, no network yet) cannot: gpg
+# refuses a key created "in the future", and those consoles failed every
+# sync with "invalid or corrupted database (PGP signature)". Loaded here
+# whenever it is missing; a clock still before the key is said as such.
+ARCHR_KEY="0CB282379EBB394EF380AEB98A762D5706C602A1"
+ARCHR_KEY_SINCE=1782172800 # 2026-06-23, the key's creation
+ensure_key() {
+    LC_ALL=C pacman-key --list-keys "${ARCHR_KEY}" >/dev/null 2>&1 && return 0
+    [ -s /etc/pacman.d/gnupg/trustdb.gpg ] || pacman-key --init >>"${UPDATE_LOG}" 2>&1
+    pacman-key --populate archr >>"${UPDATE_LOG}" 2>&1
+    if LC_ALL=C pacman-key --list-keys "${ARCHR_KEY}" >/dev/null 2>&1; then
+        logf "keyring: Arch R key loaded"
+        return 0
+    fi
+    if [ "$(date +%s)" -lt "${ARCHR_KEY_SINCE}" ]; then
+        fail clock "The date is wrong ($(date +%F)). Set the date and time in Settings > Region and language, then try again."
+    fi
+    fail keyring "The Arch R package key could not be loaded."
+}
+
 sync_repo() {
     write_mirrorlist
     seed_local_db >>"${UPDATE_LOG}" 2>&1 ||
         fail seed "No package database for this image; reflash to update."
+    ensure_key
     logged "${WORK}/sync" pacman -Sy --noconfirm --color never ||
         fail sync "Failed to sync repo metadata." "$(last_error "${WORK}/sync")"
 }
@@ -858,6 +881,7 @@ cmd_update_offline() {
     seed_local_db >>"${UPDATE_LOG}" 2>&1 ||
         fail seed "No package database for this image; reflash to update."
     emit '"phase":"sync"'
+    ensure_key
     # -yy: the bundle's db replaces the synced one whatever their dates.
     logged "${WORK}/sync" pacman -Syy --noconfirm --color never "${PACMAN_ARGS[@]}" ||
         fail offline-invalid "The update file was refused: its package database is damaged or not signed by Arch R." \
@@ -899,6 +923,7 @@ cmd_check() {
     take_lock
     write_mirrorlist
     seed_local_db || return 1
+    ensure_key
     pacman -Sy --noconfirm >/dev/null 2>&1 || {
         echo "Failed to sync repo metadata. Check network."
         return 1
@@ -916,6 +941,7 @@ cmd_update() {
     take_lock
     write_mirrorlist
     seed_local_db || return 1
+    ensure_key
     pacman -Syu --noconfirm && drop_cache
 }
 

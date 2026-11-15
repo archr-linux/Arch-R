@@ -4,6 +4,8 @@
 PKG_NAME="pacman"
 PKG_VERSION="7.0.0"
 PKG_SHA256="ef08f258cb3e0885c5884ad43fb6cff0e9c327ed33024d79d03555f99c583744"
+# 2: pacman-init loads the ArchR key by the key itself and retries next boot without it.
+PKG_REV="2"
 PKG_LICENSE="GPL"
 PKG_SITE="https://archlinux.org/pacman/"
 PKG_URL="https://gitlab.archlinux.org/pacman/pacman/-/archive/v${PKG_VERSION}/pacman-v${PKG_VERSION}.tar.gz"
