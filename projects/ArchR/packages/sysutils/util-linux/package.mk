@@ -92,6 +92,9 @@ fi
 post_configure_target() {
   sed -i 's/^SUBDIRS = po /SUBDIRS = /' Makefile
 }
+post_configure_host() {
+  sed -i 's/^SUBDIRS = po /SUBDIRS = /' Makefile
+}
 
 post_configure_init() {
   sed -i 's/^SUBDIRS = po /SUBDIRS = /' Makefile
