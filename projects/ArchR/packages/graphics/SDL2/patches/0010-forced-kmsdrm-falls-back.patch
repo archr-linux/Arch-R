@@ -1,0 +1,47 @@
+diff --git a/src/video/SDL_video.c b/src/video/SDL_video.c
+index 2f6c631..553bde1 100644
+--- a/src/video/SDL_video.c
++++ b/src/video/SDL_video.c
+@@ -447,6 +447,19 @@ const char *SDL_GetVideoDriver(int index)
+     return NULL;
+ }
+ 
++/* ArchR: ports made for ArkOS/dArkOS force SDL_VIDEODRIVER=kmsdrm, but
++ * ArchR runs every game inside sway, which holds the display: kmsdrm cannot
++ * start there and the game quits with "kmsdrm not available". A forced
++ * kmsdrm takes the normal driver order instead when a Wayland session is
++ * there or kmsdrm does not start. ARCHR_SDL_KMSDRM=1 keeps it forced. */
++static SDL_bool ArchR_KMSDRMForced(const char *name)
++{
++    const char *keep = SDL_getenv("ARCHR_SDL_KMSDRM");
++
++    return (name && SDL_strcasecmp(name, "kmsdrm") == 0 &&
++            !(keep && SDL_strcmp(keep, "1") == 0)) ? SDL_TRUE : SDL_FALSE;
++}
++
+ /*
+  * Initialize the video and event subsystems -- determine native pixel format
+  */
+@@ -491,6 +504,9 @@ int SDL_VideoInit(const char *driver_name)
+     if (!driver_name) {
+         driver_name = SDL_GetHint(SDL_HINT_VIDEODRIVER);
+     }
++    if (ArchR_KMSDRMForced(driver_name) && SDL_getenv("WAYLAND_DISPLAY")) {
++        driver_name = NULL;
++    }
+ #if defined(__LINUX__) && defined(SDL_VIDEO_DRIVER_X11)
+     if (!driver_name) {
+         /* See if it looks like we need X11 */
+@@ -530,7 +546,11 @@ int SDL_VideoInit(const char *driver_name)
+ 
+             driver_attempt = (driver_attempt_end) ? (driver_attempt_end + 1) : NULL;
+         }
+-    } else {
++    }
++    if (!video && ArchR_KMSDRMForced(driver_name)) {
++        driver_name = NULL;
++    }
++    if (!video && (!driver_name || *driver_name == 0)) {
+         for (i = 0; bootstrap[i]; ++i) {
+             video = bootstrap[i]->create();
+             if (video) {

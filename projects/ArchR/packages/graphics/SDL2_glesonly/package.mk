@@ -6,6 +6,7 @@ OPENGL_SUPPORT=no
 . $(get_pkg_directory SDL2)/package.mk
 
 PKG_NAME="SDL2_glesonly"
+PKG_REV="2"
 PKG_DEPENDS_UNPACK+=" SDL2"
 
 makeinstall_target() {

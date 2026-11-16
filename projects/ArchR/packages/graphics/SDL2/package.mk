@@ -4,6 +4,7 @@
 
 PKG_NAME="SDL2"
 PKG_VERSION="2.32.10"
+PKG_REV="2"
 PKG_LICENSE="GPL"
 PKG_SITE="https://www.libsdl.org/"
 PKG_URL="https://www.libsdl.org/release/SDL2-${PKG_VERSION}.tar.gz"
