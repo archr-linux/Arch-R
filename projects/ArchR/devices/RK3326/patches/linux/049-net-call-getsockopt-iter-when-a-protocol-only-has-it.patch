@@ -1,0 +1,76 @@
+From: ArchR <noreply@arch-r.io>
+Subject: [PATCH] net: call getsockopt_iter when a protocol only has it
+
+6.12.114 gives struct proto_ops a getsockopt_iter member and moves
+Bluetooth L2CAP to it, but do_sock_getsockopt() only knows getsockopt.
+Every getsockopt on an L2CAP socket failed with EOPNOTSUPP, so
+bluetoothd could not create its GATT database ("getsockopt(L2CAP_OPTIONS):
+Operation not supported") and registered no adapter on any console.
+
+Call getsockopt_iter when it is the only one: the option is written
+through iter_out and the length is the callback's optlen when it
+changed it, else the bytes written.
+---
+--- a/net/socket.c
++++ b/net/socket.c
+@@ -2345,6 +2345,50 @@
+ INDIRECT_CALLABLE_DECLARE(bool tcp_bpf_bypass_getsockopt(int level,
+ 							 int optname));
+ 
++/*
++ * A protocol that only has getsockopt_iter (Bluetooth L2CAP in this tree)
++ * was never called: getsockopt failed with EOPNOTSUPP and bluetoothd
++ * registered no adapter. The option goes to the user buffer through
++ * iter_out; the length returned is the callback's optlen when it changed
++ * it, else what it wrote.
++ */
++static int do_sock_getsockopt_iter(struct socket *sock,
++				   const struct proto_ops *ops, int level,
++				   int optname, sockptr_t optval,
++				   sockptr_t optlen)
++{
++	sockopt_t opt = {};
++	int len, err;
++
++	if (copy_from_sockptr(&len, optlen, sizeof(int)))
++		return -EFAULT;
++	if (len < 0)
++		return -EINVAL;
++
++	if (optval.is_kernel) {
++		struct kvec kv = { .iov_base = optval.kernel, .iov_len = len };
++
++		iov_iter_kvec(&opt.iter_out, ITER_DEST, &kv, 1, len);
++	} else {
++		err = import_ubuf(ITER_DEST, optval.user, len, &opt.iter_out);
++		if (err)
++			return err;
++	}
++	opt.optlen = len;
++
++	err = ops->getsockopt_iter(sock, level, optname, &opt);
++	if (err)
++		return err;
++
++	if (opt.optlen == len)
++		len -= iov_iter_count(&opt.iter_out);
++	else
++		len = opt.optlen;
++	if (copy_to_sockptr(optlen, &len, sizeof(int)))
++		return -EFAULT;
++	return 0;
++}
++
+ int do_sock_getsockopt(struct socket *sock, bool compat, int level,
+ 		       int optname, sockptr_t optval, sockptr_t optlen)
+ {
+@@ -2362,6 +2406,9 @@
+ 	ops = READ_ONCE(sock->ops);
+ 	if (level == SOL_SOCKET) {
+ 		err = sk_getsockopt(sock->sk, level, optname, optval, optlen);
++	} else if (!ops->getsockopt && ops->getsockopt_iter) {
++		err = do_sock_getsockopt_iter(sock, ops, level, optname,
++					      optval, optlen);
+ 	} else if (unlikely(!ops->getsockopt)) {
+ 		err = -EOPNOTSUPP;
+ 	} else {
