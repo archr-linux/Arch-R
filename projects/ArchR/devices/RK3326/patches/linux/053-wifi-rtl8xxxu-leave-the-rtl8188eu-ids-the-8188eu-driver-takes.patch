@@ -1,0 +1,45 @@
+From: ArchR <noreply@arch-r.io>
+Subject: [PATCH] wifi: rtl8xxxu: leave the RTL8188EU ids the 8188eu driver takes
+
+ArchR binds 0bda:8179, 0bda:0179 and 056e:4008 to the out-of-tree
+8188eu driver: a udev rule unbinds rtl8xxxu, which probed them first,
+and binds 8188eu. The unbind left rtl8xxxu's delayed watchdog work
+armed on freed memory. Seconds later it ran (oops in
+ieee80211_iterate_stations_atomic from rtl8xxxu_watchdog_callback), or
+its timer sat in the timer wheel until memory pressure reused the block
+and __run_timers wrote through the corrupted entry: consoles with these
+dongles froze or panicked under heavy memory use (two of ours and a
+user's R35S; no crash with no Wi-Fi driver loaded). Without these ids
+rtl8xxxu never takes the device and nothing is left behind.
+---
+--- a/drivers/net/wireless/realtek/rtl8xxxu/core.c	2026-11-16 15:35:30.099459483 -0300
++++ b/drivers/net/wireless/realtek/rtl8xxxu/core.c	2026-11-16 15:35:30.115306115 -0300
+@@ -8044,11 +8044,13 @@
+ /* RTL8188FU */
+ {USB_DEVICE_AND_INTERFACE_INFO(USB_VENDOR_ID_REALTEK, 0xf179, 0xff, 0xff, 0xff),
+ 	.driver_info = (unsigned long)&rtl8188fu_fops},
+-{USB_DEVICE_AND_INTERFACE_INFO(USB_VENDOR_ID_REALTEK, 0x8179, 0xff, 0xff, 0xff),
+-	.driver_info = (unsigned long)&rtl8188eu_fops},
+-/* Tested by Hans de Goede - rtl8188etv */
+-{USB_DEVICE_AND_INTERFACE_INFO(USB_VENDOR_ID_REALTEK, 0x0179, 0xff, 0xff, 0xff),
+-	.driver_info = (unsigned long)&rtl8188eu_fops},
++/*
++ * ArchR: 0bda:8179, 0bda:0179 and 056e:4008 go to the out-of-tree 8188eu
++ * (WPA2 handshake, Arch-R#19). Taking them here first and being unbound
++ * by udev left the delayed watchdog work armed on freed memory: an oops
++ * in rtl8xxxu_watchdog_callback seconds later, or a corrupted timer list
++ * (__run_timers) once memory pressure reused the freed block.
++ */
+ /* Sitecom rtl8188eus */
+ {USB_DEVICE_AND_INTERFACE_INFO(0x0df6, 0x0076, 0xff, 0xff, 0xff),
+ 	.driver_info = (unsigned long)&rtl8188eu_fops},
+@@ -8067,9 +8069,6 @@
+ /* Abocom - Abocom */
+ {USB_DEVICE_AND_INTERFACE_INFO(0x07b8, 0x8179, 0xff, 0xff, 0xff),
+ 	.driver_info = (unsigned long)&rtl8188eu_fops},
+-/* Elecom WDC-150SU2M */
+-{USB_DEVICE_AND_INTERFACE_INFO(0x056e, 0x4008, 0xff, 0xff, 0xff),
+-	.driver_info = (unsigned long)&rtl8188eu_fops},
+ /* TP-Link TL-WN722N v2 */
+ {USB_DEVICE_AND_INTERFACE_INFO(0x2357, 0x010c, 0xff, 0xff, 0xff),
+ 	.driver_info = (unsigned long)&rtl8188eu_fops},
