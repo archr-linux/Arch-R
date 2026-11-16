@@ -213,7 +213,6 @@ def getBluetoothWantedAddr():
             addrDevice = file.read().strip()
             if addrDevice == "":
                 addrDevice = None
-            logging.info("bt_dev: {}".format(addrDevice))
     return addrDevice
 
 async def connect_device(path, address, properties, forceConnect, filter):
@@ -251,7 +250,7 @@ async def connect_device(path, address, properties, forceConnect, filter):
         logging.info(f"Skipping already connected device {devName}")
         return
 
-    if not paired and not connected and gdiscovering:
+    if not paired and not connected and (gdiscovering or forceConnect):
         await doPairing(path, devName, shortDevName)
 
     if not trusted and (gdiscovering or forceConnect):
@@ -260,7 +259,47 @@ async def connect_device(path, address, properties, forceConnect, filter):
     if not connected or forceConnect:
         await doConnect(path, devName, shortDevName)
 
+# Phones and PCs list the console by the adapter's alias, which was the
+# hostname ("archr"). Show the model instead: "R36S Arch R", from the
+# device tree model without the maker ("Game Console R36S" -> "R36S").
+MAKERS = ("Game Console ", "Anbernic ", "Powkiddy ", "MagicX ", "Gameforce ", "Generic ")
+
+async def name_adapter():
+    try:
+        with open("/proc/device-tree/model") as f:
+            model = f.read().strip("\0\n ")
+    except OSError:
+        return
+    for maker in MAKERS:
+        if model.startswith(maker):
+            model = model[len(maker):]
+            break
+    try:
+        gadapter.Alias = f"{model} Arch R" if model else "Arch R"
+        await ravel.set_prop_flush(gadapter)
+    except Exception as e:
+        logging.error(f"Failed to name the adapter: {e}")
+
+gwanted = None
+
+# A device chosen from the list was already found: no InterfacesAdded comes
+# for it again, so nothing paired it and the trust request timed out
+# ("Failed to trust device"). Act on it as soon as it is asked for.
+async def check_wanted_device():
+    global gwanted
+    wanted = getBluetoothWantedAddr()
+    if wanted == gwanted:
+        return
+    gwanted = wanted
+    logging.info("bt_dev: {}".format(wanted))
+    if not wanted or wanted == "input":
+        return
+    for path, properties in list(gdevices.items()):
+        if prop2str(properties.get("Address", "")) == wanted:
+            await connect_device(path, wanted, properties, True, wanted)
+
 async def check_discovery_control():
+    await check_wanted_device()
     try:
         if os.path.exists(CONTROL_FILE):
             with open(CONTROL_FILE, "r") as f:
@@ -545,6 +584,7 @@ async def main():
         raise Exception("No bluetooth adapter found")
 
     logging.info("Adapter initialized")
+    await name_adapter()
 
     discovery_task = asyncio.create_task(discovery_control_loop())
 
