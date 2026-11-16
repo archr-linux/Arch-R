@@ -332,6 +332,63 @@ function port_exec_bits() {
         done
 }
 
+# A PortMaster port mounts its runtime (mono, weston_pkg, frt, a JDK...)
+# from PortMaster/libs. The PortMaster app fetches it with the port; a port
+# copied by hand (from dArkOS, from a PC) has none, and dies offline or
+# half way. Before a port: the runtimes it names (port.json "runtime", or
+# the script's <x>runtime="name" and libs/<name>.squashfs) that are missing
+# are fetched with harbourmaster, as the catalog scripts do. Offline it
+# does not start: a toast says what it needs, and nothing is reported.
+PM_DIR=${PM_DIR:-/storage/roms/ports/PortMaster}
+function port_runtimes() {
+        local script=$1 dir=$2
+        {
+                [ -f "${dir}/port.json" ] &&
+                        jq -r '.attr.runtime // [] | if type == "array" then .[] else . end' "${dir}/port.json"
+                if grep -q 'libs/[^[:space:]]*\.squashfs' "${script}"; then
+                        sed -n -E 's/^[[:space:]]*(export[[:space:]]+)?[A-Za-z_]*runtime="?([A-Za-z0-9][A-Za-z0-9._+-]*)"?[[:space:]]*(#.*)?$/\2/p' "${script}"
+                        grep -oE 'libs/[A-Za-z0-9][A-Za-z0-9._+-]*\.squashfs' "${script}" | sed 's#^libs/##'
+                fi
+        } 2>/dev/null | sed 's/\.squashfs$//' | grep -xE '[A-Za-z0-9][A-Za-z0-9._+-]*' | sort -u
+}
+function port_runtime_present() {
+        [ -f "${PM_DIR}/libs/$1.squashfs" ] || [ -e "${PM_DIR}/libs/$1" ] || [ -d "${PM_DIR}/runtimes/$1" ]
+}
+# The port's name for the user: its port.json title, else the script's.
+function port_title() {
+        local name
+        name=$(jq -r '.attr.title // empty' "$2/port.json" 2>/dev/null)
+        [ -n "${name}" ] || name=$(basename "$1" .sh)
+        echo "${name}"
+}
+function port_runtime_ready() {
+        local script=$1 dir runtime missing=()
+        dir=$(port_dir "${script}")
+        while IFS= read -r runtime; do
+                [ -n "${runtime}" ] && ! port_runtime_present "${runtime}" && missing+=("${runtime}")
+        done < <(port_runtimes "${script}" "${dir}")
+        [ "${#missing[@]}" -gt 0 ] || return 0
+        if ${AMIONLINE:-/usr/bin/amionline} >/dev/null 2>&1; then
+                # A runtime harbourmaster does not know or could not fetch:
+                # the port still starts, and its script says what it lacks.
+                for runtime in "${missing[@]}"; do
+                        log $0 "Port runtime ${runtime} missing: fetching it"
+                        (cd "${PM_DIR}" && timeout 900 ./harbourmaster --quiet --no-check runtime_check "${runtime}.squashfs") \
+                                >>${OUTPUT_LOG} 2>&1
+                done
+                return 0
+        fi
+        log $0 "Port runtime ${missing[*]} missing and no network: not started"
+        local name
+        name=$(port_title "${script}" "${dir}")
+        if [[ "$(get_setting system.language)" == pt* ]]; then
+                archr-toast error errors "${name} precisa de ${missing[*]}" "Conecte à internet uma vez para baixar"
+        else
+                archr-toast error errors "${name} needs ${missing[*]}" "Connect to the internet once to download it"
+        fi
+        return 1
+}
+
 # PortMaster's bind_directories/bind_files mount a port's save folder (in the
 # ports folder) over a path such as ~/.config or /tmp and never take it back. A port deleted
 # afterwards leaves that path on a dead folder, and the next port that uses it
@@ -669,6 +726,7 @@ case ${EMULATOR} in
         fi
         chmod +x "${ROMNAME}"
         port_exec_bits "${ROMNAME}"
+        port_runtime_ready "${ROMNAME}" || quit 0
         sed -i "/^ACTIVE_GAME=/c\ACTIVE_GAME=\"${ROMNAME}\"" /storage/.config/PortMaster/mapper.txt
         sed -i "/^ACTIVE_PLATFORM=/c\ACTIVE_PLATFORM=\"${PLATFORM}\"" /storage/.config/PortMaster/mapper.txt
       ;;
@@ -841,13 +899,16 @@ fi
 ### must not hold the launcher back. archr-error-report leaves out exits
 ### that come from outside (the exit hotkey, a shutdown).
 ### A port's script usually exits 0 even when the game inside it failed:
-### every port run goes, and its output decides.
+### every port run goes, and its output decides. It goes with reports off
+### too: a port that failed for a reason the user can fix (no game files,
+### no network) gets a toast saying so, and only the report waits on the
+### setting.
 case "${PLATFORM}" in
   ports | windows) REPORT=(port "${ret_error}" "$((SECONDS - RUN_START))" "${RUN_OFFSET}" "${ROMNAME}") ;;
   *) REPORT=(game "${ret_error}" "$((SECONDS - RUN_START))" "${RUN_OFFSET}" "${PLATFORM}" "${EMULATOR}" "${CORE}") ;;
 esac
-if { [ "${ret_error}" != 0 ] || [ "${REPORT[0]}" = port ]; } &&
-   [ "$(get_setting system.error_reports)" != 0 ]; then
+if [ "${REPORT[0]}" = port ] ||
+   { [ "${ret_error}" != 0 ] && [ "$(get_setting system.error_reports)" != 0 ]; }; then
   timeout 3 systemd-run --no-block --collect --quiet --unit="archr-error-report-game-$$" \
     -p Nice=10 /usr/bin/archr-error-report "${REPORT[@]}" -- "${ARGV[@]}" >/dev/null 2>&1 || :
 fi

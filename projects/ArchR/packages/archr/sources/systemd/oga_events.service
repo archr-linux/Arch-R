@@ -1,0 +1,11 @@
+# Ports made for ArkOS/dArkOS run "systemctl restart oga_events" (ArkOS's
+# volume/brightness key service) when they start or quit. ArchR has no such
+# service and the restart failed in the port's log: this one does nothing,
+# so the restart succeeds quietly.
+[Unit]
+Description=ArkOS oga_events stand-in (does nothing)
+
+[Service]
+Type=oneshot
+ExecStart=/bin/true
+RemainAfterExit=yes

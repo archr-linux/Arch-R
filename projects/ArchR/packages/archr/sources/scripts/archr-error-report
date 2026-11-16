@@ -14,7 +14,8 @@
 #   archr-error-report port RC SECONDS OFFSET SCRIPT -- ARGS...
 #       runemu.sh, after every port (PortMaster, Itch.io) or Windows run:
 #       its script often exits 0 when the game inside failed, so the run's
-#       output decides (see port_failures).
+#       output decides (see port_failures). With reports off too: a
+#       failure whose cause is plain gets a toast (see port_toast).
 #   archr-error-report unit UNIT       a service failed (OnFailure= of archr-*, iwd,
 #                                      connman and sway)
 #   archr-error-report kernel          at boot: an oops or panic kept in pstore
@@ -323,12 +324,60 @@ port_logs() {
 # Whether the script tees that log: then it is the run output already.
 teed() { grep -q "tee .*${1##*/}" "$2" 2>/dev/null; }
 
+# Why a port failed, when the run says it plainly; nothing otherwise:
+# "network" for a download that found no network (and there is none now),
+# "crash" for a program that died on a signal.
+PORT_OFFLINE='Could not resolve host|Temporary failure in name resolution|Network is unreachable'
+PORT_OFFLINE+='|Name or service not known|Failed to establish a new connection|Unable to download .* when offline'
+PORT_CRASH='(Segmentation fault|Illegal instruction|Bus error|Floating point exception|Aborted)( |$|\()|core dumped'
+PORT_CRASH+='|Caught SIG(SEGV|ABRT|BUS|ILL|FPE)|(signal|signum|child_signal)[ =]+(4|6|7|8|11)([^0-9]|$)'
+port_cause() {
+  if grep -aqE "${PORT_OFFLINE}" <<<"$2" && [ -z "$(run ip route show default)" ]; then
+    echo network
+  elif grep -aqE "${PORT_CRASH}" <<<"$3"; then
+    echo crash
+  else
+    case "$1" in 132 | 134 | 135 | 136 | 139) echo crash ;; esac
+  fi
+}
+# The toast (archr-toast) that says why the port NAME failed, in the system
+# language: CAUSE files (FOLDER is where they go), network or crash.
+port_toast() {
+  local cmd folder=${2#"${ROOT}"} title detail
+  folder=${folder#/storage/}
+  if [[ "$(setting system.language)" == pt* ]]; then
+    case "$1" in
+      files) title="${name} precisa dos arquivos do jogo"
+        detail=${folder:+Copie-os para ${folder}}
+        detail=${detail:-Veja as instruções do port} ;;
+      network) title="${name} precisa da internet" detail="Conecte uma vez e abra de novo" ;;
+      crash) title="${name} fechou com erro" detail="O próprio port travou" ;;
+      *) return 0 ;;
+    esac
+  else
+    case "$1" in
+      files) title="${name} needs the game files"
+        detail=${folder:+Copy them to ${folder}}
+        detail=${detail:-"See the port's instructions"} ;;
+      network) title="${name} needs the internet" detail="Connect once and open it again" ;;
+      crash) title="${name} closed with an error" detail="The port itself crashed" ;;
+      *) return 0 ;;
+    esac
+  fi
+  cmd=$(command -v archr-toast) || cmd="${0%/*}/archr-toast"
+  ARCHR_TOAST_DIR="${ARCHR_TOAST_DIR:-${ROOT}/run/archr/notify}" "${cmd}" error errors "${title}" "${detail}"
+}
+
 port() {
-  local rc=$1 seconds=$2 offset=$3 script="${ROOT}$4" dir json pm name failures own f
+  local rc=$1 seconds=$2 offset=$3 script="${ROOT}$4" dir json pm name failures own f apk
   shift 4
   [ "$1" = -- ] && shift
   OUTPUT=$(tail -c +"$((offset + 1))" "${EXEC_LOG}" 2>/dev/null | tail -n 300)
   dir=$(port_dir "${script}")
+  json="${dir}/port.json"
+  pm="${ROOT}/storage/roms/ports/PortMaster"
+  name=$(jq -r '.attr.title // .name // empty' "${json}" 2>/dev/null)
+  name=${name:-$(basename "${script}" .sh)}
   # Many ports write their own log and nothing to exec.log: their failure
   # lines are there.
   LOGS=$(port_logs "${dir}" "${seconds}")
@@ -338,20 +387,26 @@ port() {
   # A NextOS port whose game files are missing or broken (NXExtract's source
   # errors; before 1.2.10 only the message) says so on the screen: the
   # user's to fix, not a failure.
-  grep -aqE 'TERMINAL ERROR NXE200[12]|ERROR: no APK, APKM, APKS, XAPK' <<<"${own}" && return 0
+  if grep -aqE 'TERMINAL ERROR NXE200[12]|ERROR: no APK, APKM, APKS, XAPK' <<<"${own}"; then
+    port_toast files "${dir}"
+    return 0
+  fi
   # A GameMaker port (gmloader) with no game of the user's in its folder
   # (Deltarune, Lost Potato): the port's install notes say to copy it.
-  printf '%s\n%s\n' "${OUTPUT}" "${own}" |
-    grep -aqE "gmloader.*Failure opening APK '[^']+': No such file" && return 0
+  apk=$(printf '%s\n%s\n' "${OUTPUT}" "${own}" |
+    sed -n "s/.*gmloader.*Failure opening APK '\([^']*\)': No such file.*/\1/p" | head -n 1)
+  if [ -n "${apk}" ]; then
+    port_toast files "${ROOT}${apk%/*}"
+    return 0
+  fi
   failures=$(printf '%s\n%s\n' "${OUTPUT}" "${own}" | port_failures "${seconds}" | awk '!seen[$0]++' | head -n 20)
   # Nothing failed: a clean exit, or one from outside.
   if [ -z "${failures}" ]; then
     { [ "${rc}" = 0 ] || external "${rc}"; } && return 0
   fi
-  json="${dir}/port.json"
-  pm="${ROOT}/storage/roms/ports/PortMaster"
-  name=$(jq -r '.attr.title // .name // empty' "${json}" 2>/dev/null)
-  name=${name:-$(basename "${script}" .sh)}
+  port_toast "$(port_cause "${rc}" "$(printf '%s\n%s\n' "${OUTPUT}" "${own}")" "${failures}")"
+  # The toast goes with reports off too (runemu.sh sends every port run).
+  enabled || return 0
   FAILURES=${failures}
   build() {
     local f elf=0 runtime
@@ -796,7 +851,9 @@ send() {
 }
 
 case "${1:-}" in
-  game | port | unit | kernel | launcher | module)
+  # A port run comes with reports off too: its toast (see port).
+  port) shift; port "$@" ;;
+  game | unit | kernel | launcher | module)
     enabled || exit 0
     event=$1
     shift
@@ -806,7 +863,7 @@ case "${1:-}" in
   shutdown) shutdown ;;
   send) send ;;
   *)
-    sed -n '10,25s/^# \{0,3\}//p' "$0" >&2
+    sed -n '10,26s/^# \{0,3\}//p' "$0" >&2
     exit 2
     ;;
 esac

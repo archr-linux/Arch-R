@@ -413,6 +413,67 @@ port 0 330 "${NOISE}
 Message translations failed to load"
 check "NetSurf's translation line is noise" "$(count "${Q}")" "0"
 
+# --- ports: a toast that says why, when the run says it plainly ---
+N="${R}/run/archr/notify"
+toast() {
+  local f out=""
+  for f in "${N}"/*.toast; do
+    [ -f "${f}" ] && out+="$(tr '\n' '|' <"${f}")"
+  done
+  rm -rf "${N}"
+  echo "${out}"
+}
+fresh() { rm -f "${Q:?}"/*.txt "${R:?}/storage/.cache/error-reports/"{seen,today}; rm -rf "${N}"; }
+fresh
+port 0 3 "${NOISE}
+gmloader/main.cpp:160: Failure opening APK '/storage/roms/ports/lostpotato/game.port': No such file"
+check "no game files: a toast with the folder" "$(toast)" \
+  "error|errors|Asteroludi needs the game files|Copy them to roms/ports/lostpotato|"
+nxport 1 13 '[2026-11-11 12:46:48] TERMINAL ERROR NXE2001: no APK, APKM, APKS, XAPK, companion archive or loose payload was found'
+check "NextOS with no game files: the port's folder" "$(toast)" \
+  "error|errors|Chrono Trigger needs the game files|Copy them to roms/ports/chrono|"
+port 0 120 "${NOISE}
+Segmentation fault (core dumped)"
+check "a crash: the port's own" "$(toast)" "error|errors|Asteroludi closed with an error|The port itself crashed|"
+fresh
+port 139 120 "${NOISE}
+/storage/roms/ports/Asteroludi.sh: line 6: ./arcajs.aarch64: No such file or directory"
+check "a SEGV exit is a crash too" "$(toast)" "error|errors|Asteroludi closed with an error|The port itself crashed|"
+fresh
+port 0 3 "${NOISE}
+Error: no game data"
+check "an error line alone: report, no toast" "$(toast) $(count "${Q}")" " 1"
+fresh
+OFFLINE="curl: (6) Could not resolve host: github.com
+Error: download failed"
+rm -f "${TMP}/route"
+port 1 4 "${NOISE}
+${OFFLINE}"
+check "a download with no network: needs the internet" "$(toast)" \
+  "error|errors|Asteroludi needs the internet|Connect once and open it again|"
+fresh
+echo "default via 192.168.3.1 dev wlan0" >"${TMP}/route"
+port 1 4 "${NOISE}
+${OFFLINE}"
+check "the same with a network now: no toast" "$(toast)" ""
+fresh
+port 0 40 "${NOISE}"
+check "a good run: no toast" "$(toast)" ""
+echo "system.error_reports=0" >>"${CFG}"
+echo "system.language=pt_BR" >>"${CFG}"
+port 0 120 "${NOISE}
+Segmentation fault (core dumped)"
+check "reports off: the toast, in the system language, and no report" "$(toast) $(count "${Q}")" \
+  "error|errors|Asteroludi fechou com erro|O próprio port travou| 0"
+port 0 3 "${NOISE}
+gmloader/main.cpp:160: Failure opening APK '/storage/roms/ports/lostpotato/game.port': No such file"
+check "no game files, in Portuguese" "$(toast)" \
+  "error|errors|Asteroludi precisa dos arquivos do jogo|Copie-os para roms/ports/lostpotato|"
+report game 139 42 0 n64 retroarch mupen64plus_next -- /storage/roms/n64/x.z64
+check "reports off: a game still sends nothing" "$(count "${Q}")" "0"
+sed -i '/^system.error_reports=/d; /^system.language=/d' "${CFG}"
+fresh
+
 # --- games: a program the user copies in, the command whole ---
 pico() {
   printf 'old run: error\n' >"${R}/var/log/exec.log"

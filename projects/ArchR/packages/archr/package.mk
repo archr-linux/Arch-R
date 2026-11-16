@@ -16,7 +16,7 @@ PKG_NAME="archr"
 # versions; the install silently skipped a PKG_INSTALL dir that did not
 # exist and the image assembly then failed in post_install.
 PKG_VERSION="$(date +%Y%m%d)"
-PKG_REV="29"
+PKG_REV="30"
 PKG_LICENSE="GPLv2"
 PKG_SITE=""
 PKG_URL=""
@@ -227,6 +227,14 @@ EOF
     >${units}/archr-save-exit.service.d/20-answers.conf
   printf '[Service]\nSuccessExitStatus=75\n' \
     >${units}/archr-update.service.d/20-answers.conf
+  # Ports made for dArkOS/ArkOS (Debian) name Debian's multiarch library
+  # folders (La-Mulana: LD_PRELOAD=/usr/lib/arm-linux-gnueabihf/libSDL2-2.0.so.0)
+  # and restart ArkOS's oga_events. The folders lead to ours (no package has
+  # them; the root is read-only, so they come from here); the service does
+  # nothing, so the restart succeeds.
+  ln -sfn . ${INSTALL}/usr/lib/aarch64-linux-gnu
+  ln -sfn ../lib32 ${INSTALL}/usr/lib/arm-linux-gnueabihf
+  install -m644 ${PKG_DIR}/sources/systemd/oga_events.service ${units}/oga_events.service
   # The kernel names the faulting library and address of a crashed program
   # in its log, which the report carries (no core dumps on the console).
   mkdir -p ${INSTALL}/usr/lib/sysctl.d
