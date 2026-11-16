@@ -57,3 +57,11 @@ done
 
 cd /usr/local/share/gmu
 /usr/local/bin/gmu.bin -d /usr/local/etc/gmu -c /storage/.config/gmu/gmu.conf ${PLAYLIST}
+RET=$?
+# The exit hotkey closes the player with the SIGHUP above (129), a power
+# off with SIGTERM (143): both are the player closed by the user, not an
+# error, which the launcher showed ("exited with error 1", Arch-R#57).
+case ${RET} in
+  129|143) RET=0 ;;
+esac
+exit ${RET}

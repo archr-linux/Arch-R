@@ -3,6 +3,7 @@
 
 PKG_NAME="gmu"
 PKG_VERSION="3aed18be8a50873ccfb31d2b135b0d22442ded59"
+PKG_REV="2"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/jhe2/gmu"
 PKG_URL="${PKG_SITE}.git"
