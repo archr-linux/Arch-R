@@ -1,0 +1,371 @@
+From: ArchR <noreply@arch-r.io>
+Subject: [PATCH] devfreq: px30-dmc: switch the DDR in the vertical blank
+
+The display scans out of DDR the whole time, and a switch that lands in
+the middle of a frame can starve or wedge the VOP. One R36S reported
+"[CRTC:36:crtc-0] vblank wait timed out" right before every crash after
+the DDR went to 528 MHz.
+
+BL31 can time the switch itself: told the screen type and asked to wait,
+it does the switch at the VOP line flag 1, which the vendor kernel puts
+at the end of the active area on PX30, and raises the complete interrupt
+when done. Do the same:
+
+- the VOP programs line flag 1 at the end of the active area, as the
+  vendor kernel does on PX30 (mainline only programs line flag 0);
+- the VOP reports when it starts and stops scanning out, and holds DDR
+  switches off across its mode sets, like the vendor rockchip_dmcfreq_lock;
+- with a screen up, the request carries its type (vendor SCREEN_* values)
+  and wait_flag0/1 = 1, as rockchip_ddr_set_rate does;
+- a board with a VOP waits for its screen before the first switch, and
+  gives up on it after 30 s.
+
+Verified on an R36S: 200 switches 332/528 MHz with the screen on, each
+taking one frame or less, none failing, no vblank timeout.
+
+Protocol from rockchip-linux/kernel (develop-4.19)
+drivers/devfreq/rockchip_dmc.c (rk_drm_get_lcdc_type,
+rockchip_ddr_set_rate), include/soc/rockchip/rockchip_dmc.h and
+drivers/gpu/drm/rockchip/rockchip_vop_reg.c (line_flag_num[1] on PX30).
+---
+--- a/drivers/devfreq/px30_dmc.c
++++ b/drivers/devfreq/px30_dmc.c
+@@ -9,6 +9,11 @@
+  * complete ddr_timing node the second page stays empty and BL31 keeps the
+  * loader's settings.
+  *
++ * The display scans out of DDR the whole time. With a screen on, BL31 is told
++ * its type and waits for the VOP line flag at the end of the active area, so
++ * the switch lands in the vertical blank; the request waits for a screen when
++ * the board has one, and mode sets hold the switch off.
++ *
+  * The rate BL31 reports after a switch is checked against the one asked for,
+  * and a probe that fails leaves the DDR at the rate the bootloader set.
+  */
+@@ -18,6 +23,7 @@
+ #include <linux/completion.h>
+ #include <linux/cpu.h>
+ #include <linux/devfreq.h>
++#include <linux/devm-helpers.h>
+ #include <linux/interrupt.h>
+ #include <linux/io.h>
+ #include <linux/irq.h>
+@@ -31,13 +37,26 @@
+ #include <linux/sizes.h>
+ #include <linux/slab.h>
+ 
++#include <linux/workqueue.h>
++
++#include <drm/drm_mode.h>
++
+ #include <soc/rockchip/pm_domains.h>
++#include <soc/rockchip/px30_dmc.h>
+ #include <soc/rockchip/rockchip_sip.h>
+ 
+ /* Five 60 Hz frames, as long as the vendor driver waits */
+ #define PX30_DMC_WAIT_MS	85
+ /* Oldest DDR interface of BL31 the vendor driver accepts */
+ #define PX30_DMC_MIN_VERSION	0x103
++/* A board with a VOP that shows nothing this long after probe has no screen */
++#define PX30_DMC_SCREEN_WAIT_MS	30000
++
++/* Screen types of the BL31 interface, as the vendor rockchip_dmc.h has them */
++#define PX30_DMC_SCREEN_NULL	0
++#define PX30_DMC_SCREEN_LVDS	2
++#define PX30_DMC_SCREEN_HDMI	6
++#define PX30_DMC_SCREEN_MIPI	7
+ 
+ /* Per rank: four byte lanes of 21 signals, packed into 11 words each */
+ #define PX30_DMC_LANES		4
+@@ -119,10 +138,64 @@
+ 	struct px30_dmc_req __iomem *req;
+ 	struct completion done;
+ 	struct devfreq_dev_profile profile;
++	struct devfreq *devfreq;
++	struct delayed_work retry;	/* a request that waited for a screen */
+ 	unsigned long rate;	/* as BL31 reports it */
+ 	unsigned long volt;	/* our floor on vdd_logic */
++	bool screen_due;	/* the board has a VOP: wait for its screen */
++	bool deferred;
+ };
+ 
++/* Held across VOP mode sets and DDR switches */
++static DEFINE_MUTEX(px30_dmc_screen_lock);
++static unsigned int px30_dmc_screens;	/* VOPs scanning out */
++static u32 px30_dmc_screen_type;
++static struct px30_dmc *px30_dmc_dev;
++
++void px30_dmc_display_lock(void)
++{
++	mutex_lock(&px30_dmc_screen_lock);
++}
++EXPORT_SYMBOL_GPL(px30_dmc_display_lock);
++
++void px30_dmc_display_unlock(void)
++{
++	mutex_unlock(&px30_dmc_screen_lock);
++}
++EXPORT_SYMBOL_GPL(px30_dmc_display_unlock);
++
++/* Called by the VOP, under px30_dmc_display_lock() */
++void px30_dmc_display(bool on, int connector_type)
++{
++	lockdep_assert_held(&px30_dmc_screen_lock);
++
++	if (!on) {
++		if (px30_dmc_screens)
++			px30_dmc_screens--;
++		return;
++	}
++
++	px30_dmc_screens++;
++	switch (connector_type) {
++	case DRM_MODE_CONNECTOR_DSI:
++		px30_dmc_screen_type = PX30_DMC_SCREEN_MIPI;
++		break;
++	case DRM_MODE_CONNECTOR_DPI:
++	case DRM_MODE_CONNECTOR_LVDS:
++		px30_dmc_screen_type = PX30_DMC_SCREEN_LVDS;
++		break;
++	case DRM_MODE_CONNECTOR_HDMIA:
++		px30_dmc_screen_type = PX30_DMC_SCREEN_HDMI;
++		break;
++	default:
++		px30_dmc_screen_type = PX30_DMC_SCREEN_NULL;
++	}
++
++	if (px30_dmc_dev && px30_dmc_dev->deferred)
++		mod_delayed_work(system_wq, &px30_dmc_dev->retry, 0);
++}
++EXPORT_SYMBOL_GPL(px30_dmc_display);
++
+ static struct arm_smccc_res px30_dmc_sip(u32 page, u32 cmd)
+ {
+ 	struct arm_smccc_res res;
+@@ -261,7 +334,8 @@
+ 	return 0;
+ }
+ 
+-static int px30_dmc_set_rate(struct px30_dmc *dmc, unsigned long rate)
++static int px30_dmc_set_rate(struct px30_dmc *dmc, unsigned long rate,
++			     u32 screen)
+ {
+ 	struct pm_qos_request qos = {};
+ 	struct arm_smccc_res res;
+@@ -285,6 +359,10 @@
+ 	cpu_latency_qos_add_request(&qos, 0);
+ 
+ 	writel(rate, &dmc->req->hz);
++	/* With a screen, BL31 switches at the VOP line flag, in the blank */
++	writel(screen, &dmc->req->lcdc_type);
++	writel(screen != PX30_DMC_SCREEN_NULL, &dmc->req->wait_flag1);
++	writel(screen != PX30_DMC_SCREEN_NULL, &dmc->req->wait_flag0);
+ 	reinit_completion(&dmc->done);
+ 	res = px30_dmc_sip(ROCKCHIP_SIP_SHARE_PAGE_TYPE_DDR,
+ 			   ROCKCHIP_SIP_CONFIG_DRAM_SET_RATE);
+@@ -321,6 +399,16 @@
+ 	volt = dev_pm_opp_get_voltage(opp);
+ 	dev_pm_opp_put(opp);
+ 
++	guard(mutex)(&px30_dmc_screen_lock);
++
++	/* The screen comes up after us: switch when it scans out */
++	if (rate != dmc->rate && dmc->screen_due && !px30_dmc_screens) {
++		dmc->deferred = true;
++		*freq = dmc->rate;
++		return 0;
++	}
++	dmc->deferred = false;
++
+ 	/* vdd_logic also feeds the GPU: only ask for a minimum */
+ 	if (volt > dmc->volt) {
+ 		ret = regulator_set_voltage(dmc->vdd, volt, INT_MAX);
+@@ -328,7 +416,9 @@
+ 			return ret;
+ 	}
+ 
+-	ret = px30_dmc_set_rate(dmc, rate);
++	ret = px30_dmc_set_rate(dmc, rate,
++				px30_dmc_screens ? px30_dmc_screen_type :
++						   PX30_DMC_SCREEN_NULL);
+ 	if (ret) {
+ 		if (volt > dmc->volt)
+ 			regulator_set_voltage(dmc->vdd, dmc->volt, INT_MAX);
+@@ -343,6 +433,44 @@
+ 	return 0;
+ }
+ 
++/* Runs the request again once a screen is up, or after giving up on one */
++static void px30_dmc_retry(struct work_struct *work)
++{
++	struct px30_dmc *dmc = container_of(to_delayed_work(work),
++					    struct px30_dmc, retry);
++
++	scoped_guard(mutex, &px30_dmc_screen_lock) {
++		if (!dmc->deferred)
++			return;
++		if (!px30_dmc_screens) {
++			dev_info(dmc->dev, "no screen came up, switching without one\n");
++			dmc->screen_due = false;
++		}
++	}
++
++	mutex_lock(&dmc->devfreq->lock);
++	update_devfreq(dmc->devfreq);
++	mutex_unlock(&dmc->devfreq->lock);
++}
++
++static bool px30_dmc_has_vop(void)
++{
++	static const struct of_device_id vops[] = {
++		{ .compatible = "rockchip,px30-vop-big" },
++		{ .compatible = "rockchip,px30-vop-lit" },
++		{ }
++	};
++	struct device_node *np;
++
++	for_each_matching_node(np, vops) {
++		if (of_device_is_available(np)) {
++			of_node_put(np);
++			return true;
++		}
++	}
++	return false;
++}
++
+ static int px30_dmc_get_cur_freq(struct device *dev, unsigned long *freq)
+ {
+ 	struct px30_dmc *dmc = dev_get_drvdata(dev);
+@@ -447,9 +575,33 @@
+ 		.get_cur_freq	= px30_dmc_get_cur_freq,
+ 	};
+ 
+-	return PTR_ERR_OR_ZERO(devm_devfreq_add_device(dev, &dmc->profile,
+-						       DEVFREQ_GOV_PERFORMANCE,
+-						       NULL));
++	ret = devm_delayed_work_autocancel(dev, &dmc->retry, px30_dmc_retry);
++	if (ret)
++		return ret;
++	dmc->screen_due = px30_dmc_has_vop();
++
++	/* The VOP may report its screen before the devfreq device exists */
++	scoped_guard(mutex, &px30_dmc_screen_lock) {
++		dmc->deferred = true;
++		px30_dmc_dev = dmc;
++	}
++
++	dmc->devfreq = devm_devfreq_add_device(dev, &dmc->profile,
++					       DEVFREQ_GOV_PERFORMANCE, NULL);
++	if (IS_ERR(dmc->devfreq)) {
++		scoped_guard(mutex, &px30_dmc_screen_lock)
++			px30_dmc_dev = NULL;
++		cancel_delayed_work_sync(&dmc->retry);
++		return PTR_ERR(dmc->devfreq);
++	}
++
++	scoped_guard(mutex, &px30_dmc_screen_lock) {
++		if (dmc->deferred)
++			mod_delayed_work(system_wq, &dmc->retry,
++					 px30_dmc_screens ? 0 :
++					 msecs_to_jiffies(PX30_DMC_SCREEN_WAIT_MS));
++	}
++	return 0;
+ }
+ 
+ static const struct of_device_id px30_dmc_of_match[] = {
+--- a/drivers/gpu/drm/rockchip/rockchip_drm_vop.c
++++ b/drivers/gpu/drm/rockchip/rockchip_drm_vop.c
+@@ -41,6 +41,8 @@
+ #include "rockchip_drm_vop.h"
+ #include "rockchip_rgb.h"
+ 
++#include <soc/rockchip/px30_dmc.h>
++
+ #define VOP_WIN_SET(vop, win, name, v) \
+ 		vop_reg_set(vop, &win->phy->name, win->base, ~0, v, #name)
+ #define VOP_SCL_SET(vop, win, name, v) \
+@@ -739,6 +741,8 @@
+ 	if (crtc->state->self_refresh_active)
+ 		goto out;
+ 
++	px30_dmc_display_lock();
++	px30_dmc_display(false, 0);
+ 	mutex_lock(&vop->vop_lock);
+ 
+ 	drm_crtc_vblank_off(crtc);
+@@ -777,6 +781,7 @@
+ 	pm_runtime_put(vop->dev);
+ 
+ 	mutex_unlock(&vop->vop_lock);
++	px30_dmc_display_unlock();
+ 
+ out:
+ 	if (crtc->state->event && !crtc->state->active) {
+@@ -1388,6 +1393,7 @@
+ 		return;
+ 	}
+ 
++	px30_dmc_display_lock();
+ 	mutex_lock(&vop->vop_lock);
+ 
+ 	WARN_ON(vop->event);
+@@ -1395,6 +1401,7 @@
+ 	ret = vop_enable(crtc, old_state);
+ 	if (ret) {
+ 		mutex_unlock(&vop->vop_lock);
++		px30_dmc_display_unlock();
+ 		DRM_DEV_ERROR(vop->dev, "Failed to enable vop (%d)\n", ret);
+ 		return;
+ 	}
+@@ -1473,11 +1480,15 @@
+ 	VOP_REG_SET(vop, modeset, vpost_st_end, val);
+ 
+ 	VOP_REG_SET(vop, intr, line_flag_num[0], vact_end);
++	/* The end of the active area, where the vendor kernel puts it on PX30 */
++	VOP_REG_SET(vop, intr, line_flag_num[1], vact_end);
+ 
+ 	clk_set_rate(vop->dclk, adjusted_mode->clock * 1000);
+ 
+ 	VOP_REG_SET(vop, common, standby, 0);
+ 	mutex_unlock(&vop->vop_lock);
++	px30_dmc_display(true, s->output_type);
++	px30_dmc_display_unlock();
+ 
+ 	/*
+ 	 * If we have a GAMMA LUT in the state, then let's make sure
+--- a/drivers/gpu/drm/rockchip/rockchip_vop_reg.c
++++ b/drivers/gpu/drm/rockchip/rockchip_vop_reg.c
+@@ -262,6 +262,8 @@
+ 	.intrs = px30_vop_intrs,
+ 	.nintrs = ARRAY_SIZE(px30_vop_intrs),
+ 	.line_flag_num[0] = VOP_REG(PX30_LINE_FLAG, 0xfff, 0),
++	/* BL31 switches the DDR rate at this one */
++	.line_flag_num[1] = VOP_REG(PX30_LINE_FLAG, 0xfff, 16),
+ 	.status = VOP_REG_MASK_SYNC(PX30_INTR_STATUS, 0xffff, 0),
+ 	.enable = VOP_REG_MASK_SYNC(PX30_INTR_EN, 0xffff, 0),
+ 	.clear = VOP_REG_MASK_SYNC(PX30_INTR_CLEAR, 0xffff, 0),
+--- /dev/null
++++ b/include/soc/rockchip/px30_dmc.h
+@@ -0,0 +1,22 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++/*
++ * What the PX30 DDR rate driver needs from the display: BL31 switches the
++ * DDR inside the vertical blank when it knows a screen is being scanned out,
++ * and a switch must not land in the middle of a mode set.
++ */
++#ifndef __SOC_ROCKCHIP_PX30_DMC_H
++#define __SOC_ROCKCHIP_PX30_DMC_H
++
++#include <linux/types.h>
++
++#if IS_ENABLED(CONFIG_ARM_PX30_DMC_DEVFREQ)
++void px30_dmc_display_lock(void);
++void px30_dmc_display_unlock(void);
++void px30_dmc_display(bool on, int connector_type);
++#else
++static inline void px30_dmc_display_lock(void) { }
++static inline void px30_dmc_display_unlock(void) { }
++static inline void px30_dmc_display(bool on, int connector_type) { }
++#endif
++
++#endif
