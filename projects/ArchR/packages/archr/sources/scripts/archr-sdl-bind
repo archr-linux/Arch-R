@@ -1,0 +1,30 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ArchR (https://github.com/archr-linux/Arch-R)
+#
+# archr-sdl-bind unbind|bind, run by pacman around a transaction that
+# touches SDL2. On libmali, gpudriver bind-mounts the GLES-only SDL2 from
+# /usr/{lib,lib32}/glesonly over the regular one; pacman could not remove
+# the regular file under the mount ("Device or resource busy") and left
+# the old library there. unbind lazily lifts the mounts (programs that
+# have the library open keep it), bind puts them back when libmali is
+# the active driver, the same test gpudriver makes.
+for dir in /usr/lib /usr/lib32; do
+  for lib in "${dir}"/glesonly/*; do
+    [ -f "${lib}" ] || continue
+    target="${dir}/${lib##*/}"
+    case "$1" in
+      unbind)
+        # Stacked mounts come off one per call.
+        while mount | grep -q " on ${target} "; do
+          umount -l "${target}" || break
+        done
+        ;;
+      bind)
+        mount | grep -q "on /usr/lib/libEGL.so" || exit 0
+        mount | grep -q " on ${target} " || mount --bind "${lib}" "${target}"
+        ;;
+    esac
+  done
+done
+exit 0

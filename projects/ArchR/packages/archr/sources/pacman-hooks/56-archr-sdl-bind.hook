@@ -1,0 +1,17 @@
+# On libmali the GLES-only SDL2 is bind-mounted over the regular one;
+# lift the mounts around a transaction that touches SDL2 so pacman can
+# replace the files (see /usr/bin/archr-sdl-bind).
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Operation = Remove
+Type = Path
+Target = usr/lib/libSDL2-2.0.so*
+Target = usr/lib32/libSDL2-2.0.so*
+Target = usr/lib/glesonly/libSDL2-2.0.so*
+Target = usr/lib32/glesonly/libSDL2-2.0.so*
+
+[Action]
+Description = Restoring the GLES-only SDL2 mounts...
+When = PostTransaction
+Exec = /usr/bin/archr-sdl-bind bind
