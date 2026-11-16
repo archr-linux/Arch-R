@@ -1,0 +1,33 @@
+Subject: [PATCH] soc: rockchip: sip: add the PX30 DDR frequency IDs
+
+Rockchip's downstream BL31 for PX30/RK3326 changes the DDR rate through
+ROCKCHIP_SIP_DRAM_FREQ like the RK3399 one, but the request travels in
+pages shared with the firmware: x1 names the page type, x3 the command.
+Add the IDs a PX30 DMC driver needs on top of the RK3399 ones: the DDR
+interface version query (same number as SET_ODT_PD, different meaning
+on this firmware), the share-memory request, the DDR page type and the
+"switch still pending" return of SET_RATE.
+
+Values from rockchip-linux/kernel (develop-5.10)
+include/linux/rockchip/rockchip_sip.h and
+include/soc/rockchip/rockchip_sip.h.
+---
+--- a/include/soc/rockchip/rockchip_sip.h
++++ b/include/soc/rockchip/rockchip_sip.h
+@@ -17,4 +17,16 @@
+ #define ROCKCHIP_SIP_CONFIG_DRAM_SET_PARAM	0x07
+ #define ROCKCHIP_SIP_CONFIG_DRAM_SET_ODT_PD	0x08
+ 
++/*
++ * Rockchip's downstream BL31 for PX30/RK3326 and later SoCs reuses
++ * ROCKCHIP_SIP_DRAM_FREQ with a different calling convention: the rate goes
++ * through pages shared with the firmware, x1 names the page type and x3 the
++ * command. ROUND_RATE, SET_RATE and GET_RATE keep the numbers above.
++ */
++#define ROCKCHIP_SIP_CONFIG_DRAM_GET_VERSION	0x08
++#define ROCKCHIP_SIP_SHARE_MEM			0x82000009
++#define ROCKCHIP_SIP_SHARE_PAGE_TYPE_DDR	2
++/* SET_RATE returned before the switch; BL31 raises the complete IRQ */
++#define ROCKCHIP_SIP_RET_SET_RATE_TIMEOUT	-6
++
+ #endif
