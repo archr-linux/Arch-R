@@ -316,13 +316,19 @@ function port_dir() {
         dir=$(sed -n 's#^[[:space:]]*GAMEDIR=.*/\([^/"$ ]*\)"\{0,1\}[[:space:]]*$#\1#p' "${script}" 2>/dev/null | head -n 1)
         [ -n "${dir}" ] && [ -d "${script%/*}/${dir}" ] && echo "${script%/*}/${dir}"
 }
+# PortMaster's own tools (gptokeyb, oga_controls...) lose it the same way
+# when the PortMaster folder was copied from a PC or another system: the
+# port then runs without its controls ("gptokeyb: Permission denied").
+function port_programs() {
+        find "$1" -maxdepth "$2" -type f ! -perm -u+x \( ! -name '*.*' -o -name '*.sh' \
+                -o -name '*.aarch64' -o -name '*.arm64' -o -name '*.armhf' -o -name '*.bin' \
+                -o -name '*.elf' -o -name '*.x86' -o -name '*.x86_64' \) -size +0 -print0 2>/dev/null
+}
 function port_exec_bits() {
         local dir file magic
         dir=$(port_dir "$1")
-        [ -n "${dir}" ] || return 0
-        find "${dir}" -maxdepth 4 -type f ! -perm -u+x \( ! -name '*.*' -o -name '*.sh' \
-                -o -name '*.aarch64' -o -name '*.arm64' -o -name '*.armhf' -o -name '*.bin' \
-                -o -name '*.elf' -o -name '*.x86' -o -name '*.x86_64' \) -size +0 -print0 2>/dev/null |
+        { [ -n "${dir}" ] && port_programs "${dir}" 4
+          port_programs /storage/roms/ports/PortMaster 1; } |
         while IFS= read -r -d '' file; do
                 magic=$(head -c 4 "${file}" 2>/dev/null | od -An -c | tr -d ' ')
                 case "${magic}" in
