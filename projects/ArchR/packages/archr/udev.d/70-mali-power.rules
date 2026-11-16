@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ArchR (https://github.com/archr-linux/Arch-R)
+#
+# libmali (mali_kbase): keep the GPU power domain up. The default policy,
+# coarse_demand, drops the domain whenever the GPU idles; turning it back on
+# sometimes gets no ack from the PMU ("failed to get ack on domain 'gpu'")
+# and the next register write ends in an SError and a kernel panic, mid game
+# (reports from two R35S/R36S, three panics on 2026-11-15/16). always_on
+# costs about 10-20 mA with the launcher idle, less in a game, where the GPU
+# is busy anyway. panfrost has no power_policy file and is left alone.
+ACTION=="add|bind", SUBSYSTEM=="platform", DRIVER=="mali", TEST=="power_policy", ATTR{power_policy}="always_on"
