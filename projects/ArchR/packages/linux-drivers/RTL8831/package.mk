@@ -2,6 +2,7 @@
 # Copyright (C) 2026-present ArchR (https://github.com/archr-linux/Arch-R)
 
 PKG_NAME="RTL8831"
+PKG_REV="2"
 PKG_VERSION="905fc2dd7890a6d91cb6fe9e2139664a22c7839f"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/biglinux/rtl8831"

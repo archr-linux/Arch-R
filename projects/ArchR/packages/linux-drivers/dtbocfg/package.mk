@@ -2,6 +2,7 @@
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="dtbocfg"
+PKG_REV="2"
 PKG_VERSION="0.1.0"
 PKG_LICENSE="BSD"
 PKG_SITE="https://github.com/ikwzm/dtbocfg"

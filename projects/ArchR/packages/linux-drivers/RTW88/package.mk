@@ -2,6 +2,7 @@
 # Copyright (C) 2024-present ArchR (https://github.com/archr-linux/Arch-R)
 
 PKG_NAME="RTW88"
+PKG_REV="2"
 PKG_VERSION="d2258b4de21aeabf7ef85ec0cada1f3cff9bcbe0"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/lwfinger/rtw88"

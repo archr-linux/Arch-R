@@ -2,6 +2,7 @@
 # Copyright (C) 2024-present ArchR (https://github.com/archr-linux/Arch-R)
 
 PKG_NAME="RTL8733BU"
+PKG_REV="2"
 PKG_VERSION="308919f005f439de433aac977f925bb57f59acf4"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/wirenboard/rtl8733bu"

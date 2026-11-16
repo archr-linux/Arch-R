@@ -2,6 +2,7 @@
 # Copyright (C) 2024-present ArchR (https://github.com/archr-linux/Arch-R)
 
 PKG_NAME="RTL8851BU"
+PKG_REV="2"
 PKG_VERSION="f94ea820634d3bd050009e861952d3b8eeef869a"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/neatojones/RTL8851bu"

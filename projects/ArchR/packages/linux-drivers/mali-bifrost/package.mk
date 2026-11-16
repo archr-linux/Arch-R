@@ -2,6 +2,7 @@
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="mali-bifrost"
+PKG_REV="2"
 PKG_LICENSE="GPL"
 PKG_SITE="https://developer.arm.com/downloads/-/mali-drivers/bifrost-kernel"
 PKG_LONGDESC="mali-bifrost: Linux drivers for Mali Bifrost GPUs"

@@ -2,6 +2,7 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="rk915"
+PKG_REV="2"
 PKG_VERSION="e2fd61651c272aab7bd7e76ba05e5682d7c1d211"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/AveyondFly/rk915"

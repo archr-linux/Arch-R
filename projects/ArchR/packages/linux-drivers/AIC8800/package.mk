@@ -8,6 +8,7 @@
 # ID table does not cover — without the eject + re-enumeration dance the
 # WLAN function never appears.
 PKG_NAME="AIC8800"
+PKG_REV="2"
 PKG_VERSION="b6ba4cbacf9657caecce26c2426880c5bb485266"
 PKG_SHA256="889aef7279e586bb145dbd891a1f3c1f51139839e3578705760a164e3004a920"
 PKG_LICENSE="GPL"
