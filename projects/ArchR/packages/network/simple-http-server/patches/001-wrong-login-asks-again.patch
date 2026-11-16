@@ -1,0 +1,64 @@
+diff --color -ru a1/src/handlers.rs b1/src/handlers.rs
+--- a/src/handlers.rs	2026-11-16 09:18:12.625448625 -0300
++++ b/src/handlers.rs	2026-11-16 09:18:12.639648286 -0300
+@@ -349,37 +349,41 @@
+     };
+ 
+     let Ok(header_value) = header_value.to_str() else {
+-        return Ok(Some(text_response(
+-            StatusCode::UNAUTHORIZED,
+-            "Wrong username or password.",
+-        )));
++        return Ok(Some(wrong_login()));
+     };
+ 
+     let Some(encoded) = header_value.strip_prefix("Basic ") else {
+-        return Ok(Some(text_response(
+-            StatusCode::UNAUTHORIZED,
+-            "Wrong username or password.",
+-        )));
++        return Ok(Some(wrong_login()));
+     };
+ 
+-    let decoded = BASE64_STANDARD
++    let Some(decoded) = BASE64_STANDARD
+         .decode(encoded)
+-        .map_err(|err| AppError::new(StatusCode::UNAUTHORIZED, err.to_string()))?;
+-    let decoded = String::from_utf8(decoded)
+-        .map_err(|err| AppError::new(StatusCode::UNAUTHORIZED, err.to_string()))?;
+-
+-    let parsed =
+-        parse_auth(&decoded).map_err(|err| AppError::new(StatusCode::UNAUTHORIZED, err))?;
++        .ok()
++        .and_then(|decoded| String::from_utf8(decoded).ok())
++    else {
++        return Ok(Some(wrong_login()));
++    };
++    let Ok(parsed) = parse_auth(&decoded) else {
++        return Ok(Some(wrong_login()));
++    };
+     if parsed.username == auth.username && parsed.password == auth.password {
+         Ok(None)
+     } else {
+-        Ok(Some(text_response(
+-            StatusCode::UNAUTHORIZED,
+-            "Wrong username or password.",
+-        )))
++        Ok(Some(wrong_login()))
+     }
+ }
+ 
++// A 401 without WWW-Authenticate is final for a browser: after a wrong
++// user or password it showed the error and never asked again.
++fn wrong_login() -> Response {
++    let mut response = text_response(StatusCode::UNAUTHORIZED, "Wrong username or password.");
++    response.headers_mut().insert(
++        header::WWW_AUTHENTICATE,
++        HeaderValue::from_static("Basic realm=\"main\""),
++    );
++    response
++}
++
+ fn text_response(status: StatusCode, body: &str) -> Response {
+     build_response(
+         status,

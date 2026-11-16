@@ -11,6 +11,16 @@ else
   ROOTPASS="$1"
 fi
 
+# The SMB login is root with this password. smbpasswd reads its smb.conf
+# from /run/samba, which only exists while the file share is on: at boot it
+# usually is not, and the user never reached the SMB password file, so
+# Windows (which refuses guests) could not sign in at all. Read the
+# packaged one instead.
+SMBPASSWD="${SMBPASSWD:-/var/lib/samba/private/smbpasswd}"
+samba_user() {
+  printf '%s\n%s\n' "${ROOTPASS}" "${ROOTPASS}" | smbpasswd -c /etc/samba/smb.conf -sa root >/dev/null 2>&1
+}
+
 LPC=$(awk -F: '/^root/{print $3}' /storage/.cache/shadow)
 CURRENT=$(awk -F: '/^root/{print $2}' /storage/.cache/shadow)
 
@@ -30,6 +40,8 @@ if [ -n "${ROOTPASS}" ] && [ -n "${CURRENT}" ]; then
   if [ -n "${SALT}" ]; then
     RECOMPUTED=$(printf '%s' "${ROOTPASS}" | cryptpw -m sha512 -S "${SALT}" 2>/dev/null)
     if [ "${RECOMPUTED}" = "${CURRENT}" ]; then
+      # Unchanged, but a console from before the fix has no SMB user yet.
+      grep -q '^root:' "${SMBPASSWD}" 2>/dev/null || samba_user
       exit 0
     fi
   fi
@@ -42,7 +54,7 @@ NEW=$(printf '%s' "${ROOTPASS}" | cryptpw -m sha512 2>/dev/null)
 sed -i "s#root:${CURRENT}:${LPC}::::::#root:${NEW}:${LPC}::::::#g" /storage/.cache/shadow 2>/dev/null
 
 # Create a root user and set the password.
-printf '%s\n%s\n' "${ROOTPASS}" "${ROOTPASS}" | smbpasswd -sa root 2>/dev/null
+samba_user
 
 # Set the root user and password for SyncThing
 printf '%s\n' "${ROOTPASS}" | syncthing generate --gui-user "root" --gui-password - >/dev/null 2>&1

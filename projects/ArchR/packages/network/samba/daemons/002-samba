@@ -6,4 +6,11 @@ CONF="smb.conf"
 DAEMONS=("nmbd" "smbd" "wsdd2")
 
 mkdir -p /run/${SVC}
+# The card keeps its own copy of smb.conf, made from /usr/config at the
+# first boot, so a fix to the packaged one never reached it. Windows signs
+# in as root since 20261116.1 (map to guest = Never; it refuses guests):
+# move a copy that still has the old line, and leave any other as it is.
+if grep -qx '  map to guest = Bad User' /storage/.config/${CONF} 2>/dev/null; then
+  sed -i 's/^  map to guest = Bad User$/  map to guest = Never/' /storage/.config/${CONF}
+fi
 ln -s /etc/${SVC}/${CONF} /run/${SVC}/${CONF}
