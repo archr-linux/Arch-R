@@ -2,7 +2,6 @@
 # Copyright (C) 2026-present ArchR (https://github.com/archr-linux/Arch-R)
 
 PKG_NAME="RTL8852AU"
-PKG_REV="2"
 PKG_VERSION="865ab0fa91471d595c283d2f3db323f7f15455f5"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/lwfinger/rtl8852au"
