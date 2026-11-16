@@ -544,6 +544,29 @@ unit() {
   queue "${SIGNATURE}" build
 }
 
+# A record the kernel could not decompress at mount keeps the name
+# "*.enc.z" and holds raw deflate; one cut short by the reset does not
+# decompress at all. Either way the report gets text, never the binary.
+pstore_text() {
+  case "$1" in
+    *.enc.z)
+      python3 -c '
+import sys, zlib
+d = open(sys.argv[1], "rb").read()
+try:
+    o = zlib.decompressobj(-15).decompress(d)
+except zlib.error:
+    o = b""
+if o:
+    sys.stdout.write(o.decode("utf-8", "replace"))
+else:
+    print("(compressed record that does not decompress, %d bytes: left out)" % len(d))
+' "$1" 2>/dev/null || echo "(compressed record: left out)"
+      ;;
+    *) cat "$1" ;;
+  esac
+}
+
 kernel() {
   local f found="" mark kind=oops
   for f in "${ROOT}"/sys/fs/pstore/dmesg-*; do
@@ -572,7 +595,7 @@ kernel() {
     common
     for f in ${found}; do
       section "pstore ${f##*/}"
-      tail -c 120000 "${f}" | tr -d '\0'
+      pstore_text "${f}" | tail -c 120000 | tr -d '\0'
     done
   }
   # shellcheck disable=SC2086
