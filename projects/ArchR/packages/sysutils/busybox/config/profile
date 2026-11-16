@@ -21,8 +21,11 @@ for CONFIG in /storage/.config/profile.d/*; do
   if [ -f "${CONFIG}" ] ; then
     # A file a reset left half written (NUL bytes) is "binary" to the
     # shell and would stop every login shell, the boot's autostart
-    # included: set it aside (its writer makes it again).
-    if [ "$(tr -d '\000' <"${CONFIG}" | wc -c)" != "$(wc -c <"${CONFIG}")" ]; then
+    # included: set it aside (its writer makes it again). The NULs are
+    # counted in one read: comparing the size with and without them read
+    # the file twice, and a file its quirk was still writing grew between
+    # the two and was set aside too (Arch-R#57, and the R36S itself).
+    if [ "$(tr -cd '\000' <"${CONFIG}" | wc -c)" -ne 0 ]; then
       mv -f "${CONFIG}" "${CONFIG}.broken" 2>/dev/null
       continue
     fi

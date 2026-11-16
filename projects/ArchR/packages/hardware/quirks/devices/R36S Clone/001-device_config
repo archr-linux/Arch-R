@@ -34,14 +34,16 @@ if [ $# -gt 1 ]; then
 elif [ $# -eq 0 ]; then
   echo "R36S Clone audio: no rk817 sound card on; speaker path left at SPK" >&2
 fi
-# headphone_sense can gate the speaker (DEVICE_SPEAKER_SWITCH) and take
-# the jack polarity from DEVICE_HEADPHONE_INSERTED, but the amplified
-# card is left as it was: gating its "Internal Speakers" pin with the
-# polarity guessed from the stock DTB left a V20 2551 with no sound at
-# all (Arch-R#35, update 20261110.7). Set them only once a board's jack
-# reading has been checked on the device.
+# headphone_sense can gate the speaker (DEVICE_SPEAKER_SWITCH), but the
+# amplified card is left as it was: gating its "Internal Speakers" pin
+# with the polarity guessed from the stock DTB left a V20 2551 with no
+# sound at all (Arch-R#35, update 20261110.7).
+# The jack is read from the card's input device, where the kernel sets
+# SW_HEADPHONE_INSERT to 1 with headphones in whatever the pin's
+# polarity (evtest on an R36S Clone, Arch-R#57). "0" took an empty jack
+# for headphones and kept audio.device at headphone.
 SPK_SWITCH=""
-HP_INSERTED="0"
+HP_INSERTED="1"
 case "${CARD}" in
   rk817-sound-amplified)
     SPK_PATH="HP"
@@ -50,7 +52,11 @@ case "${CARD}" in
 esac
 JACK_DEV="/dev/input/by-path/platform-${CARD:-rk817-sound}-event"
 
-cat <<CONF >"${ARCHR_PROFILE_DIR:-/storage/.config/profile.d}/001-device_config"
+# Written aside and moved into place: a login shell that reads the file
+# while it is being written takes it for a broken one and sets it aside
+# (/etc/profile, Arch-R#57).
+OUT="${ARCHR_PROFILE_DIR:-/storage/.config/profile.d}/001-device_config"
+cat <<CONF >"${OUT}.new"
 # LED nodes use color+function (no label), so sysfs is blue:power.
 # Surfaces the DISABLE POWER LED switch in ES (the var is already in
 # the 999-export allowlist; no quirk ever set it, so the item was
@@ -66,3 +72,4 @@ DEVICE_HEADPHONE_INSERTED="${HP_INSERTED}"
 DEVICE_TEMP_SENSOR="/sys/devices/virtual/thermal/thermal_zone0/temp"
 DEVICE_GPU_TEMP_SENSOR="/sys/devices/virtual/thermal/thermal_zone1/temp"
 CONF
+mv -f "${OUT}.new" "${OUT}"
