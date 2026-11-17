@@ -1,0 +1,115 @@
+From: Arch R
+Subject: mmc: core: scan slots that share an I/O regulator one at a time
+
+The R36S Soy Sauce runs both card slots off one vccio_sd. With a card in
+each at boot, both came up at once: one slot asked for 3.3 V while the
+other switched to 1.8 V and tuned, the tuning failed ("All phases bad!")
+and the system card fell back to high speed. Hosts marked
+"archr,shared-vqmmc" now scan one at a time, and
+"archr,first-detect-delay-ms" lets the system slot go first; that slot
+also skips the early power-up, whose 3.3 V request on the shared
+regulator kept the other slot from switching to 1.8 V.
+
+---
+--- a/drivers/mmc/core/core.c
++++ b/drivers/mmc/core/core.c
+@@ -19,6 +19,7 @@
+ #include <linux/scatterlist.h>
+ #include <linux/log2.h>
+ #include <linux/pm_runtime.h>
++#include <linux/property.h>
+ #include <linux/pm_wakeup.h>
+ #include <linux/suspend.h>
+ #include <linux/fault-inject.h>
+@@ -2204,8 +2205,24 @@
+ }
+ EXPORT_SYMBOL(mmc_card_alternative_gpt_sector);
+ 
++/*
++ * Hosts whose cards share one I/O voltage regulator (both slots of the R36S
++ * Soy Sauce run off vccio_sd) must not bring cards up at the same time: one
++ * asks for 3.3 V while the other switches to 1.8 V and tunes, and the tuning
++ * fails ("All phases bad!"), leaving the system card at high speed. Such
++ * hosts say "archr,shared-vqmmc" and scan one at a time.
++ */
++static DEFINE_MUTEX(mmc_shared_vqmmc_lock);
++
++static bool mmc_host_shares_vqmmc(struct mmc_host *host)
++{
++	return host->parent &&
++	       device_property_read_bool(host->parent, "archr,shared-vqmmc");
++}
++
+ void mmc_rescan(struct work_struct *work)
+ {
++	bool shared;
+ 	struct mmc_host *host =
+ 		container_of(work, struct mmc_host, detect.work);
+ 	int i;
+@@ -2235,18 +2252,22 @@
+ 	if (host->bus_ops != NULL)
+ 		goto out;
+ 
++	shared = mmc_host_shares_vqmmc(host);
++	if (shared)
++		mutex_lock(&mmc_shared_vqmmc_lock);
++
+ 	mmc_claim_host(host);
+ 	if (mmc_card_is_removable(host) && host->ops->get_cd &&
+ 			host->ops->get_cd(host) == 0) {
+ 		mmc_power_off(host);
+ 		mmc_release_host(host);
+-		goto out;
++		goto unlock;
+ 	}
+ 
+ 	/* If an SD express card is present, then leave it as is. */
+ 	if (mmc_card_sd_express(host)) {
+ 		mmc_release_host(host);
+-		goto out;
++		goto unlock;
+ 	}
+ 
+ 	for (i = 0; i < ARRAY_SIZE(freqs); i++) {
+@@ -2274,6 +2295,9 @@
+ 	host->err_stats[MMC_ERR_CMD_TIMEOUT] = 0;
+ 	mmc_release_host(host);
+ 
++ unlock:
++	if (shared)
++		mutex_unlock(&mmc_shared_vqmmc_lock);
+  out:
+ 	if (host->caps & MMC_CAP_NEEDS_POLL)
+ 		mmc_schedule_delayed_work(&host->detect, HZ);
+@@ -2281,17 +2305,29 @@
+ 
+ void mmc_start_host(struct mmc_host *host)
+ {
++	u32 delay_ms = 0;
++
+ 	host->f_init = max(min(freqs[0], host->f_max), host->f_min);
+ 	host->rescan_disable = 0;
+ 
+-	if (!(host->caps2 & MMC_CAP2_NO_PRESCAN_POWERUP)) {
++	/*
++	 * "archr,first-detect-delay-ms" holds back a slot's first scan so that
++	 * another one sharing its regulator (the system card) goes first. The
++	 * early power-up is skipped too: it asks the shared regulator for
++	 * 3.3 V and the other slot then cannot switch to 1.8 V.
++	 */
++	if (host->parent)
++		device_property_read_u32(host->parent,
++					 "archr,first-detect-delay-ms", &delay_ms);
++
++	if (!delay_ms && !(host->caps2 & MMC_CAP2_NO_PRESCAN_POWERUP)) {
+ 		mmc_claim_host(host);
+ 		mmc_power_up(host, host->ocr_avail);
+ 		mmc_release_host(host);
+ 	}
+ 
+ 	mmc_gpiod_request_cd_irq(host);
+-	_mmc_detect_change(host, 0, false);
++	_mmc_detect_change(host, msecs_to_jiffies(delay_ms), false);
+ }
+ 
+ void __mmc_stop_host(struct mmc_host *host)

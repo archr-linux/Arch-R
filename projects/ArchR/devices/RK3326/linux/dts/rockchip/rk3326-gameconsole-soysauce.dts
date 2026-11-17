@@ -222,6 +222,12 @@
 	cd-gpios = <&gpio0 RK_PB2 GPIO_ACTIVE_LOW>;
 	assigned-clocks = <&cru SCLK_SDIO>;
 	assigned-clock-parents = <&cru SCLK_SDIO_DIV50>;
+	/*
+	 * Both slots run off vccio_sd: scan one at a time (patch 055), the
+	 * system card in TF1 first.
+	 */
+	archr,shared-vqmmc;
+	archr,first-detect-delay-ms = <1000>;
 };
 
 /*
@@ -233,6 +239,7 @@
 &sdmmc {
 	assigned-clocks = <&cru SCLK_SDMMC>;
 	assigned-clock-parents = <&cru SCLK_SDMMC_DIV50>;
+	archr,shared-vqmmc;
 };
 
 &rk817_codec {
