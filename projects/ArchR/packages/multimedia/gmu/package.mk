@@ -11,10 +11,9 @@ PKG_DEPENDS_TARGET="toolchain SDL2 opus mpg123 libvorbis flac speex"
 PKG_LONGDESC="The Gmu Music Player"
 PKG_TOOLCHAIN="configure"
 
-if [ "${VULKAN_SUPPORT}" = "yes" ]
-then
-  PKG_PATCH_DIRS+=" vulkan"
-fi
+# The "vulkan" patches open gmu's window with SDL_WINDOW_VULKAN. They stay
+# off: Vulkan only exists with panfrost, and with libmali (the default) the
+# window would fail to open. A GL window works with both drivers.
 
 configure_target() {
   export LDFLAGS="${LDFLAGS} -lreadline -lncursesw -ltinfow"
