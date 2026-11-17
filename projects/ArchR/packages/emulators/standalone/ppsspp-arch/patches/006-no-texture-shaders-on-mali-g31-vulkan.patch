@@ -1,0 +1,16 @@
+--- a/GPU/Vulkan/TextureCacheVulkan.cpp
++++ b/GPU/Vulkan/TextureCacheVulkan.cpp
+@@ -291,6 +291,13 @@
+ 	if (!g_Config.bTexHardwareScaling)
+ 		return;
+ 
++	// The texture upscaling compute shaders (MMPX, xBRZ...) hang the
++	// Mali-G31 under Mesa's PanVK: the GPU stops and the console freezes
++	// when the first texture uploads. Scale on the CPU there instead.
++	const VkPhysicalDeviceProperties &props = vulkan->GetPhysicalDeviceProperties().properties;
++	if (props.vendorID == VULKAN_VENDOR_ARM && strstr(props.deviceName, "Mali-G31"))
++		return;
++
+ 	ReloadAllPostShaderInfo(draw_);
+ 	const TextureShaderInfo *shaderInfo = GetTextureShaderInfo(g_Config.sTextureShaderName);
+ 	if (!shaderInfo || shaderInfo->computeShaderFile.empty())

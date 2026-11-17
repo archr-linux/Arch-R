@@ -60,9 +60,9 @@ fi
   #always written. Lighter games (Tekken 6, Burnout Legends, Death Jr.)
   #keep 100% and every frame either way.
   #PPSSPP turns buffer effects back on while auto frame skip is on, so
-  #skip_buffer_effects=1 implies a fixed skip of one frame in two, as
+  #skip_buffer_effects=1 implies a fixed skip (2 by default since 3.1.0; 1, as
   #dArkOSRE-R36 ships for the R36S (southoz/dArkOSRE-R36@77ef6d941b,
-  #files/ROOTFS/opt/ppsspp/backupforromsfolder/ppsspp/PSP/SYSTEM/ppsspp.ini):
+  #files/ROOTFS/opt/ppsspp/backupforromsfolder/ppsspp/PSP/SYSTEM/ppsspp.ini)):
   #God of War at 100% speed (30 fps shown), losing its glow; light games
   #drop to half their frames, hence per game only. frame_skip=N sets the
   #cap (auto) or the fixed skip; auto_frame_skip=0 alone skips nothing.
@@ -72,13 +72,15 @@ fi
 	FSKIP=$(get_setting frame_skip "${PLATFORM}" "${GAME}")
 	case "${FSKIP}" in
 		[0-8]) ;;
-		*) if [ "${ASKIP}" = "1" ]; then FSKIP=3; elif [ "${SKIPB}" = "1" ]; then FSKIP=1; else FSKIP=0; fi ;;
+		# Default: 2 (the cap with auto skip, the fixed skip otherwise),
+		# the owner's pick for the RK3326 after testing (3.1.0).
+		*) FSKIP=2 ;;
 	esac
 	if [ "${ASKIP}" = "0" ]; then
 		sed -i '/^AutoFrameSkip =/c\AutoFrameSkip = False' ${CONF_DIR}/${PPSSPP_INI}
 	else
 		sed -i '/^AutoFrameSkip =/c\AutoFrameSkip = True' ${CONF_DIR}/${PPSSPP_INI}
-		[ "${FSKIP}" = "0" ] && FSKIP=3
+		[ "${FSKIP}" = "0" ] && FSKIP=2
 	fi
 	sed -i "/^FrameSkip =/c\FrameSkip = ${FSKIP}" ${CONF_DIR}/${PPSSPP_INI}
 
