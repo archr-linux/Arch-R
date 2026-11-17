@@ -46,10 +46,15 @@ make_target() {
   # and the toolchain's cargo/rustc + target linker, as for touchhle-sa.
   # The ScreenScraper developer login reaches option_env! in archr-scraper
   # only through the inherited environment; never echo its value.
+  # Without it "Sign in" can never work, and nothing on the console says
+  # why: refuse to build unless that is asked for (ARCHR_NO_SCRAPER_LOGIN=1,
+  # a development build that will not reach a console).
   if [ -n "${SCREENSCRAPER_DEV_LOGIN}" ]; then
     export SCREENSCRAPER_DEV_LOGIN
-  else
+  elif [ "${ARCHR_NO_SCRAPER_LOGIN}" = "1" ]; then
     echo "WARNING: SCREENSCRAPER_DEV_LOGIN not set: scraper built without a developer login"
+  else
+    die "SCREENSCRAPER_DEV_LOGIN is not set: the ScreenScraper sign-in would not work. Export it (see ~/.archr/credentials.env), or set ARCHR_NO_SCRAPER_LOGIN=1 for a development build"
   fi
   cargo build --locked --release --target "${TARGET_NAME}" \
     --manifest-path "${PKG_BUILD}/Cargo.toml" --package archr-launcher --package archr-osd
