@@ -68,7 +68,11 @@ makeinstall_target() {
     "${INSTALL}/usr/lib/systemd/system/archr-launcher-session.service"
   mkdir -p "${INSTALL}/usr/share/archr-launcher/themes" \
     "${INSTALL}/usr/share/archr-launcher/locales"
-  cp -a "${PKG_BUILD}/themes/default" "${INSTALL}/usr/share/archr-launcher/themes/"
+  # The default theme, and Ellegance (the reference theme of the 3.1 theme
+  # API) for users to pick in Appearance; other folders are examples.
+  for theme in default ellegance; do
+    cp -a "${PKG_BUILD}/themes/${theme}" "${INSTALL}/usr/share/archr-launcher/themes/"
+  done
   install -m644 "${PKG_BUILD}"/locales/*.toml "${INSTALL}/usr/share/archr-launcher/locales/"
 
   # Not enabled: autostart starts it through UI_SERVICE (090-ui_service).
