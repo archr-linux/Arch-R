@@ -78,7 +78,7 @@ pkgdesc = ArchR ${name} (channel: ${CHANNEL})
 url = https://arch-r.io
 builddate = $(date +%s)
 packager = ArchR Build <build@arch-r.io>
-size = $(du -sb "${src}" | cut -f1)
+size = $(du -sb "${src}/" | cut -f1)
 arch = ${ARCH}
 license = GPL
 EOF
