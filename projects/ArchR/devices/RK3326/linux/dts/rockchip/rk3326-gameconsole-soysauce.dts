@@ -220,6 +220,19 @@
  */
 &sdio {
 	cd-gpios = <&gpio0 RK_PB2 GPIO_ACTIVE_LOW>;
+	assigned-clocks = <&cru SCLK_SDIO>;
+	assigned-clock-parents = <&cru SCLK_SDIO_DIV50>;
+};
+
+/*
+ * Both card clocks from the 50% duty divider, as every stock Y3506 DTB
+ * (V03, V05, V06) has them. Left alone, the TF2 clock went through the plain
+ * divider fed from the 24 MHz crystal and switched source on each speed
+ * change; TF2 cards re-initialised in a loop and read at under 1 MB/s.
+ */
+&sdmmc {
+	assigned-clocks = <&cru SCLK_SDMMC>;
+	assigned-clock-parents = <&cru SCLK_SDMMC_DIV50>;
 };
 
 &rk817_codec {
