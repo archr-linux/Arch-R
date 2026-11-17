@@ -241,7 +241,10 @@ seed_local_db() {
             return 1
         fi
     done
-    sync
+    # Flush only the db's own filesystem: a plain sync waits for every
+    # card and partition, which on a slow card with ROMs being copied
+    # took longer than the autostart allows.
+    sync -f "${stage}" 2>/dev/null || sync
     # Set the empty db aside, then publish. Interrupted in between, there
     # is no db, which counts as empty: the next attempt seeds again.
     if [ -e "${PACMAN_DB}/local" ]; then

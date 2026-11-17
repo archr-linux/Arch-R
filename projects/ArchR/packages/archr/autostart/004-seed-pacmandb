@@ -13,5 +13,15 @@
 # this rootfs really has. It does nothing once the db holds entries (seeded
 # earlier, or by the user's own pacman activity).
 
+#
+# Off the autostart's clock: seeding flushes the db to the card, and on a
+# slow card during a first boot (cores, caches and ROMs being written) that
+# flush passed the autostart's 60 s cap, which killed the whole autostart
+# (report 1b189b0d). Every update check seeds on demand anyway, so the
+# early seed is only a head start: run it as its own unit and move on.
+
 mkdir -p /storage/.pacman/db
-/usr/bin/archr-update seed >>/var/log/pacman-seed.log 2>&1 || :
+systemd-run --no-block --collect --quiet --unit=archr-pacman-seed \
+  -p Nice=10 -p IOSchedulingClass=idle \
+  /bin/sh -c '/usr/bin/archr-update seed >>/var/log/pacman-seed.log 2>&1' ||
+  /usr/bin/archr-update seed >>/var/log/pacman-seed.log 2>&1 || :
