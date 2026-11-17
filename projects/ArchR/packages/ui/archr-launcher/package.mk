@@ -3,7 +3,7 @@
 
 PKG_NAME="archr-launcher"
 PKG_VERSION="a6a65383fb243b6595d857d914a9501af99a8f09"
-PKG_SHA256="381a2c90b33021a3d303c79129258de8903aadd7f5eaa8e98b9b1172db341fea"
+PKG_SHA256="70365e0e9e56efbbcbe4d29d2f733cdd174cec22439aef7ad09135110e487459"
 PKG_ARCH="aarch64"
 # Bundled fonts retain their separate OFL licenses.
 PKG_LICENSE="GPL-2.0-or-later"
