@@ -3,6 +3,7 @@
 
 PKG_NAME="mesa-demos"
 PKG_VERSION="9.0.0"
+PKG_REV="2"
 PKG_LICENSE="OSS"
 PKG_SITE="https://www.mesa3d.org/"
 PKG_URL="https://archive.mesa3d.org/demos/${PKG_NAME}-${PKG_VERSION}.tar.xz"

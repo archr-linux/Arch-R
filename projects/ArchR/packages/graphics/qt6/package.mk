@@ -4,6 +4,7 @@
 PKG_NAME="qt6"
 PKG_VERSION_MAJOR="6.8"
 PKG_VERSION="${PKG_VERSION_MAJOR}.3"
+PKG_REV="2"
 PKG_LICENSE="GPL"
 PKG_SITE="https://download.qt.io"
 PKG_URL="${PKG_SITE}/archive/qt/${PKG_VERSION_MAJOR}/${PKG_VERSION}/single/qt-everywhere-src-${PKG_VERSION}.tar.xz"

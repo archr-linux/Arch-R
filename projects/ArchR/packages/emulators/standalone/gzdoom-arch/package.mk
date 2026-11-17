@@ -7,6 +7,7 @@ PKG_NAME="gzdoom-arch"
 # its install_pkg directory: devices carry "gzdoom-sa-g4.14.2".
 PKG_REPLACES="gzdoom-sa gzdoom-sa-g4.14.2"
 PKG_VERSION="g4.14.2"
+PKG_REV="2"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/ZDoom/gzdoom"
 PKG_URL="https://github.com/ZDoom/gzdoom/archive/refs/tags/${PKG_VERSION}.tar.gz"

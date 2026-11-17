@@ -3,6 +3,7 @@
 
 PKG_NAME="libplacebo"
 PKG_VERSION="52314e0e435fbcb731e326815d4091ed0ba27475"
+PKG_REV="2"
 PKG_LICENSE="GPLv2+"
 PKG_SITE="https://code.videolan.org/videolan/libplacebo"
 PKG_URL="${PKG_SITE}.git"
