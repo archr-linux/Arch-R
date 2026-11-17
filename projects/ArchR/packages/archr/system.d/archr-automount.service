@@ -14,6 +14,9 @@ Environment=HOME=/storage
 EnvironmentFile=/etc/profile
 ExecStart=/usr/bin/automount
 RemainAfterExit=yes
+# A card brings one udev add per partition, each restarting this unit; the
+# run a restart cuts short is not a failure, the next one does the work.
+SuccessExitStatus=SIGTERM
 
 [Install]
 WantedBy=archr.target
