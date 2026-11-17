@@ -4,7 +4,7 @@
 
 PKG_NAME="ppsspp-arch"
 PKG_REPLACES="ppsspp-sa"
-PKG_REV="2"
+PKG_REV="3"
 PKG_SITE="https://github.com/hrydgard/ppsspp"
 PKG_URL="${PKG_SITE}.git"
 PKG_VERSION="afbc66a318b86432642b532c575241f3716642ef" # v1.20.2
@@ -56,7 +56,9 @@ then
                            -DVULKAN=ON \
                            -DEGL_NO_X11=1 \
                            -DMESA_EGL_NO_X11_HEADERS=1"
-  GRENDERER="3 (VULKAN)"
+  # Vulkan is built in but stays opt-in (graphics_backend per system):
+  # it only exists with panfrost, and libmali is the default driver.
+  GRENDERER="0 (OPENGL)"
 else
   PKG_CMAKE_OPTS_TARGET+=" -DVULKAN=OFF \
                            -DUSE_VULKAN_DISPLAY_KHR=OFF \

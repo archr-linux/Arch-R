@@ -4,6 +4,7 @@
 
 PKG_NAME="flycast-sa"
 PKG_VERSION="392a429e8b040b3e5bf6696cb4f984274fc44123" #v2.6
+PKG_REV="2"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/flyinghead/flycast"
 PKG_URL="${PKG_SITE}.git"
@@ -24,7 +25,9 @@ fi
 if [ "${VULKAN_SUPPORT}" = "yes" ]; then
   PKG_DEPENDS_TARGET+=" ${VULKAN}"
   PKG_CMAKE_OPTS_TARGET+=" -DUSE_VULKAN=ON"
-  GRENDERER="4"
+  # Vulkan is built in but stays opt-in (graphics_backend per system):
+  # it only exists with panfrost, and libmali is the default driver.
+  GRENDERER="0"
 else
   PKG_CMAKE_OPTS_TARGET+=" -DUSE_VULKAN=OFF"
   GRENDERER="0"

@@ -378,6 +378,26 @@ function set_ra_menudriver() {
     esac
 }
 
+# graphics_backend (per system or game: "opengl" or "vulkan") picks the
+# RetroArch video driver. Vulkan exists only while panfrost drives the GPU;
+# asked for on libmali it is ignored, so the game opens in GL instead of on
+# a black screen. Nothing set: RetroArch keeps its own video_driver.
+function set_ra_videodriver() {
+    case "$(game_setting graphics_backend)" in
+        vulkan)
+            if [ -d /sys/module/panfrost ]; then
+                add_setting "none" "video_driver" "vulkan"
+            else
+                log "graphics_backend vulkan needs the panfrost driver; staying on gl"
+                add_setting "none" "video_driver" "gl"
+            fi
+        ;;
+        opengl)
+            add_setting "none" "video_driver" "gl"
+        ;;
+    esac
+}
+
 function set_fps() {
     add_setting "showFPS" "fps_show"
 }
@@ -1356,6 +1376,7 @@ flush_settings
 ###
 
 set_ra_menudriver &
+set_ra_videodriver &
 set_fps &
 set_cheevos &
 set_translation &

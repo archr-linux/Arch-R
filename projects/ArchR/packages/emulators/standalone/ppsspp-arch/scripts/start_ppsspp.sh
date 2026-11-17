@@ -27,6 +27,8 @@ ASKIP=$(get_setting auto_frame_skip "${PLATFORM}" "${GAME}")
 FPS=$(get_setting show_fps "${PLATFORM}" "${GAME}")
 IRES=$(get_setting internal_resolution "${PLATFORM}" "${GAME}")
 GRENDERER=$(get_setting graphics_backend "${PLATFORM}" "${GAME}")
+# Vulkan exists only while panfrost drives the GPU; on libmali, stay on GL.
+[ "${GRENDERER}" = "vulkan" ] && [ ! -d /sys/module/panfrost ] && GRENDERER="opengl"
 SKIPB=$(get_setting skip_buffer_effects "${PLATFORM}" "${GAME}")
 # God of War runs at 7-8 fps on the R36S with buffer effects; skipping them
 # gives 17-19 from an ISO (a CHD in LZMA costs more), and its cutscenes go

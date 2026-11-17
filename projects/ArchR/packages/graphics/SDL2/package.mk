@@ -40,8 +40,9 @@ fi
 
 if [ "${VULKAN_SUPPORT}" = "yes" ]; then
   PKG_DEPENDS_TARGET+=" ${VULKAN}"
+  # Vulkan next to OpenGL, not instead of it: ports reach desktop GL through
+  # SDL2 (gl4es), and Vulkan only works with the panfrost driver.
   PKG_CMAKE_OPTS_TARGET+=" -DSDL_VULKAN=ON \
-                           -DVIDEO_OPENGL=OFF \
                            -DVIDEO_VULKAN=ON"
 else
   PKG_CMAKE_OPTS_TARGET+=" -DSDL_VULKAN=OFF \

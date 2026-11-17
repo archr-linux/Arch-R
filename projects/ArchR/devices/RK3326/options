@@ -51,6 +51,10 @@
   # For maximum cross compatbility
     PREFER_GLES="yes"
 
+  # Vulkan (Mesa PanVK, only with the panfrost driver; emulators keep GLES
+  # unless the user picks Vulkan per system). #55, 3.1.0
+    VULKAN="vulkan-loader"
+
   # Displayserver to use (wl / no)
     DISPLAYSERVER="wl"
 

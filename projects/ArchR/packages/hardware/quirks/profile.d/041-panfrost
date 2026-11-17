@@ -17,3 +17,9 @@ export MESA_NO_ERROR=1
 # storage overlay so the cache survives reboots.
 export MESA_SHADER_CACHE_DIR=/var/cache/mesa
 export MESA_SHADER_CACHE_MAX_SIZE=128MB
+
+# Vulkan (PanVK, Mesa) on the Mali-G31: Mesa refuses Bifrost (v7) unless this
+# is set ("panvk is not well-tested on v7"). Exported only while panfrost
+# drives the GPU, so every process (emulators, ports, vulkaninfo) finds the
+# Vulkan 1.0 device; on libmali the PanVK ICD is masked and nothing changes.
+[ -d /sys/module/panfrost ] && export PAN_I_WANT_A_BROKEN_VULKAN_DRIVER=1
