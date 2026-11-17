@@ -3,6 +3,7 @@
 
 PKG_NAME="doublecherrygb-lr"
 PKG_VERSION="f6ffb9ae6230e6614066b887c7b269d44a00cab7"
+PKG_REV="2"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/TimOelrichs/doublecherryGB-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

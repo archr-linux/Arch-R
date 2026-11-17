@@ -1,0 +1,21 @@
+From: Arch R
+Subject: libretro: reject a state smaller than the core's own
+
+retro_unserialize() had its size check commented out and copied a full
+DoubleCherryGB state (megabytes) out of whatever it was given. RetroArch
+keeps one save state folder per system, so a .state.auto left by
+gambatte or mGBA for the same game (9.6 KB here) made it read past the
+buffer: SIGSEGV in memcpy two seconds after the game opened. A state
+smaller than retro_serialize_size() is now refused, RetroArch says the
+--- a/libretro/libretro.cpp
++++ b/libretro/libretro.cpp
+@@ -626,7 +626,8 @@
+ bool retro_unserialize(const void *data, size_t size)
+ {
+ 
+-    // if (size == retro_serialize_size())
++    /* A state from another Game Boy core is far smaller than ours. */
++    if (size >= retro_serialize_size())
+     {
+         unsigned i;
+         uint8_t *ptr = (uint8_t *)data;

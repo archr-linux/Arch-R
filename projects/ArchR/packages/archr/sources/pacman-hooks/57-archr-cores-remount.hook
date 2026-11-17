@@ -1,0 +1,16 @@
+# RetroArch loads cores from /tmp/cores, an overlay of /usr/lib/libretro.
+# pacman replaces a core by renaming a new file over it, and the overlay
+# mounted before that kept serving the old one until the next boot: a
+# fixed core never reached the games. Mount it again after a transaction
+# that changes cores; the lazy unmount lets a running game keep its own.
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Operation = Remove
+Type = Path
+Target = usr/lib/libretro/*
+
+[Action]
+Description = Refreshing the RetroArch cores folder...
+When = PostTransaction
+Exec = /bin/sh -c 'mountpoint -q /tmp/cores || exit 0; umount -l /tmp/cores && systemctl restart tmp-cores.mount'
