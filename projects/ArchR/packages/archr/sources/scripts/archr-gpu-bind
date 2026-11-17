@@ -1,0 +1,88 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ArchR (https://github.com/archr-linux/Arch-R)
+#
+# archr-gpu-bind unbind|bind, run by pacman around a transaction that
+# touches the graphics libraries. gpudriver bind-mounts over files that
+# packages own: on libmali, every /usr/{lib,lib32}/mali library over the
+# Mesa/libglvnd/wayland one (libEGL, libGLES*, libgbm, libwayland-egl),
+# /dev/null over libGL.so and over the panfrost Vulkan ICD; on panfrost,
+# /dev/null over the mali Vulkan ICD. pacman could not replace a file
+# under a mount ("Device or resource busy") and an update of mesa kept
+# the old libgbm. unbind notes the mode and lazily lifts the mounts
+# (programs that have a library open keep it); bind puts back the set
+# gpudriver makes for that mode, over the new files.
+#
+# A mount made on a link lands on the file it points to
+# (libgbm.so.1 -> libgbm.so.1.0.0), whose name can change with a new
+# version, so mounts are found through /proc/self/mountinfo (field 4 is
+# the source inside its filesystem, field 5 the mount point) and made
+# on the link names, as gpudriver does.
+STATE=/run/archr-gpu-bind.mode
+ICDS=/usr/share/vulkan/icd.d
+
+# Mount points of the driver's binds: libraries from a mali folder, and
+# /dev/null over libGL or a Vulkan ICD. The GLES-only SDL2 binds belong
+# to archr-sdl-bind.
+driver_mounts() {
+  awk '$4 ~ "^/usr/lib(32)?/mali/" { print $5; next }
+       $4 == "/null" && $5 ~ "^(/usr/lib(32)?/libGL\\.so|/usr/share/vulkan/icd\\.d/)" { print $5 }' \
+    /proc/self/mountinfo
+}
+
+# Whether a path (a link is followed) already has a mount on it.
+mounted() {
+  target=$(readlink -f "$1") || return 1
+  awk -v t="${target}" '$5 == t { found = 1 } END { exit !found }' /proc/self/mountinfo
+}
+
+unbind() {
+  mode=""
+  if awk '$4 ~ "^/usr/lib/mali/" { found = 1 } END { exit !found }' /proc/self/mountinfo; then
+    mode=libmali
+  elif mounted "${ICDS}/mali.json"; then
+    mode=panfrost
+  fi
+  echo "${mode}" >"${STATE}"
+  # Stacked mounts come off one per call; repeat until none is left.
+  for _ in 1 2 3; do
+    points=$(driver_mounts)
+    [ -n "${points}" ] || break
+    for point in ${points}; do
+      umount -l "${point}" 2>/dev/null
+    done
+  done
+}
+
+bind() {
+  mode=$(cat "${STATE}" 2>/dev/null)
+  rm -f "${STATE}"
+  case "${mode}" in
+    libmali)
+      for dir in /usr/lib /usr/lib32; do
+        for lib in "${dir}"/mali/*; do
+          [ -f "${lib}" ] || continue
+          target="${dir}/${lib##*/}"
+          [ -e "${target}" ] && ! mounted "${target}" && mount --bind "${lib}" "${target}"
+        done
+        [ -e "${dir}/libGL.so" ] && ! mounted "${dir}/libGL.so" &&
+          mount --bind /dev/null "${dir}/libGL.so"
+      done
+      for icd in "${ICDS}"/panfrost_icd.*.json; do
+        [ -f "${icd}" ] && ! mounted "${icd}" && mount --bind /dev/null "${icd}"
+      done
+      ;;
+    panfrost)
+      [ -f "${ICDS}/mali.json" ] && ! mounted "${ICDS}/mali.json" &&
+        mount --bind /dev/null "${ICDS}/mali.json"
+      ;;
+  esac
+  return 0
+}
+
+case "$1" in
+  unbind) unbind ;;
+  bind) bind ;;
+  *) echo "usage: archr-gpu-bind unbind|bind" >&2; exit 2 ;;
+esac
+exit 0

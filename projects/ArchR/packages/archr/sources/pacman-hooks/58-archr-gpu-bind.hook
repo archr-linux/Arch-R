@@ -1,0 +1,31 @@
+# gpudriver bind-mounts the active driver's libraries and Vulkan ICDs over
+# files that mesa, libglvnd, wayland and libmali own; lift the mounts
+# around a transaction that touches them so pacman can replace the files
+# (see /usr/bin/archr-gpu-bind).
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Operation = Remove
+Type = Path
+Target = usr/lib/libEGL.so*
+Target = usr/lib/libGLESv1_CM.so*
+Target = usr/lib/libGLESv2.so*
+Target = usr/lib/libgbm.so*
+Target = usr/lib/libwayland-egl.so*
+Target = usr/lib/libMaliOpenCL.so*
+Target = usr/lib/libGL.so*
+Target = usr/lib/mali/*
+Target = usr/lib32/libEGL.so*
+Target = usr/lib32/libGLESv1_CM.so*
+Target = usr/lib32/libGLESv2.so*
+Target = usr/lib32/libgbm.so*
+Target = usr/lib32/libwayland-egl.so*
+Target = usr/lib32/libMaliOpenCL.so*
+Target = usr/lib32/libGL.so*
+Target = usr/lib32/mali/*
+Target = usr/share/vulkan/icd.d/*
+
+[Action]
+Description = Restoring the GPU driver mounts...
+When = PostTransaction
+Exec = /usr/bin/archr-gpu-bind bind
