@@ -244,6 +244,16 @@ check "install holds a sleep, shutdown and keys inhibitor" "$(cut -d' ' -f1-2 "$
 check "pacman output in the log" "$(grep -c '^upgrading linux...' "${TMP}/log/archr-update.log")" 1
 check "a successful install empties the cache" "$(find "${TMP}/storage-cache" -name '*.pkg.tar*' | wc -l | tr -d ' ')" 0
 
+# Packages already current (installed by archr-update update or pacman):
+# the run has nothing to do and still records the release's version.
+cp "${TMP}/offered" "${TMP}/offered.keep"
+: >"${TMP}/offered"
+reset
+OUT=$(run)
+check "up to date: exit 0, nothing installed" "$?|$(field count <<<"${OUT}")|$(grep -c 'pacman -Su ' "${TMP}/calls")" "0|0|0"
+check "up to date: version recorded" "$(cat "${TMP}/state/version")|$(field new_version <<<"${OUT}")" "2.1.2|2.1.2"
+mv "${TMP}/offered.keep" "${TMP}/offered"
+
 reset
 OUT=$(FAKE_DOWNLOAD_FAIL=retroarch run)
 check "download failure: exit 1" "$?" 1

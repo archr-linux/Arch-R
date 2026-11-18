@@ -652,7 +652,10 @@ cmd_update_progress() {
     fetch_notes
     if [ -z "${targets}" ]; then
         logf "update: nothing to do on ${BRANCH}"
-        emit "\"phase\":\"done\",\"count\":0,$(reboot_fields ""),\"old_version\":$(json "${old}"),\"new_version\":$(json "${old}")"
+        # Up to date is the release's state too: an update installed some
+        # other way (archr-update update, pacman -Syu) gets its id here.
+        record_new_version
+        emit "\"phase\":\"done\",\"count\":0,$(reboot_fields ""),\"old_version\":$(json "${old}"),\"new_version\":$(json "$(os_version)")"
         return 0
     fi
     COUNT=$(wc -l <<<"${targets}")
@@ -671,10 +674,7 @@ cmd_update_progress() {
         fail battery "Battery at ${low}%; connect the charger (needs ${MIN_BATTERY}%)."
     run_install
     drop_cache
-    if [ -n "${NEW_VERSION}" ]; then
-        mkdir -p "${UPDATE_STATE}" && echo "${NEW_VERSION}" >"${UPDATE_STATE}/version"
-        is_update_id "${NEW_VERSION}" && record_update_id "${NEW_VERSION}"
-    fi
+    record_new_version
     logf "update: done"
     emit "\"phase\":\"done\",\"count\":${COUNT},$(reboot_fields "${reason}"),\"old_version\":$(json "${old}"),\"new_version\":$(json "$(os_version)")"
 }
@@ -692,6 +692,15 @@ is_update_id() {
 
 record_update_id() {
     mkdir -p "${UPDATE_STATE}" && echo "$1" >"${UPDATE_STATE}/update-id"
+}
+
+# The network release's version (fetch_notes' NEW_VERSION) as installed.
+record_new_version() {
+    [ -n "${NEW_VERSION}" ] || return 0
+    mkdir -p "${UPDATE_STATE}" && echo "${NEW_VERSION}" >"${UPDATE_STATE}/version"
+    if is_update_id "${NEW_VERSION}"; then
+        record_update_id "${NEW_VERSION}"
+    fi
 }
 
 # The id of the last update this console installed, or nothing.
@@ -945,7 +954,10 @@ cmd_update() {
     write_mirrorlist
     seed_local_db || return 1
     ensure_key
-    pacman -Syu --noconfirm && drop_cache
+    pacman -Syu --noconfirm || return
+    drop_cache
+    fetch_notes
+    record_new_version
 }
 
 cmd_info() {
