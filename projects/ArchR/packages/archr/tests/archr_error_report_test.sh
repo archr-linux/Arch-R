@@ -65,7 +65,9 @@ fake() { printf '#!/bin/bash\n%s\n' "$2" >"${B}/$1"; chmod +x "${B}/$1"; }
 fake archr-report "ARCHR_REPORT_ROOT='${R}' exec bash '${SCRIPTS}/archr-report' \"\$@\""
 fake pacman 'echo "archr 20261110-1"; echo "archr-launcher 1:0.git-1"; echo "query: $*"'
 fake dmesg 'cat "'"${TMP}"'/dmesg" 2>/dev/null'
-fake journalctl 'cat "'"${TMP}"'/journal" 2>/dev/null'
+# -b <id> reads ${TMP}/journal-<id> when there is one; anything else ${TMP}/journal.
+fake journalctl 'id=""; while [ $# -gt 0 ]; do [ "$1" = -b ] && id=$2; shift; done
+if [ -n "${id}" ] && [ -f "'"${TMP}"'/journal-${id}" ]; then cat "'"${TMP}"'/journal-${id}"; else cat "'"${TMP}"'/journal" 2>/dev/null; fi'
 fake systemctl 'printf "Result=exit-code\nExecMainCode=1\nExecMainStatus=1\nNRestarts=0\nFragmentPath=/usr/lib/systemd/system/archr-x.service\n"'
 fake ip 'cat "'"${TMP}"'/route" 2>/dev/null'
 fake gpudriver 'echo libmali'
@@ -167,6 +169,47 @@ check "and the end of its journal" "$(grep -c '^--- journal of that boot' "$(gre
 check "naming that boot" "$(grep -c '^boot: -1 abc Sun 2026-11-15 11:48:13' "$(grep -l '^exit: abrupt' "${Q}"/*.txt)")" "1"
 rm -f "${TMP}/journal"
 rm -f "${R}/sys/fs/pstore/console-ramoops-0" "${R}/sys/fs/pstore/dmesg-ramoops-0"
+
+# The journal orders boots by their clock: with the clock gone wrong (a
+# first boot on 2026-11-28, then the real date), an older boot sorts last
+# and -b -1 is not the boot that ended. The boot's own id picks it.
+# (The queue and today's count are put back after: the limit test counts.)
+SAVED=$(mktemp -d)
+cp -a "${Q}" "${SAVED}/queue"; cp -a "${R}/storage/.cache/error-reports/today" "${SAVED}/today"
+mkdir -p "${R}/proc/sys/kernel/random"
+abrupt_report() { grep -l "^previous boot started: $1" "${Q}"/*.txt; }
+echo 'aaaa0001-0000-4000-8000-000000000001' >"${R}/proc/sys/kernel/random/boot_id"
+report shutdown
+report boot
+check "the boot keeps its id" "$(cat "${R}/storage/.cache/error-reports/boot-id")" "aaaa0001000040008000000000000001"
+echo 'bbbb0002-0000-4000-8000-000000000002' >"${R}/proc/sys/kernel/random/boot_id"
+echo '2026-11-18 05:47:04 -0500' >"${M}"
+printf ' -2 aaaa0001000040008000000000000001 Wed 2026-11-18 05:47:04 EST Wed 2026-11-18 05:49:50 EST
+ -1 cccc0003000040008000000000000003 Sat 2026-11-28 03:02:20 EST Sat 2026-11-28 03:02:54 EST
+  0 bbbb0002000040008000000000000002 Wed 2026-11-18 05:50:01 EST Wed 2026-11-18 05:50:03 EST
+' >"${TMP}/journal"
+printf '[  170.2] the end of the boot that froze
+' >"${TMP}/journal-aaaa0001000040008000000000000001"
+report boot
+F=$(abrupt_report '2026-11-18 05:47:04')
+check "clock jumped: the boot that ended, by its id" "$(grep -c '^boot: -2 aaaa0001000040008000000000000001 Wed' "${F}")" "1"
+check "clock jumped: its own journal" "$(grep -c 'the end of the boot that froze' "${F}")" "1"
+check "clock jumped: never the boot sorted last" "$(grep -c 'cccc0003' "${F}")" "0"
+echo '2026-11-18 05:50:01 -0500' >"${M}"
+echo 'dddd0004-0000-4000-8000-000000000004' >"${R}/proc/sys/kernel/random/boot_id"
+printf ' -1 aaaa0001000040008000000000000001 Wed 2026-11-18 05:47:04 EST Wed 2026-11-18 05:49:50 EST
+  0 dddd0004000040008000000000000004 Wed 2026-11-18 05:52:00 EST Wed 2026-11-18 05:52:03 EST
+' >"${TMP}/journal"
+report boot
+F=$(abrupt_report '2026-11-18 05:50:01')
+check "a boot the journal never got: said so" "$(grep -c '^boot bbbb0002000040008000000000000002: not in the journal' "${F}")" "1"
+rm -f "${R}/storage/.cache/error-reports/boot-id"
+echo '2026-11-18 05:52:00 -0500' >"${M}"
+report boot
+F=$(abrupt_report '2026-11-18 05:52:00')
+check "a mark from before the id: the last but one, as before" "$(grep -c '^boot: -1 aaaa0001' "${F}")" "1"
+rm -f "${TMP}/journal" "${TMP}"/journal-*
+rm -rf "${Q}"; cp -a "${SAVED}/queue" "${Q}"; cp -a "${SAVED}/today" "${R}/storage/.cache/error-reports/today"; rm -rf "${SAVED}"
 
 # --- the daily limit: 10 created a day ---
 for n in 1 2 3 4 5 6 7; do game 1 "error: case ${n}${n}${n}x\n" "g${n}.z64"; done

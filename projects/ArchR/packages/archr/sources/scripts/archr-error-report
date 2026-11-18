@@ -667,11 +667,19 @@ kernel() {
 # with the end of that boot's console log when pstore kept it. A panic in
 # pstore is the kernel report instead.
 BOOTMARK="${DIR}/running"
+# The journal's id of this boot, and of the one before (.previous). The
+# journal orders boots by their clock: on a console whose clock jumped (no
+# network yet, a wrong date) an older boot can sort after the real last
+# one, and "the boot before this one" (-b -1) is then another boot.
+BOOTID="${DIR}/boot-id"
 
 boot() {
   local previous=""
   [ -f "${BOOTMARK}" ] && previous=$(head -c 200 "${BOOTMARK}" 2>/dev/null)
   mkdir -p "${DIR}" && date '+%Y-%m-%d %H:%M:%S %z' >"${BOOTMARK}"
+  rm -f "${BOOTID}.previous"
+  [ -f "${BOOTID}" ] && mv -f "${BOOTID}" "${BOOTID}.previous"
+  tr -cd '0-9a-f' <"${ROOT}/proc/sys/kernel/random/boot_id" >"${BOOTID}" 2>/dev/null
   enabled || return 0
   KERNEL_NEW=
   kernel
@@ -688,7 +696,7 @@ shutdown() {
 abrupt() {
   local since=$1
   build() {
-    local f boots
+    local f boots id line
     echo "event: kernel"
     echo "what: previous boot ended without a shutdown (a freeze, a reset or a power cut)"
     echo "exit: abrupt"
@@ -705,7 +713,18 @@ abrupt() {
     # (up to ~30 s). Its first and last entries tell it is that boot: one
     # that froze before the journal moved to the card is not there.
     boots=$(run journalctl --list-boots -q --no-pager)
-    if [ "$(printf '%s\n' "${boots}" | grep -c .)" -ge 2 ]; then
+    id=$(head -c 64 "${BOOTID}.previous" 2>/dev/null | tr -cd '0-9a-f')
+    if [ -n "${id}" ]; then
+      section "journal of that boot (last 150 lines)"
+      line=$(printf '%s\n' "${boots}" | grep -m 1 " ${id} ")
+      if [ -n "${line}" ]; then
+        echo "boot: $(printf '%s\n' "${line}" | sed 's/^[[:space:]]*//')"
+        run journalctl -b "${id}" -n 150 --no-pager -q -o short-monotonic | tail -n 150
+      else
+        echo "boot ${id}: not in the journal (it ended before its journal reached the card)"
+      fi
+    # A boot from before the id was kept: the last but one is the best guess.
+    elif [ "$(printf '%s\n' "${boots}" | grep -c .)" -ge 2 ]; then
       section "journal of that boot (last 150 lines)"
       echo "boot: $(printf '%s\n' "${boots}" | tail -n 2 | head -n 1 | sed 's/^[[:space:]]*//')"
       run journalctl -b -1 -n 150 --no-pager -q -o short-monotonic | tail -n 150
