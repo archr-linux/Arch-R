@@ -16,7 +16,7 @@ PKG_NAME="archr"
 # versions; the install silently skipped a PKG_INSTALL dir that did not
 # exist and the image assembly then failed in post_install.
 PKG_VERSION="$(date +%Y%m%d)"
-PKG_REV="42"
+PKG_REV="43"
 PKG_LICENSE="GPLv2"
 PKG_SITE=""
 PKG_URL=""
@@ -201,6 +201,15 @@ EOF
   mkdir -p ${INSTALL}/usr/lib/systemd/system/archr-battery-guard.service.d
   printf '[Service]\nKillMode=process\n' \
     >${INSTALL}/usr/lib/systemd/system/archr-battery-guard.service.d/10-killmode.conf
+  # Out of memory, the OOM killer takes the process it scores highest, and
+  # the GPU memory sway and the launcher map counts for them: on a 512 MB
+  # console it killed sway and left a black screen. They are protected;
+  # runemu.sh puts each game at 300, so the game goes first.
+  for unit in sway:-800 archr-launcher-session:-500; do
+    mkdir -p ${INSTALL}/usr/lib/systemd/system/${unit%%:*}.service.d
+    printf '[Service]\nOOMScoreAdjust=%s\n' "${unit#*:}" \
+      >${INSTALL}/usr/lib/systemd/system/${unit%%:*}.service.d/10-oom.conf
+  done
   # Error reports (archr-error-report): units, the wants links that enable
   # them and the OnFailure= drop-in, all packaged for the same reason.
   # The drop-in covers archr-*.service and the services the console needs;

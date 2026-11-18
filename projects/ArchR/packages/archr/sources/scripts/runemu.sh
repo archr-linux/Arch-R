@@ -19,6 +19,12 @@ if [ "$(get_setting system.loglevel)" = "verbose" ]; then
   set -x
 fi
 
+### When memory runs out, the game is what the OOM killer closes, never
+### the compositor or the launcher (they run at -800 and -500, and this
+### launch would inherit the launcher's). Everything the game starts
+### inherits 300.
+echo 300 >/proc/self/oom_score_adj 2>/dev/null
+
 ### Switch to performance mode early to speed up configuration and reduce time it takes to get into games.
 performance
 
