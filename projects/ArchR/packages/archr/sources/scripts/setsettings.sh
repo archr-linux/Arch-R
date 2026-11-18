@@ -155,9 +155,11 @@ declare -a NO_ANALOG=(  dreamcast
                         wonderswancolor
 )
 
-declare -a IS_32BIT=(   gpsp
-                        pcsx_rearmed
-)
+# The cores runemu.sh runs in the 32-bit RetroArch (retroarch32): the
+# same test, so filters and the video driver follow the binary that runs.
+function ra32_core() {
+    [[ "${CORE}" =~ pcsx_rearmed32 ]] || [[ "${CORE}" =~ gpsp ]] || [[ "${CORE}" =~ desmume ]]
+}
 
 declare -a CORE_RATIOS=(    4/3
                             16/9
@@ -381,11 +383,15 @@ function set_ra_menudriver() {
 # graphics_backend (per system or game: "opengl" or "vulkan") picks the
 # RetroArch video driver. Vulkan exists only while panfrost drives the GPU;
 # asked for on libmali it is ignored, so the game opens in GL instead of on
-# a black screen. Nothing set: RetroArch keeps its own video_driver.
+# a black screen. The 32-bit RetroArch is built without Vulkan: its cores
+# stay on gl too. Nothing set: RetroArch keeps its own video_driver.
 function set_ra_videodriver() {
     case "$(game_setting graphics_backend)" in
         vulkan)
-            if [ -d /sys/module/panfrost ]; then
+            if ra32_core; then
+                log "graphics_backend vulkan: ${CORE} runs in the 32-bit RetroArch, which has no Vulkan; staying on gl"
+                add_setting "none" "video_driver" "gl"
+            elif [ -d /sys/module/panfrost ]; then
                 add_setting "none" "video_driver" "vulkan"
             else
                 log "graphics_backend vulkan needs the panfrost driver; staying on gl"
@@ -721,8 +727,7 @@ function set_filter() {
         *)
             local FILTER_PATH="/usr/share/retroarch/filters"
             add_setting "none" "video_ctx_scaling" "false"
-            local CHECK_BITNESS="$(match ${CORE} ${IS_32BIT[@]})"
-            if [ "${CHECK_BITNESS}" = 1 ]
+            if ra32_core
             then
                 BITS="32"
             else
