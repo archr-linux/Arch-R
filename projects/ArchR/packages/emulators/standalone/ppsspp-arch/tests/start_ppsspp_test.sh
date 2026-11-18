@@ -19,6 +19,8 @@ fail() { echo "FAIL: $1"; FAILED=1; }
 expect() { [ "$2" = "$3" ] || fail "$1: got '$3', expected '$2'"; }
 
 mkdir -p "${TMP}/bin" "${TMP}/src/PSP/SYSTEM"
+# An SDL with Vulkan, as the image ships it.
+printf 'stuff VK_KHR_wayland_surface stuff' >"${TMP}/libSDL2.so"
 cp "${PKG}/sources/RK3326/ppsspp.ini" "${PKG}/sources/RK3326/controls.ini" "${TMP}/src/PSP/SYSTEM/"
 printf '#!/bin/sh\nexit 0\n' >"${TMP}/bin/ppsspp"
 chmod +x "${TMP}/bin/ppsspp"
@@ -34,6 +36,7 @@ sed -e "s#^\. /etc/profile#. ${TMP}/profile#" \
     -e "s#/storage/roms/savestates#${TMP}/states#g" \
     -e "s#^/usr/bin/cheevos_ppsspp.sh#:#" \
     -e "s#/sys/module/panfrost#${TMP}/panfrost#g" \
+    -e "s#/usr/lib/libSDL2-2.0.so.0#${TMP}/libSDL2.so#g" \
     "${PKG}/scripts/start_ppsspp.sh" >"${TMP}/start.sh"
 bash -n "${TMP}/start.sh" || fail "start_ppsspp.sh syntax"
 INI="${TMP}/conf/PSP/SYSTEM/ppsspp.ini"
@@ -106,6 +109,11 @@ expect "vulkan without panfrost" "0 (OPENGL)" "$(key GraphicsBackend "${INI}")"
 mkdir -p "${TMP}/panfrost"
 run "psp.graphics_backend=vulkan"
 expect "vulkan with panfrost" "3 (VULKAN)" "$(key GraphicsBackend "${INI}")"
+# Panfrost but an SDL without Vulkan: OpenGL, not an abort.
+printf 'no vulkan here' >"${TMP}/libSDL2.so"
+run "psp.graphics_backend=vulkan"
+expect "vulkan without it in SDL" "0 (OPENGL)" "$(key GraphicsBackend "${INI}")"
+printf 'stuff VK_KHR_wayland_surface stuff' >"${TMP}/libSDL2.so"
 rmdir "${TMP}/panfrost"
 run
 expect "player vulkan without panfrost" "0 (OPENGL)" "$(key GraphicsBackend "${INI}")"

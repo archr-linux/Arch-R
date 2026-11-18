@@ -84,12 +84,20 @@ fi
 	[ -n "${FSKIP}" ] && ini_set FrameSkip "${FSKIP}"
 
   #Graphics Backend. Vulkan exists only while panfrost drives the GPU: on
-  #libmali a Vulkan backend, set here or in PPSSPP, would not start.
+  #libmali a Vulkan backend, set here or in PPSSPP, would not start. The
+  #SDL the system loads must have Vulkan too: an SDL2 from before the
+  #Vulkan update, or the glesonly copy the libmali mode mounts, has none,
+  #and PPSSPP then aborts ("Vulkan support is either not configured in
+  #SDL") instead of opening the game.
+	SDL_LIB=/usr/lib/libSDL2-2.0.so.0
+	sdl_vulkan() { grep -q VK_KHR_wayland_surface "$(readlink -f "${SDL_LIB}")" 2>/dev/null; }
 	case "${GRENDERER}" in
 		opengl) ini_set GraphicsBackend "0 (OPENGL)" ;;
 		vulkan) ini_set GraphicsBackend "3 (VULKAN)" ;;
 	esac
-	if [ ! -d /sys/module/panfrost ] && grep -q '^GraphicsBackend = 3' "${INI}"; then
+	if grep -q '^GraphicsBackend = 3' "${INI}" && { [ ! -d /sys/module/panfrost ] || ! sdl_vulkan; }; then
+		echo "Vulkan unavailable here (panfrost $([ -d /sys/module/panfrost ] && echo on || echo off), SDL $(sdl_vulkan && echo with || echo without) Vulkan): OpenGL"
+
 		GRENDERER="opengl"
 		ini_set GraphicsBackend "0 (OPENGL)"
 	fi
