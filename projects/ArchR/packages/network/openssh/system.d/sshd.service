@@ -8,7 +8,10 @@ StartLimitIntervalSec=0
 [Service]
 Restart=on-failure
 EnvironmentFile=-/var/lib/archr/services/sshd.conf
-ExecStartPre=-/bin/sh -c 'mkdir -p /var/lib/sshd'
+# /var/lib/sshd links to /storage/.cache/ssh: mkdir -p on the link does
+# nothing when that folder is gone, and ssh-keygen -A then saves no key
+# yet exits 0 (sshd failed every 2 s, for ever). Make the link's target.
+ExecStartPre=-/bin/sh -c 'mkdir -p "$$(readlink -f /var/lib/sshd)"'
 ExecStartPre=/usr/bin/ssh-keygen -A
 ExecStartPre=-/bin/sh -c 'chmod 600 /var/lib/sshd/ssh_host_*'
 ExecStartPre=-/bin/sh -c 'chmod 644 /var/lib/sshd/ssh_host_*.pub'
