@@ -92,6 +92,9 @@ fi
 
 if [ "${VULKAN_SUPPORT}" = "yes" ]; then
   PKG_DEPENDS_TARGET+=" ${VULKAN} vulkan-tools"
+  # A console that gets Vulkan through an update has neither yet; pacman
+  # pulls them in with mesa (vulkaninfo is what the docs ask ports to run).
+  PKG_PACMAN_DEPENDS="vulkan-loader vulkan-tools"
   PKG_MESON_OPTS_TARGET+=" -Dvulkan-drivers=${VULKAN_DRIVERS_MESA// /,}"
 else
   PKG_MESON_OPTS_TARGET+=" -Dvulkan-drivers="
