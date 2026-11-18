@@ -20,8 +20,11 @@
 ################################################################################
 
 PKG_NAME="ppsspp-lr"
-PKG_VERSION="fa50bb1976065c4f8b1b47af227d367fe9771555" # v1.20.4
-PKG_REV="2"
+# v1.20.2: v1.20.4 runs the emulation thread about 5x slower on the RK3326
+# (God of War title menu 19.8% speed against 100.1%, same config, OpenGL
+# and Vulkan alike). Back to v1.20.2 until that is found upstream.
+PKG_VERSION="afbc66a318b86432642b532c575241f3716642ef" # v1.20.2
+PKG_REV="3"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/hrydgard/ppsspp"
 PKG_URL="https://github.com/hrydgard/ppsspp.git"

@@ -4,10 +4,13 @@
 
 PKG_NAME="ppsspp-arch"
 PKG_REPLACES="ppsspp-sa"
-PKG_REV="4"
+PKG_REV="5"
 PKG_SITE="https://github.com/hrydgard/ppsspp"
 PKG_URL="${PKG_SITE}.git"
-PKG_VERSION="fa50bb1976065c4f8b1b47af227d367fe9771555" # v1.20.4
+# v1.20.2: v1.20.4 runs the emulation thread about 5x slower on the RK3326
+# (God of War title menu 19.8% speed against 100.1%, same config, OpenGL
+# and Vulkan alike). Back to v1.20.2 until that is found upstream.
+PKG_VERSION="afbc66a318b86432642b532c575241f3716642ef" # v1.20.2
 CHEAT_DB_VERSION="7c9fe1ae71155626cea767aed53f968de9f4051f" # Update cheat.db (17/01/2026)
 PKG_LICENSE="GPLv2"
 PKG_DEPENDS_TARGET="toolchain libzip SDL2 zlib zip"
@@ -58,12 +61,10 @@ then
                            -DMESA_EGL_NO_X11_HEADERS=1"
   # Vulkan is built in but stays opt-in (graphics_backend per system):
   # it only exists with panfrost, and libmali is the default driver.
-  GRENDERER="0 (OPENGL)"
 else
   PKG_CMAKE_OPTS_TARGET+=" -DVULKAN=OFF \
                            -DUSE_VULKAN_DISPLAY_KHR=OFF \
                            -DUSING_X11_VULKAN=OFF"
-  GRENDERER="0 (OPENGL)"
 fi
 
 if [ "${DISPLAYSERVER}" = "wl" ]; then
@@ -105,9 +106,3 @@ makeinstall_target() {
   curl -Lo ${INSTALL}/usr/config/ppsspp/PSP/Cheats/cheat.db https://raw.githubusercontent.com/Saramagrean/CWCheat-Database-Plus-/${CHEAT_DB_VERSION}/cheat.db
 }
 
-# In the package, not post_install: post_install only edits the image, so a
-# pacman update shipped the @GRENDERER@ placeholder and PPSSPP aborted on
-# the GraphicsBackend it wrote (std::bad_cast).
-post_makeinstall_target() {
-  sed -e "s/@GRENDERER@/${GRENDERER}/g" -i ${INSTALL}/usr/bin/start_ppsspp.sh
-}
