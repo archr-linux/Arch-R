@@ -1,0 +1,11 @@
+# The update each official release matches: a system on that update or a
+# later one has reached that release (archr-update release). One line per
+# release, "<update id> <release>", oldest first. Add a release's line when
+# it is published, in the update that goes out with it: before that, no
+# console may show it.
+# The images up to 3.0.3 carry no release name; their update is the image
+# date (os-release VERSION).
+20261105 3.0
+20261108 3.0.1
+20261113 3.0.2
+20261115 3.0.3

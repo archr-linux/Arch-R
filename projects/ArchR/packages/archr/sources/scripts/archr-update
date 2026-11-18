@@ -19,13 +19,14 @@
 #
 #   archr-update check --json
 #     One JSON object on stdout and exit 0, also when nothing is pending:
-#       {"os_version":"2.1.1","channel":"stable","total":1,
+#       {"os_version":"2.1.1","release":"3.0.3","channel":"stable","total":1,
 #        "download_size":32925696,"reboot_required":true,
 #        "reboot_reason":"kernel","new_version":"2.1.2","news":"...",
 #        "packages":[{"name":"linux","old":"6.12.94-3","new":"6.12.95-1",
 #                     "size":32925696}]}
 #     "old" is empty for a new dependency, "size" is the download in bytes.
 #     reboot_reason is "kernel", "launcher" or "" (no restart needed).
+#     release is the release the system has reached ("" for none).
 #     A failure is {"error":"<reason>","message":"..."} and exit 1; a
 #     refusal (busy, network, battery, space, cancelled: the console's
 #     state, not a fault) exits 75 instead.
@@ -137,6 +138,7 @@
 : "${PACMAN_DB:=/var/lib/pacman}"
 : "${PACMAN_CACHE:=/var/cache/pacman/pkg}"
 : "${OS_RELEASE:=/etc/os-release}"
+: "${RELEASES:=/usr/share/archr/releases}"
 : "${IMAGE_DB:=/usr/share/archr/pacman-image-db.tar.gz}"
 : "${UPDATE_LOG:=/storage/.config/archr-update.log}"
 : "${UPDATE_LOCK:=/run/archr-update.lock}"
@@ -198,6 +200,7 @@ Usage: ${0##*/} [check [--json]|update [--progress] [--from TAR]|offline [--json
   info      Show current OS version, channel, and configured mirror.
   seed      Record this image's packages in an empty pacman database.
   version   Print the system's version.
+  release   Print the release the system has reached (its image's, or a later one updated to).
 
 Channel is configured via system.cfg "updates.branch"; only stable is
 published, any other value reads stable.
@@ -354,6 +357,27 @@ os_version() {
     fi
 }
 
+# The release the system has reached: the last one in RELEASES ("<update>
+# <release>", the update each release's images match) whose update this
+# system has, and never below the release its image was published as
+# (os-release's ARCHR_RELEASE, official images from 3.1.0 on). A 3.0.3 card
+# updated past 3.1.0's update is 3.1.0. Nothing for a community image that
+# has reached no release.
+system_release() {
+    local version release update name
+    version="$(os_version)"
+    release="$(sed -n 's/^ARCHR_RELEASE="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "${OS_RELEASE}")"
+    while read -r update name; do
+        case "${update}" in "" | "#"*) continue ;; esac
+        [ "$(printf '%s\n%s\n' "${update}" "${version}" | sort -V | tail -n 1)" = "${version}" ] ||
+            continue
+        [ -z "${release}" ] ||
+            [ "$(printf '%s\n%s\n' "${release}" "${name}" | sort -V | tail -n 1)" = "${name}" ] &&
+            release="${name}"
+    done <"${RELEASES}" 2>/dev/null
+    printf '%s' "${release}"
+}
+
 # pacman's last error line in an output file, else its last line.
 last_error() {
     local line
@@ -472,7 +496,7 @@ cmd_check_json() {
         size=$((size + bytes))
     done <<<"${targets}"
     logf "check: ${total} package(s), ${size} bytes on ${BRANCH}"
-    emit "\"os_version\":$(json "$(os_version)"),\"channel\":$(json "${BRANCH}"),\"total\":${total},\"download_size\":${size},$(reboot_fields "$(reboot_reason <<<"${targets}")"),\"new_version\":$(json "${NEW_VERSION}"),\"news\":$(json "${NEWS}"),\"packages\":[${packages}]"
+    emit "\"os_version\":$(json "$(os_version)"),\"release\":$(json "$(system_release)"),\"channel\":$(json "${BRANCH}"),\"total\":${total},\"download_size\":${size},$(reboot_fields "$(reboot_reason <<<"${targets}")"),\"new_version\":$(json "${NEW_VERSION}"),\"news\":$(json "${NEWS}"),\"packages\":[${packages}]"
 }
 
 ### update --progress
@@ -961,7 +985,9 @@ cmd_update() {
 }
 
 cmd_info() {
-    echo "OS:         ${OS_NAME:-ArchR} ${OS_VERSION:-?}"
+    local release
+    release="$(system_release)"
+    echo "OS:         ${OS_NAME:-ArchR} ${release:+v${release} · }$(os_version)"
     echo "Build:      ${OS_BUILD:-?}"
     echo "Channel:    ${BRANCH}"
     echo "Mirror:     ${REPO}/repo-${BRANCH}"
@@ -975,6 +1001,12 @@ if [ "${1:-}" = seed ]; then
 fi
 if [ "${1:-}" = version ]; then
     os_version
+    exit 0
+fi
+# The release reached ("3.0.3"), or nothing: Settings shows "v3.0.3 · <version>".
+if [ "${1:-}" = release ]; then
+    release="$(system_release)"
+    [ -z "${release}" ] || echo "${release}"
     exit 0
 fi
 

@@ -41,6 +41,14 @@ EOF
 printf 'linux 6.12.94-3\nretroarch 1.21.0-3\nmesa 26.2.1-1\n' >"${TMP}/installed"
 printf 'linux 6.12.95-1 3000\nretroarch 1.22.0-1 2000\nlibnew 1.0-1 1000\n' >"${TMP}/offered"
 
+# The Arch R key is in the keyring: the host's own pacman-key never runs.
+cat >"${TMP}/bin/pacman-key" <<'EOF'
+#!/bin/bash
+echo "pacman-key $*" >>"${FAKE}/calls"
+exit 0
+EOF
+chmod +x "${TMP}/bin/pacman-key"
+
 cat >"${TMP}/bin/pacman" <<'EOF'
 #!/bin/bash
 # Fake pacman: just enough of -Q, -Sy, -Sup, -Suw and -Su for archr-update.
@@ -169,6 +177,7 @@ OUT=$(run)
 check "check exits 0" "$?" 0
 check "check is one valid JSON line" "$(printf '%s\n' "${OUT}" | python3 -c 'import json,sys; [json.loads(l) for l in sys.stdin]; print(1)' 2>&1)" 1
 check "check os version" "$(field os_version <<<"${OUT}")" 2.1.1
+check "check release: none reached" "$(field release <<<"${OUT}")" ""
 # next has no published repo tag yet: it falls back to stable.
 check "check channel" "$(field channel <<<"${OUT}")" stable
 check "check total" "$(field total <<<"${OUT}")" 3
@@ -521,5 +530,30 @@ check "fake-suspend: free lock" "$(check_update_running && echo held || echo fre
 flock -n 8
 check "fake-suspend: held lock" "$(check_update_running && echo held || echo free)" held
 flock -u 8
+
+### release: the release the system has reached
+# The images up to 3.0.3 name no release: the table says which update each
+# release matches. A card flashed with 3.0.3 shows 3.0.3, and 3.1.0 once its
+# updates reach 3.1.0's; an image from 3.1.0 on names its own in os-release.
+reset
+printf 'VERSION="2.1.1"\nBUILD_ID="abc"\n' >"${TMP}/os-release"
+printf '# comment\n2.1.0 3.0.2\n2.1.1 3.0.3\n2.1.2 3.1.0\n' >"${TMP}/releases"
+ARGS=(release)
+check "release: the image's" "$(run RELEASES="${TMP}/releases")" 3.0.3
+mkdir -p "${TMP}/state"
+echo 2.1.1.4 >"${TMP}/state/version"
+check "release: an update short of the next release" "$(run RELEASES="${TMP}/releases")" 3.0.3
+echo 2.1.2 >"${TMP}/state/version"
+check "release: updated to the next release's update" "$(run RELEASES="${TMP}/releases")" 3.1.0
+echo 2.1.3.1 >"${TMP}/state/version"
+check "release: and past it" "$(run RELEASES="${TMP}/releases")" 3.1.0
+reset
+cp "${TMP}/os-release" "${TMP}/os-release.saved"
+echo 'ARCHR_RELEASE="3.1.0"' >>"${TMP}/os-release"
+check "release: an image that names its own, before the table has it" "$(run RELEASES="${TMP}/releases.none")" 3.1.0
+mv "${TMP}/os-release.saved" "${TMP}/os-release"
+check "release: no table, no name: nothing" "$(run RELEASES="${TMP}/releases.none")" ""
+ARGS=(info)
+check "info: the release before the version" "$(run RELEASES="${TMP}/releases" | head -n 1)" "OS:         ArchR v3.0.3 · 2.1.1"
 
 exit ${FAILED}
