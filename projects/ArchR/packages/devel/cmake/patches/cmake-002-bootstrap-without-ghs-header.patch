@@ -1,0 +1,22 @@
+cmake bootstrap: leave the GHS generator header out
+
+The bootstrap never registers cmGlobalGhsMultiGenerator (its factory is
+behind !CMAKE_BOOTSTRAP) and does not build its source, but cmake.cxx
+still includes the header, whose inline NewFactory() instantiates the
+factory template. Built with GCC 16 at -O2, cmake::CreateGlobalGenerator
+then refers to the generator directly and the bootstrap fails to link:
+undefined reference to cmGlobalGhsMultiGenerator(cmake*) and
+GetDocumentation(). Include the header only where it is used.
+
+--- a/Source/cmake.cxx	2024-08-29 16:37:11.000000000 -0300
++++ b/Source/cmake.cxx	2026-11-18 12:54:09.675937437 -0300
+@@ -130,7 +130,8 @@
+ 
+ // NOTE: the __linux__ macro is predefined on Android host too, but
+ // main CMakeLists.txt filters out this generator by host name.
+-#if (defined(__linux__) && !defined(__ANDROID__)) || defined(_WIN32)
++#if !defined(CMAKE_BOOTSTRAP) && \
++  ((defined(__linux__) && !defined(__ANDROID__)) || defined(_WIN32))
+ #  include "cmGlobalGhsMultiGenerator.h"
+ #endif
+ 
