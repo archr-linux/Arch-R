@@ -228,6 +228,11 @@
 	 */
 	archr,shared-vqmmc;
 	archr,first-detect-delay-ms = <1000>;
+	/* High speed at 3.3 V only, as &sdmmc below. */
+	/delete-property/ sd-uhs-sdr12;
+	/delete-property/ sd-uhs-sdr25;
+	/delete-property/ sd-uhs-sdr50;
+	/delete-property/ sd-uhs-sdr104;
 };
 
 /*
@@ -240,6 +245,20 @@
 	assigned-clocks = <&cru SCLK_SDMMC>;
 	assigned-clock-parents = <&cru SCLK_SDMMC_DIV50>;
 	archr,shared-vqmmc;
+	/*
+	 * No UHS-I on either slot: the Y3506 V03 to V05 vendor DTBs (and
+	 * dArkOSRE, which uses them) set no-1-8-v and no sd-uhs-* on both,
+	 * so both cards run high speed (50 MHz) with 3.3 V I/O. dw_mmc does
+	 * not read no-1-8-v in mainline; dropping the UHS caps is what keeps
+	 * the I/O at 3.3 V. With UHS, the slots fight over the one vccio_sd:
+	 * once TF1 runs SDR104 at 1.8 V, a card put in TF2 has to start at
+	 * 1.8 V instead of 3.3 V, and some cards (Lexar Silver, #59) lock up
+	 * there, warm, holding DAT0 low until the power goes off.
+	 */
+	/delete-property/ sd-uhs-sdr12;
+	/delete-property/ sd-uhs-sdr25;
+	/delete-property/ sd-uhs-sdr50;
+	/delete-property/ sd-uhs-sdr104;
 };
 
 &rk817_codec {
