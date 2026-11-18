@@ -279,11 +279,18 @@ rm -f "${TMP}/bin/archr-console-id"
 # after it stay (a port script's first line took a whole report with it).
 eval "$(sed -n '/^sanitize() {/,/^}/p' "${SCRIPT}")"
 san() { printf '%s\n' "$@" | sanitize | tr '\n' '|'; }
-# Nothing but ")\"" after the name reads as a value to come: the next line
-# goes too, the ones after stay.
-check "pwd in a closed command substitution keeps the rest of the file" \
+# pwd with no = or : after it is the command, not a name: the line stays.
+check "pwd in a command substitution keeps the line" \
   "$(san 'SCRIPT_DIR="$(cd -- "$(dirname -- "$0")" && pwd)"' 'cd "$SCRIPT_DIR"' 'GAMEDIR=/roms/ports/pes6')" \
-  'SCRIPT_DIR="$(cd -- "$(dirname -- "$0")" && pwd=<removed>|<linha removida>|GAMEDIR=/roms/ports/pes6|'
+  'SCRIPT_DIR="$(cd -- "$(dirname -- "$0")" && pwd)"|cd "$SCRIPT_DIR"|GAMEDIR=/roms/ports/pes6|'
+# PipeWire names its log topics pw.*: an open quote in one took a port's
+# whole run output with it.
+check "PipeWire log topics stay" \
+  "$(san 'pipewire[1178]: pw.context: 0x5a "default" no factory' 'next line')" \
+  'pipewire[1178]: pw.context: 0x5a "default" no factory|next line|'
+check "pw and pwd as names still go" \
+  "$(san 'pw=SECRET-a' 'pwd: SECRET-b' '"pw" : "SECRET-c"' 'after')" \
+  'pw=<removed>|pwd=<removed>|"pw=<removed>|after|'
 check "a quoted name, value on the same line" \
   "$(san '"token" : "abc123"' 'next line')" \
   '"token=<removed>|next line|'

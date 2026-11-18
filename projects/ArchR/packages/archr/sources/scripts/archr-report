@@ -53,11 +53,12 @@ LIMIT=15
 # Any line with a hint of a secret goes whole: "<prefix up to the secret
 # name>=<removed>", or "<linha removida>" when there is no name. The value
 # is never cut out alone. Hints:
-#   - a secret name as a word or suffix: pass, pw, pwd, token, secret,
+#   - a secret name as a word or suffix: pass, token, secret,
 #     key (never hotkey or keyboard), psk, auth, oauth, bearer, credential,
 #     senha, chave, cookie;
-#     user, username, login or a word with session used as a name
-#     ("user=", "SessionId:"; never "archr-launcher-session[12]:" or
+#     pw, pwd, user, username, login or a word with session used as a name
+#     ("pw=", "user=", "SessionId:"; never PipeWire's "pw.context:",
+#     "$(pwd)", "archr-launcher-session[12]:" or
 #     the path "/usr/bin/archr-launcher-session:"),
 #     and the URL fields u, t, p, pw, pwd, user, ssid and devid;
 #   - user:password@ (in a URL or not), or any @ after a URL's //;
@@ -99,8 +100,8 @@ sanitize() {
         at = length(line) - length(rest) + RSTART + RLENGTH - 1
         rest = substr(rest, RSTART + RLENGTH)
         if (word ~ /(pass|token|secret|psk|bearer|credential|cookie|senha|chave)/ ||
-            word ~ /^(pw|pwd|o?auth[a-z]*)$/ || word ~ /key$/ && word !~ /hotkey$/ ||
-            (word ~ /^(user(name)?|login)$/ || word ~ /session/ &&
+            word ~ /^o?auth[a-z]*$/ || word ~ /key$/ && word !~ /hotkey$/ ||
+            (word ~ /^(pw|pwd|user(name)?|login)$/ || word ~ /session/ &&
               substr(line, at - length(word), 1) !~ /[-\/]/) && rest ~ /^"?[[:space:]]*[=:]/) {
           named = at
           break
