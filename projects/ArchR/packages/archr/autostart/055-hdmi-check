@@ -13,6 +13,21 @@
 xres="$(cat /sys/class/graphics/fb0/modes 2>/dev/null | grep -o -P '(?<=:).*(?=p-)' | cut -dx -f1)"
 [ -z "${xres}" ] && xres=0
 
+# drm_tool opens /dev/dri/card0 and, as its first user, becomes DRM master:
+# had sway (seatd) opened the card meanwhile, it got "drm master: Device or
+# resource busy", no output, and the launcher a black screen (seen on an
+# R36S clone). So nothing here touches DRM unless an HDMI port reports a
+# display, and the script runs before the UI (not deferred).
+hdmi=0
+for status in /sys/class/drm/card*-HDMI-*/status; do
+  [ "$(cat "${status}" 2>/dev/null)" = connected ] && hdmi=1
+done
+if [ "${hdmi}" = 0 ]; then
+  echo 0 >/var/run/drmMode
+  echo 1 >/var/run/drmConn
+  exit 0
+fi
+
 # drm_tool source available at https://github.com/christianhaitian/drm_tool.git
 # Wrap with a timeout: drm_tool can block on the DRM master if
 # rockchipdrm is still binding, which on a slow microSD has been

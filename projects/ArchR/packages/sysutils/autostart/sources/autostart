@@ -103,11 +103,12 @@ systemctl start archr-automount
 ###     logging, pacman db...). Holding the UI for them cost the slowest
 ###     one of the lot on every boot. A script missing from this list
 ###     stays in phase B, so a new script never leaves the boot path
-###     unnoticed.
+###     unnoticed. 055-hdmi-check is not here: drm_tool racing sway for
+###     the DRM master left the screen black.
 GATE_SCRIPT="/usr/lib/autostart/common/001-setup"
 DEFERRED_SCRIPTS=" 003-logging 004-seed-pacmandb 007-rootpw 008-perfmode
   009-bluetooth 009-sleepmode 010-moonlight 010-pico8 010-uimode 020-rumble
-  020-set_audio_latency 055-hdmi-check 081-usbgadget 095-turbo-mode
+  020-set_audio_latency 081-usbgadget 095-turbo-mode
   096-powerled 098-deviceutils 099-networkservices 999-export "
 DEFERRED_LIST=" $(echo ${DEFERRED_SCRIPTS}) "
 # 111-sway-init reads DEVICE_HAS_DUAL_SCREEN, which 080-dual_screen_mode

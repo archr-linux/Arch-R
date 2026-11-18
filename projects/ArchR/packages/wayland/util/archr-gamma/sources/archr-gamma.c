@@ -21,6 +21,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <time.h>
 #include <unistd.h>
 #include <wayland-client.h>
 
@@ -44,6 +45,19 @@ static volatile sig_atomic_t reload = 1;
 
 static double gamma_value = 1.0;
 static int temperature = 6500;
+
+// sway's socket appears a moment after its unit starts: wait for it rather
+// than fail the boot (and its error report) for being early.
+static struct wl_display *connect_compositor(int seconds) {
+	struct timespec pause = {0, 250 * 1000 * 1000};
+	for (int n = 0; n < seconds * 4; n++) {
+		struct wl_display *display = wl_display_connect(NULL);
+		if (display)
+			return display;
+		nanosleep(&pause, NULL);
+	}
+	return NULL;
+}
 
 static void on_hup(int sig) {
 	(void)sig;
@@ -181,7 +195,7 @@ int main(int argc, char **argv) {
 	sa.sa_handler = on_hup;
 	sigaction(SIGHUP, &sa, NULL);
 
-	display = wl_display_connect(NULL);
+	display = connect_compositor(60);
 	if (!display) {
 		fprintf(stderr, "archr-gamma: no compositor\n");
 		return 1;
