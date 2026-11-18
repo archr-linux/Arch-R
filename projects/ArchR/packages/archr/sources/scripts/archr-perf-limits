@@ -1,0 +1,89 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ArchR (https://github.com/archr-linux/Arch-R)
+#
+# archr-perf-limits: the user's CPU and GPU clock ceilings, and the GPU
+# benchmark. The launcher runs it for a module with the perf-limits
+# permission (system.call), never with the module's own arguments: each
+# value is checked here again against the kernel's own frequency tables.
+#
+#   archr-perf-limits cpu <kHz|default>   ceiling of the CPU, kept in system.cfg
+#   archr-perf-limits gpu <Hz|default>    ceiling of the GPU, kept in system.cfg
+#   archr-perf-limits apply               both, as saved (boot, after a game)
+#   archr-perf-limits gpu-bench           glmark2 off screen, ~10 s: "result score=<n>"
+#
+# The ceilings hold in games too: set_cpu_max_freq and set_gpu_min_freq
+# (099-freqfunctions) never go above them. Nothing here touches a voltage.
+
+. /etc/profile
+
+CPUFREQ=${CPUFREQ:-/sys/devices/system/cpu/cpufreq}
+GPU=${GPU_FREQ:-/sys/devices/platform/ff400000.gpu/devfreq/ff400000.gpu}
+
+cpu_opps() {
+    cat "${CPUFREQ}/policy0/scaling_available_frequencies" "${CPUFREQ}/policy0/scaling_boost_frequencies" 2>/dev/null |
+        tr ' ' '\n' | grep -E '^[0-9]+$' | sort -n
+}
+gpu_opps() { tr ' ' '\n' <"${GPU}/available_frequencies" 2>/dev/null | grep -E '^[0-9]+$' | sort -n; }
+
+apply_cpu() {
+    # highest, limited by system.cpu.max_khz inside set_cpu_max_freq.
+    set_cpu_max_freq highest
+}
+
+apply_gpu() {
+    local top cap min
+    [ -e "${GPU}/max_freq" ] || return 0
+    top=$(gpu_opps | tail -n 1)
+    cap=$(user_gpu_cap)
+    [ -n "${cap}" ] && top=${cap}
+    [ -n "${top}" ] || return 0
+    # min_freq first when it would end above the new ceiling.
+    min=$(cat "${GPU}/min_freq" 2>/dev/null)
+    [[ "${min}" =~ ^[0-9]+$ ]] && [ "${min}" -gt "${top}" ] && echo "${top}" >"${GPU}/min_freq" 2>/dev/null
+    echo "${top}" >"${GPU}/max_freq"
+}
+
+case "$1" in
+    cpu)
+        if [ "$2" = default ]; then
+            del_setting system.cpu.max_khz
+        elif cpu_opps | grep -qx -- "$2"; then
+            set_setting system.cpu.max_khz "$2"
+        else
+            echo "archr-perf-limits: $2 is not a frequency of this CPU" >&2
+            exit 2
+        fi
+        apply_cpu
+        ;;
+    gpu)
+        if [ "$2" = default ]; then
+            del_setting system.gpu.max_hz
+        elif gpu_opps | grep -qx -- "$2"; then
+            set_setting system.gpu.max_hz "$2"
+        else
+            echo "archr-perf-limits: $2 is not a frequency of this GPU" >&2
+            exit 2
+        fi
+        apply_gpu
+        ;;
+    apply)
+        apply_cpu || :
+        apply_gpu || :
+        ;;
+    gpu-bench)
+        export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/var/run/0-runtime-dir}
+        WAYLAND_DISPLAY=$(ls "${XDG_RUNTIME_DIR}" 2>/dev/null | grep -m1 '^wayland-[0-9]$')
+        export WAYLAND_DISPLAY
+        [ -n "${WAYLAND_DISPLAY}" ] || { echo "archr-perf-limits: no compositor" >&2; exit 1; }
+        score=$(timeout 14 glmark2-es2-wayland --off-screen --size 320x240 \
+            -b build:duration=2 -b texture:duration=2 -b shading:shading=phong:duration=2 \
+            -b terrain:duration=2 2>/dev/null | sed -n 's/.*glmark2 Score: *\([0-9][0-9]*\).*/\1/p')
+        [ -n "${score}" ] || exit 1
+        echo "result score=${score}"
+        ;;
+    *)
+        echo "usage: archr-perf-limits cpu <kHz|default> | gpu <Hz|default> | apply | gpu-bench" >&2
+        exit 2
+        ;;
+esac

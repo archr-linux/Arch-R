@@ -78,11 +78,25 @@ set_cpu_boost() {
 # Turbo OPPs (DT `turbo-mode`) live in scaling_boost_frequencies, NOT in
 # scaling_available_frequencies, even after cpufreq/boost=1. Combine
 # both so "highest" really hits 1512 MHz on RK3326 when the user's
-# turbo switch is on, and naturally falls back to 1416 when off (boost
-# file then reports an empty list). Returns non-zero when no policy was
+# turbo switch is on, and only then: the kernel lists the turbo OPP in
+# scaling_boost_frequencies with boost off too (seen on 6.12), so it is
+# read only while cpufreq/boost is 1. Returns non-zero when no policy was
 # pinned or a write failed.
+# The user's CPU ceiling (system.cpu.max_khz, set by archr-perf-limits):
+# one of this CPU's own frequencies in kHz, else nothing. No write to
+# scaling_max_freq goes above it, the per-launch one (--cpu-max) included.
+user_cpu_cap() {
+  local cap policy="${CPUFREQ:-/sys/devices/system/cpu/cpufreq}/policy0"
+  cap=$(get_setting system.cpu.max_khz 2>/dev/null)
+  [[ "${cap}" =~ ^[1-9][0-9]{4,7}$ ]] || return 0
+  cat "${policy}/scaling_available_frequencies" "${policy}/scaling_boost_frequencies" 2>/dev/null |
+    tr ' ' '\n' | grep -qx "${cap}" && echo "${cap}"
+  return 0
+}
+
 set_cpu_max_freq() {
-  local applied=0 failed=0
+  local applied=0 failed=0 cap
+  cap=$(user_cpu_cap)
   for POLICY in /sys/devices/system/cpu/cpufreq/policy[0-9]*; do
     [ -e "${POLICY}/scaling_max_freq" ] || continue
     [ -e "${POLICY}/scaling_available_frequencies" ] || continue
@@ -90,15 +104,18 @@ set_cpu_max_freq() {
     local target=""
     case ${1} in
       highest)
+        local boost=""
+        [ "$(cat "${POLICY}/../boost" 2>/dev/null)" = 1 ] && boost="${POLICY}/scaling_boost_frequencies"
         target=$( {
           cat "${POLICY}/scaling_available_frequencies" 2>/dev/null
-          cat "${POLICY}/scaling_boost_frequencies" 2>/dev/null
+          [ -n "${boost}" ] && cat "${boost}" 2>/dev/null
         } | tr ' ' '\n' | grep -E '^[0-9]+$' | sort -n | tail -n1)
         ;;
       *)
         target=${1}
         ;;
     esac
+    [ -n "${cap}" ] && [[ "${target}" =~ ^[0-9]+$ ]] && [ "${target}" -gt "${cap}" ] && target=${cap}
 
     if [ -n "${target}" ] && echo "${target}" >"${POLICY}/scaling_max_freq" 2>/dev/null; then
       applied=1
@@ -164,7 +181,7 @@ set_gpu_min_freq() {
   [ -e "${GPU_FREQ}/min_freq" ] || return
   [ -e "${GPU_FREQ}/available_frequencies" ] || return
 
-  local target=""
+  local target="" cap
   case ${1} in
     highest)
       target=$(tr ' ' '\n' <"${GPU_FREQ}/available_frequencies" | sort -n | tail -n1)
@@ -176,8 +193,22 @@ set_gpu_min_freq() {
       target=${1}
       ;;
   esac
+  # Never above the user's GPU ceiling (min_freq over max_freq fails).
+  cap=$(user_gpu_cap)
+  [ -n "${cap}" ] && [[ "${target}" =~ ^[0-9]+$ ]] && [ "${target}" -gt "${cap}" ] && target=${cap}
 
   [ -n "${target}" ] && echo "${target}" >"${GPU_FREQ}/min_freq" 2>/dev/null
+}
+
+# The user's GPU ceiling (system.gpu.max_hz, set by archr-perf-limits): one
+# of the GPU's own frequencies in Hz, else nothing.
+user_gpu_cap() {
+  local cap
+  cap=$(get_setting system.gpu.max_hz 2>/dev/null)
+  [[ "${cap}" =~ ^[1-9][0-9]{7,9}$ ]] || return 0
+  [ -e "${GPU_FREQ}/available_frequencies" ] || return 0
+  tr ' ' '\n' <"${GPU_FREQ}/available_frequencies" | grep -qx "${cap}" && echo "${cap}"
+  return 0
 }
 
 onlinethreads() {

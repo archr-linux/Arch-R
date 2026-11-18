@@ -1,0 +1,12 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ArchR (https://github.com/archr-linux/Arch-R)
+
+# The user's CPU and GPU clock ceilings (archr-perf-limits), after the
+# turbo switch (095-turbo-mode) decided which frequencies exist. Nothing
+# to do while neither is set.
+. /etc/profile.d/001-functions
+
+if [ -n "$(get_setting system.cpu.max_khz)" ] || [ -n "$(get_setting system.gpu.max_hz)" ]; then
+  /usr/bin/archr-perf-limits apply >/dev/null 2>&1 || :
+fi
