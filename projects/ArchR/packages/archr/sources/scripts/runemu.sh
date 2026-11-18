@@ -1019,6 +1019,15 @@ then
   fi
 fi
 
+### Save sync (archr-savesync): this game's system, in the background so
+### the menu is back at once; the folder under /storage/roms names it.
+if [ "$(get_setting savesync.enabled)" = "1" ]; then
+  SYNC_SYSTEM=${ROMNAME#/storage/roms/}
+  [ "${SYNC_SYSTEM}" = "${ROMNAME}" ] && SYNC_SYSTEM="" || SYNC_SYSTEM=${SYNC_SYSTEM%%/*}
+  setsid /usr/bin/archr-savesync sync --exit ${SYNC_SYSTEM:+--system "${SYNC_SYSTEM}"} \
+    >/dev/null 2>&1 </dev/null &
+fi
+
 ${VERBOSE} && log $0 "Checking errors: ${ret_error} "
 if [ "${ret_error}" == "0" ]
 then

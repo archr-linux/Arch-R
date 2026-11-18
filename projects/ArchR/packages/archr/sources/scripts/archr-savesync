@@ -1,0 +1,536 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ArchR (https://github.com/archr-linux/Arch-R)
+#
+# archr-savesync: keeps the saves in a folder shared by every console of the
+# user, a PC share (SMB) or a cloud remote of rclone. Three-way: each file is
+# compared with what both sides held at the last sync, so only what changed
+# travels; a save changed on both sides is a conflict, kept until the user
+# chooses, and the copy not chosen goes to <folder>/conflitos with the date.
+# Nothing is ever deleted on either side.
+#
+#   archr-savesync status                  the last sync and the conflicts (JSON)
+#   archr-savesync test                    reach the folder; consoles using it
+#   archr-savesync sync [--system S] [--boot] [--exit]
+#   archr-savesync resolve KEY local|remote
+#   archr-savesync password                the share password, read from stdin
+#
+# system.cfg: savesync.enabled, savesync.target (smb|cloud),
+# savesync.smb.address (\\HOST\Share\folder), savesync.smb.user,
+# savesync.cloud.path (in the rclone remote "archr"), savesync.on_boot,
+# savesync.on_exit, savesync.states. Every command prints one JSON object.
+import datetime
+import fcntl
+import filecmp
+import json
+import os
+import re
+import shutil
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+
+ROOT = os.environ.get("ARCHR_SAVESYNC_ROOT", "")  # tests: a scratch /storage
+CFG = ROOT + "/storage/.config/system/configs/system.cfg"
+HOME = ROOT + "/storage/.config/archr/savesync"
+STATE = HOME + "/state.json"
+LAST = HOME + "/last.json"
+PASS = HOME + "/smb.pass"
+PREVIOUS = HOME + "/anterior"  # the local copy a download replaced
+LOCK = os.environ.get("ARCHR_SAVESYNC_LOCK", "/run/archr-savesync.lock")
+ROMS = ROOT + "/storage/roms"
+PSP = ROOT + "/storage/.config/ppsspp/PSP"
+# The battery and memory-card saves RetroArch and the standalones write
+# next to the games.
+SAVE_EXT = {
+    ".srm", ".sav", ".sa1", ".eep", ".fla", ".sra", ".mpk", ".mcd", ".mcr",
+    ".mc", ".dsv", ".rtc", ".nv", ".hi", ".bkr", ".brm", ".ldci",
+}
+# Folders of /storage/roms that hold no saves of games.
+SKIP = {
+    "savestates", "bios", "backups", "bezels", "relatorios", "screenshots",
+    "retroarch-import", "ports", "videos", "images", "manuals", "SaveSync",
+}
+
+
+def out(obj, code=0):
+    print(json.dumps(obj, ensure_ascii=False))
+    sys.exit(code)
+
+
+def settings():
+    found = {}
+    try:
+        with open(CFG, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                key, sep, value = line.rstrip("\n").partition("=")
+                if sep and key.startswith("savesync."):
+                    found[key[len("savesync."):]] = value.strip()
+    except OSError:
+        pass
+    return found
+
+
+def load(path, default):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return default
+
+
+def store(path, obj):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".new"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(obj, f, ensure_ascii=False)
+    os.replace(tmp, path)
+
+
+class Failure(Exception):
+    """A code the Settings page names (unreachable, auth, no_share, ...)."""
+
+
+def parse_address(address):
+    """\\\\HOST\\Share\\folder, //HOST/Share/folder or smb://HOST/Share."""
+    a = re.sub(r"^smb://", "", address.strip(), flags=re.I).replace("\\", "/").strip("/")
+    parts = [p for p in a.split("/") if p]
+    if len(parts) < 2:
+        raise Failure("bad_address")
+    return parts[0], "/".join(parts[1:])
+
+
+def resolve_host(host):
+    """A Windows name answers NetBIOS when no DNS knows it."""
+    try:
+        socket.gethostbyname(host)
+        return host
+    except OSError:
+        pass
+    try:
+        text = subprocess.run(["nmblookup", host], capture_output=True, text=True,
+                              timeout=10).stdout
+        for line in text.splitlines():
+            m = re.match(r"^(\d+\.\d+\.\d+\.\d+) ", line)
+            if m:
+                return m.group(1)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    raise Failure("unreachable")
+
+
+def classify(stderr):
+    s = stderr.lower()
+    if any(w in s for w in ("logon", "access denied", "permission", "authentication")):
+        return "auth"
+    if "bad_network_name" in s or "network name" in s:
+        return "no_share"
+    if any(w in s for w in ("timeout", "connection refused", "no route", "unreachable", "dial")):
+        return "unreachable"
+    sys.stderr.write(stderr[-400:])
+    return "failed"
+
+
+class Remote:
+    """The shared folder, through rclone."""
+
+    def __init__(self, cfg):
+        self.env = dict(os.environ)
+        override = os.environ.get("ARCHR_SAVESYNC_REMOTE")
+        if override:  # tests: a plain folder
+            self.base = override
+            return
+        if cfg.get("target", "smb") == "cloud":
+            # rclone.conf copied to the ROMs folder (reachable from the PC)
+            # counts too; rclone's own place comes first.
+            own = ROOT + "/storage/.config/rclone/rclone.conf"
+            copied = ROMS + "/rclone.conf"
+            if not os.path.exists(own) and os.path.exists(copied):
+                self.env["RCLONE_CONFIG"] = copied
+            self.base = "archr:" + cfg.get("cloud.path", "SaveSync").strip("/")
+            if "archr:" not in self.rclone(["listremotes"], check=False).stdout.split():
+                raise Failure("not_configured")
+            return
+        address = cfg.get("smb.address", "")
+        if not address:
+            raise Failure("not_configured")
+        host, path = parse_address(address)
+        self.env.update({
+            "RCLONE_CONFIG_ARCHRSMB_TYPE": "smb",
+            "RCLONE_CONFIG_ARCHRSMB_HOST": resolve_host(host),
+            "RCLONE_CONFIG_ARCHRSMB_USER": cfg.get("smb.user", "") or "guest",
+        })
+        try:
+            with open(PASS, encoding="utf-8") as f:
+                self.env["RCLONE_CONFIG_ARCHRSMB_PASS"] = f.read().strip()
+        except OSError:
+            pass
+        self.base = "archrsmb:" + path
+
+    def rclone(self, args, check=True, data=None):
+        cmd = ["rclone", "--contimeout", "10s", "--timeout", "30s", "--retries", "1",
+               "--low-level-retries", "2", "--log-level", "ERROR"] + args
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, input=data,
+                               env=self.env, timeout=600)
+        except subprocess.TimeoutExpired:
+            raise Failure("unreachable")
+        if check and r.returncode != 0:
+            raise Failure(classify(r.stderr))
+        return r
+
+    def path(self, key):
+        return self.base + "/" + key
+
+    def listing(self, prefix):
+        """{key: [modtime, size]} under prefix; an absent folder is empty."""
+        r = self.rclone(["lsjson", "-R", "--files-only", "--no-mimetype", self.path(prefix)],
+                        check=False)
+        if r.returncode != 0:
+            if re.search(r"directory not found|not found|no such file", r.stderr, re.I):
+                return {}
+            raise Failure(classify(r.stderr))
+        return {prefix + "/" + e["Path"]: [e["ModTime"], e["Size"]]
+                for e in json.loads(r.stdout or "[]")}
+
+    def put(self, local, key):
+        self.rclone(["copyto", local, self.path(key)])
+
+    def get(self, key, local):
+        self.rclone(["copyto", self.path(key), local])
+
+    def read(self, key, default):
+        r = self.rclone(["cat", self.path(key)], check=False)
+        try:
+            return json.loads(r.stdout) if r.returncode == 0 else default
+        except ValueError:
+            return default
+
+    def write(self, key, obj):
+        self.rclone(["rcat", self.path(key)], data=json.dumps(obj, ensure_ascii=False))
+
+
+def console():
+    """The id other consoles see, and a name a person reads."""
+    try:
+        ident = subprocess.run(["archr-console-id"], capture_output=True, text=True,
+                               timeout=10).stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        ident = ""
+    try:
+        with open("/sys/firmware/devicetree/base/model", encoding="utf-8", errors="replace") as f:
+            name = f.read().strip("\x00\n ")
+    except OSError:
+        name = ""
+    # "Game Console R36S Soysauce" reads "R36S Soysauce" on the other console.
+    name = re.sub(r"^(Game Console|Handheld|Console)\s+", "", name, flags=re.I)
+    return ident or socket.gethostname(), name or socket.gethostname()
+
+
+def local_files(cfg, system):
+    """{key: path} of what this console syncs."""
+    found = {}
+    if os.path.isdir(ROMS):
+        for top in sorted(os.listdir(ROMS)):
+            base = os.path.join(ROMS, top)
+            if top in SKIP or top.startswith(".") or not os.path.isdir(base):
+                continue
+            if system and top != system:
+                continue
+            for d, dirs, files in os.walk(base):
+                dirs[:] = [x for x in dirs if not x.startswith(".")]
+                for name in files:
+                    if os.path.splitext(name)[1].lower() in SAVE_EXT:
+                        p = os.path.join(d, name)
+                        found["saves/" + os.path.relpath(p, ROMS)] = p
+    sets = [("psp/SAVEDATA", PSP + "/SAVEDATA", system in ("", "psp"))]
+    if cfg.get("states", "0") == "1":
+        sets.append(("savestates", ROMS + "/savestates", True))
+    for prefix, base, wanted in sets:
+        if not wanted or not os.path.isdir(base):
+            continue
+        for d, _, files in os.walk(base):
+            for name in files:
+                p = os.path.join(d, name)
+                rel = os.path.relpath(p, base)
+                if prefix == "savestates" and system and not rel.startswith(system + "/"):
+                    continue
+                found[prefix + "/" + rel] = p
+    return found
+
+
+def prefixes(cfg, system):
+    wanted = ["saves/" + system if system else "saves"]
+    if system in ("", "psp"):
+        wanted.append("psp/SAVEDATA")
+    if cfg.get("states", "0") == "1":
+        wanted.append("savestates/" + system if system else "savestates")
+    return wanted
+
+
+def local_path(key):
+    prefix, _, rel = key.partition("/")
+    if prefix == "saves":
+        return os.path.join(ROMS, rel)
+    if prefix == "psp":
+        return os.path.join(PSP, rel)
+    return os.path.join(ROMS, "savestates", rel)
+
+
+def stat(path):
+    st = os.stat(path)
+    return [int(st.st_mtime), st.st_size]
+
+
+def epoch(modtime):
+    """rclone's ModTime (RFC 3339) in seconds; 0 when unreadable."""
+    try:
+        return int(datetime.datetime.fromisoformat(modtime.replace("Z", "+00:00")).timestamp())
+    except (ValueError, AttributeError):
+        return 0
+
+
+def keep_previous(path, key):
+    """The local save a download replaces stays one step behind."""
+    if os.path.exists(path):
+        dest = os.path.join(PREVIOUS, key)
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        shutil.copy2(path, dest)
+
+
+def same_content(remote, key, path):
+    with tempfile.TemporaryDirectory(dir=HOME) as tmp:
+        copy = os.path.join(tmp, "remote")
+        remote.get(key, copy)
+        return filecmp.cmp(copy, path, shallow=False)
+
+
+def wait_network(seconds):
+    """A default route, for the boot sync while the Wi-Fi comes up."""
+    end = time.time() + seconds
+    while time.time() < end:
+        try:
+            with open("/proc/net/route") as f:
+                if any(line.split()[1] == "00000000" for line in f.readlines()[1:]):
+                    return True
+        except (OSError, IndexError):
+            pass
+        time.sleep(3)
+    return False
+
+
+def lock(wait):
+    os.makedirs(os.path.dirname(LOCK), exist_ok=True)
+    f = open(LOCK, "w")
+    end = time.time() + (120 if wait else 0)
+    while True:
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return f
+        except OSError:
+            if time.time() >= end:
+                raise Failure("busy")
+            time.sleep(1)
+
+
+def sync(cfg, system):
+    remote = Remote(cfg)
+    state = load(STATE, {"files": {}, "conflicts": {}})
+    files, conflicts = state["files"], state["conflicts"]
+    ident, name = console()
+    index = remote.read(".archr/index.json", {})
+    theirs = {}
+    for prefix in prefixes(cfg, system):
+        theirs.update(remote.listing(prefix))
+    mine = local_files(cfg, system)
+    up, down = [], []
+    for key in sorted(set(mine) | set(theirs)):
+        path = mine.get(key) or local_path(key)
+        l = stat(path) if key in mine else None
+        r = theirs.get(key)
+        known = files.get(key)
+        if l is not None and r is None:
+            action = "up"
+        elif l is None:
+            action = "down"
+        else:
+            l_changed = known is None or l != known["l"]
+            r_changed = known is None or r != known["r"]
+            if l_changed and r_changed:
+                same = l[1] == r[1] and same_content(remote, key, path)
+                action = "agree" if same else "conflict"
+            elif l_changed:
+                action = "up"
+            elif r_changed:
+                action = "down"
+            else:
+                conflicts.pop(key, None)
+                continue
+        if action == "conflict":
+            conflicts[key] = {"local": {"at": l[0], "size": l[1]},
+                              "remote": {"at": epoch(r[0]), "size": r[1],
+                                         "by": index.get(key, {}).get("name", "")}}
+            continue
+        conflicts.pop(key, None)
+        if action == "up":
+            remote.put(path, key)
+            index[key] = {"id": ident, "name": name, "at": int(time.time())}
+            up.append(key)
+        elif action == "down":
+            keep_previous(path, key)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            remote.get(key, path)
+            down.append(key)
+        files[key] = {"l": None, "r": None}  # filled from the listing below
+    touched = [k for k, v in files.items() if v["l"] is None]
+    if touched:
+        after = {}
+        for prefix in prefixes(cfg, system):
+            after.update(remote.listing(prefix))
+        for key in touched:
+            if key in after:
+                files[key] = {"l": stat(local_path(key)), "r": after[key]}
+            else:
+                files.pop(key)
+    if up:
+        remote.write(".archr/index.json", index)
+    remote.write(".archr/consoles/" + ident + ".json", {"name": name, "at": int(time.time())})
+    store(STATE, state)
+    systems = sorted({k.split("/")[1] if not k.startswith("psp/") else "psp"
+                      for k in up + down})
+    return {"ok": True, "at": int(time.time()), "up": len(up), "down": len(down),
+            "systems": systems, "conflicts": len(conflicts)}
+
+
+TOAST = {
+    "pt": ("Save em conflito: {}", "Escolha qual manter em Configurações › Sistema › Sincronizar saves"),
+    "es": ("Partida en conflicto: {}", "Elige cuál conservar en Configuración › Sistema › Sincronizar partidas"),
+    "ru": ("Конфликт сохранения: {}", "Выберите, какое оставить: Настройки › Система › Синхронизация сохранений"),
+    "en": ("Save conflict: {}", "Choose which to keep in Settings › System › Save sync"),
+}
+
+
+def announce(keys):
+    """A toast for each new conflict an automatic sync found."""
+    language = "en"
+    try:
+        with open(CFG, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                if line.startswith("system.language="):
+                    language = line.split("=", 1)[1].strip()[:2] or "en"
+    except OSError:
+        pass
+    title, detail = TOAST.get(language, TOAST["en"])
+    for key in keys:
+        game = os.path.splitext(os.path.basename(key))[0]
+        subprocess.run(["archr-toast", "info", "storage", title.format(game), detail],
+                       capture_output=True)
+
+
+def conflict_list():
+    state = load(STATE, {"files": {}, "conflicts": {}})
+    return [dict(key=k, **v) for k, v in sorted(state["conflicts"].items())]
+
+
+def resolve(cfg, key, keep):
+    """keep local: the PC's copy goes aside, this one up; remote: the reverse."""
+    remote = Remote(cfg)
+    state = load(STATE, {"files": {}, "conflicts": {}})
+    if key not in state["conflicts"]:
+        raise Failure("no_conflict")
+    path = local_path(key)
+    stem, ext = os.path.splitext(key)
+    aside = "conflitos/" + stem + time.strftime("-%Y%m%d-%H%M") + ext
+    if keep == "local":
+        with tempfile.TemporaryDirectory(dir=HOME) as tmp:
+            remote.get(key, os.path.join(tmp, "theirs"))
+            remote.put(os.path.join(tmp, "theirs"), aside)
+        remote.put(path, key)
+        ident, name = console()
+        index = remote.read(".archr/index.json", {})
+        index[key] = {"id": ident, "name": name, "at": int(time.time())}
+        remote.write(".archr/index.json", index)
+    else:
+        remote.put(path, aside)
+        keep_previous(path, key)
+        remote.get(key, path)
+    listed = remote.listing(os.path.dirname(key))
+    state["files"][key] = {"l": stat(path), "r": listed[key]}
+    state["conflicts"].pop(key)
+    store(STATE, state)
+    return {"ok": True, "aside": aside, "conflicts": len(state["conflicts"])}
+
+
+def password():
+    secret = sys.stdin.read().rstrip("\n")
+    if not secret:
+        if os.path.exists(PASS):
+            os.remove(PASS)
+        return {"ok": True}
+    r = subprocess.run(["rclone", "obscure", "-"], input=secret, capture_output=True, text=True)
+    if r.returncode != 0:
+        raise Failure("failed")
+    fd = os.open(PASS + ".new", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(r.stdout.strip())
+    os.replace(PASS + ".new", PASS)
+    return {"ok": True}
+
+
+def test(cfg):
+    remote = Remote(cfg)
+    remote.rclone(["mkdir", remote.path(".archr/consoles")])
+    seen = remote.listing(".archr/consoles")
+    ident, _ = console()
+    others = [k for k in seen if not k.endswith("/" + ident + ".json")]
+    return {"ok": True, "consoles": len(others) + 1}
+
+
+def main(argv):
+    cmd = argv[1] if len(argv) > 1 else "status"
+    cfg = settings()
+    os.makedirs(HOME, exist_ok=True)
+    try:
+        if cmd == "status":
+            out({"enabled": cfg.get("enabled", "0") == "1", "last": load(LAST, None),
+                 "conflicts": conflict_list(), "password": os.path.exists(PASS)})
+        if cmd == "password":
+            out(password())
+        if cmd == "test":
+            out(test(cfg))
+        if cmd == "sync":
+            system = argv[argv.index("--system") + 1] if "--system" in argv else ""
+            boot, leaving = "--boot" in argv, "--exit" in argv
+            if (cfg.get("enabled", "0") != "1"
+                    or boot and cfg.get("on_boot", "1") != "1"
+                    or leaving and cfg.get("on_exit", "1") != "1"):
+                out({"ok": False, "error": "disabled"})
+            # The automatic syncs give way; the user's waits its turn.
+            held = lock(wait=not (boot or leaving))
+            if boot and not wait_network(90):
+                raise Failure("no_network")
+            before = set(load(STATE, {}).get("conflicts", {}))
+            result = sync(cfg, system)
+            store(LAST, result)
+            if boot or leaving:
+                announce(sorted(set(load(STATE, {})["conflicts"]) - before))
+            held.close()
+            out(result)
+        if cmd == "resolve" and len(argv) == 4 and argv[3] in ("local", "remote"):
+            held = lock(wait=True)
+            result = resolve(cfg, argv[2], argv[3])
+            held.close()
+            out(result)
+    except Failure as failure:
+        error = str(failure)
+        if cmd == "sync" and error != "busy":
+            store(LAST, {"ok": False, "at": int(time.time()), "error": error})
+        # A failure it knows is an answer, read from stdout: exit 0.
+        out({"ok": False, "error": error})
+    out({"ok": False, "error": "usage"}, 2)
+
+
+if __name__ == "__main__":
+    main(sys.argv)
