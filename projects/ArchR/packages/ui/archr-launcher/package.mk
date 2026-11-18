@@ -2,14 +2,16 @@
 # Copyright (C) 2026 ArchR (https://github.com/archr-linux/Arch-R)
 
 PKG_NAME="archr-launcher"
-PKG_VERSION="42fcd36042bc35e9f235a742a9b8d3713921c6f4"
-PKG_SHA256="d6f4e089dd38af5a442527677cbbbdbcc1aa9f43b94624d807b1b096b1c84577"
+PKG_VERSION="b69e215399fa987610d57f2046f1b2426d9c473b"
+PKG_SHA256="2e33ada345349d82afd6331741a28da0cc2d9568d5003172d2c744196edc7eb8"
 PKG_ARCH="aarch64"
 # Bundled fonts retain their separate OFL licenses.
 PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/archr-linux/archr-launcher"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain SDL2 SDL2_image SDL2_ttf SDL2_mixer cargo:host rust:host"
+PKG_DEPENDS_TARGET="toolchain SDL2 SDL2_image SDL2_ttf SDL2_mixer cargo:host rust:host archr-gamma"
+# Settings › Sound and display › Picture; the session unit wants it.
+PKG_PACMAN_DEPENDS="archr-gamma"
 PKG_LONGDESC="ArchR's game launcher, its UI session (SDL2, under sway) and the volume/brightness OSD"
 # Devices updated with pacman get the launcher in place of the old UI.
 PKG_REPLACES="emulationstation es-theme-art-book-next"

@@ -1,0 +1,16 @@
+[Unit]
+Description=Panel gamma curve and colour temperature (archr-gamma)
+# Started by archr-launcher-session (Wants=); stops and comes back with sway.
+After=sway.service
+PartOf=sway.service
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Environment=XDG_RUNTIME_DIR=/var/run/0-runtime-dir
+Environment=WAYLAND_DISPLAY=wayland-1
+ExecStart=/usr/bin/archr-gamma
+# Settings › Sound and display › Picture: read system.cfg again.
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=3

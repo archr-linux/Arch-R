@@ -1,0 +1,59 @@
+From: ArchR <noreply@arch-r.io>
+Subject: [PATCH] drm/rockchip: vop: gamma LUT on PX30 (RK3326)
+
+The PX30 VOP has a gamma LUT in the RV1126 layout: dsp_lut_en is bit 5
+of DSP_CTRL2 and the table sits at 0xa00 (PX30_GAMMA_LUT_ADDR, already
+defined), 0x400 bytes, so 256 entries of 8 bits per channel, as the
+vendor kernel sizes it (its px30.dtsi gamma_lut range). 1024 entries, as
+on the RV1126, garbled the picture into stripes. Only the
+PX30 entries never got lut_size and dsp_lut_en, so the CRTC had no
+GAMMA_LUT and a compositor could not set a gamma curve
+(wlr-gamma-control). The LUT gets its own register range in the device
+tree, as on the RV1126; nothing else of the VOP lives above 0xa00.
+---
+--- a/drivers/gpu/drm/rockchip/rockchip_vop_reg.c
++++ b/drivers/gpu/drm/rockchip/rockchip_vop_reg.c
+@@ -277,6 +277,7 @@
+ 	.dither_down_sel = VOP_REG(PX30_DSP_CTRL2, 0x1, 7),
+ 	.dither_down_mode = VOP_REG(PX30_DSP_CTRL2, 0x1, 6),
+ 	.cfg_done = VOP_REG_SYNC(PX30_REG_CFG_DONE, 0x1, 0),
++	.dsp_lut_en = VOP_REG(PX30_DSP_CTRL2, 0x1, 5),
+ };
+ 
+ static const struct vop_modeset px30_modeset = {
+@@ -375,6 +376,7 @@
+ 	.output = &px30_output,
+ 	.win = px30_vop_big_win_data,
+ 	.win_size = ARRAY_SIZE(px30_vop_big_win_data),
++	.lut_size = 256,
+ 	.max_output = { 1920, 1080 },
+ };
+ 
+@@ -392,6 +394,7 @@
+ 	.output = &px30_output,
+ 	.win = px30_vop_lit_win_data,
+ 	.win_size = ARRAY_SIZE(px30_vop_lit_win_data),
++	.lut_size = 256,
+ 	.max_output = { 1920, 1080 },
+ };
+ 
+--- a/arch/arm64/boot/dts/rockchip/px30.dtsi
++++ b/arch/arm64/boot/dts/rockchip/px30.dtsi
+@@ -1523,7 +1523,7 @@
+ 
+ 	vopb: vop@ff460000 {
+ 		compatible = "rockchip,px30-vop-big";
+-		reg = <0x0 0xff460000 0x0 0xefc>;
++		reg = <0x0 0xff460000 0x0 0xa00>, <0x0 0xff460a00 0x0 0x400>;
+ 		interrupts = <GIC_SPI 77 IRQ_TYPE_LEVEL_HIGH>;
+ 		clocks = <&cru ACLK_VOPB>, <&cru DCLK_VOPB>,
+ 			 <&cru HCLK_VOPB>;
+@@ -1563,7 +1563,7 @@
+ 
+ 	vopl: vop@ff470000 {
+ 		compatible = "rockchip,px30-vop-lit";
+-		reg = <0x0 0xff470000 0x0 0xefc>;
++		reg = <0x0 0xff470000 0x0 0xa00>, <0x0 0xff470a00 0x0 0x400>;
+ 		interrupts = <GIC_SPI 78 IRQ_TYPE_LEVEL_HIGH>;
+ 		clocks = <&cru ACLK_VOPL>, <&cru DCLK_VOPL>,
+ 			 <&cru HCLK_VOPL>;
