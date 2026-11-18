@@ -496,6 +496,16 @@ cmd_check_json() {
         size=$((size + bytes))
     done <<<"${targets}"
     logf "check: ${total} package(s), ${size} bytes on ${BRANCH}"
+    # Nothing to install: the system already has every package of the
+    # channel's newest update, so it is on that update. An image built the
+    # day of a release (os-release VERSION 20261118) holds the packages of
+    # 20261118.5 and says so from its first check.
+    if [ "${total}" -eq 0 ] && [ -n "${NEW_VERSION}" ] &&
+       [ "$(printf '%s\n%s\n' "$(os_version)" "${NEW_VERSION}" | sort -V | tail -n 1)" = "${NEW_VERSION}" ] &&
+       [ "${NEW_VERSION}" != "$(os_version)" ]; then
+        logf "check: nothing to install, the system is on ${NEW_VERSION}"
+        record_new_version
+    fi
     emit "\"os_version\":$(json "$(os_version)"),\"release\":$(json "$(system_release)"),\"channel\":$(json "${BRANCH}"),\"total\":${total},\"download_size\":${size},$(reboot_fields "$(reboot_reason <<<"${targets}")"),\"new_version\":$(json "${NEW_VERSION}"),\"news\":$(json "${NEWS}"),\"packages\":[${packages}]"
 }
 

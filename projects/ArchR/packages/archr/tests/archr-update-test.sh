@@ -214,6 +214,12 @@ OUT=$(run)
 check "second run: busy" "$(field error <<<"${OUT}")" busy
 flock -u 8
 mv "${TMP}/changelog.off" "${TMP}/changelog"
+# Nothing pending and the channel's update is newer: the system has all of
+# it (an image built the day of its release), so it is on that update.
+OUT=$(run)
+check "nothing pending, a newer update: the system is on it" \
+  "$(field os_version <<<"${OUT}")|$(cat "${TMP}/state/version" 2>/dev/null)" "2.1.2|2.1.2"
+rm -rf "${TMP}/state"
 
 ### update --progress
 printf 'linux 6.12.94-3\nretroarch 1.21.0-3\n' >"${TMP}/installed"
