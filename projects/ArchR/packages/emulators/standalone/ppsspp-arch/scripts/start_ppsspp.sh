@@ -20,15 +20,22 @@ if [ ! -d "/storage/roms/savestates/psp/ppsspp-sa" ]; then
   mkdir -p "/storage/roms/savestates/psp/ppsspp-sa"
 fi
 
-#Emulation Station Features
+#Launcher settings, per game or per system in system.cfg (psp.frame_skip=2,
+#psp["Game.iso"].skip_buffer_effects=1). Each is written to ppsspp.ini only
+#when it is set: what the player changes in PPSSPP itself (Tools) stays for
+#everything left unset. Before, every start wrote a default over it.
 GAME=$(echo "${1}"| sed "s#^/.*/##")
 PLATFORM=$(echo "${2}"| sed "s#^/.*/##")
+INI="${CONF_DIR}/${PPSSPP_INI}"
+# ini_set KEY VALUE: one key of ppsspp.ini
+ini_set() {
+  sed -i "/^${1} =/c\\${1} = ${2}" "${INI}"
+}
 ASKIP=$(get_setting auto_frame_skip "${PLATFORM}" "${GAME}")
+FSKIP=$(get_setting frame_skip "${PLATFORM}" "${GAME}")
 FPS=$(get_setting show_fps "${PLATFORM}" "${GAME}")
 IRES=$(get_setting internal_resolution "${PLATFORM}" "${GAME}")
 GRENDERER=$(get_setting graphics_backend "${PLATFORM}" "${GAME}")
-# Vulkan exists only while panfrost drives the GPU; on libmali, stay on GL.
-[ "${GRENDERER}" = "vulkan" ] && [ ! -d /sys/module/panfrost ] && GRENDERER="opengl"
 SKIPB=$(get_setting skip_buffer_effects "${PLATFORM}" "${GAME}")
 # God of War runs at 7-8 fps on the R36S with buffer effects; skipping them
 # gives 17-19 from an ISO (a CHD in LZMA costs more), and its cutscenes go
@@ -52,92 +59,74 @@ else
   unset EMUPERF
 fi
 
-  #Frame skipping. Default: auto frame skip, up to 3 frames in a row.
-  #Auto frame skip only skips while FrameSkip (the most frames skipped in
-  #a row) is above 0, and a FrameSkip = 0 left in the file had silently
-  #turned it off (an --appendconfig run saves its values into the file):
-  #God of War ran at 24% speed, 80% with the cap back. So FrameSkip is
-  #always written. Lighter games (Tekken 6, Burnout Legends, Death Jr.)
-  #keep 100% and every frame either way.
+  #Frame skipping. frame_skip=N is the most frames skipped in a row with
+  #auto frame skip, the fixed skip without it; auto_frame_skip=0 alone
+  #skips nothing. Auto frame skip skips nothing while FrameSkip is 0 (God
+  #of War ran at 24% speed, 80% with a cap), so a cap of 0 becomes 2.
   #PPSSPP turns buffer effects back on while auto frame skip is on, so
-  #skip_buffer_effects=1 implies a fixed skip (2 by default since 3.1.0; 1, as
-  #dArkOSRE-R36 ships for the R36S (southoz/dArkOSRE-R36@77ef6d941b,
-  #files/ROOTFS/opt/ppsspp/backupforromsfolder/ppsspp/PSP/SYSTEM/ppsspp.ini)):
-  #God of War at 100% speed (30 fps shown), losing its glow; light games
-  #drop to half their frames, hence per game only. frame_skip=N sets the
-  #cap (auto) or the fixed skip; auto_frame_skip=0 alone skips nothing.
-	if [ -z "${ASKIP}" ]; then
-		[ "${SKIPB}" = "1" ] && ASKIP=0 || ASKIP=1
+  #skip_buffer_effects=1 implies a fixed skip, 2 unless frame_skip says
+  #otherwise (1 is what dArkOSRE-R36 ships for the R36S,
+  #southoz/dArkOSRE-R36@77ef6d941b,
+  #files/ROOTFS/opt/ppsspp/backupforromsfolder/ppsspp/PSP/SYSTEM/ppsspp.ini):
+  #God of War at 100% speed (30 fps shown), losing its glow.
+	case "${ASKIP}" in 0|1) ;; *) ASKIP="" ;; esac
+	case "${FSKIP}" in [0-8]) ;; *) FSKIP="" ;; esac
+	if [ "${SKIPB}" = "1" ]; then
+		[ -z "${ASKIP}" ] && ASKIP=0
+		[ "${ASKIP}" = "0" ] && [ -z "${FSKIP}" ] && FSKIP=2
 	fi
-	FSKIP=$(get_setting frame_skip "${PLATFORM}" "${GAME}")
-	case "${FSKIP}" in
-		[0-8]) ;;
-		# Default: 2 (the cap with auto skip, the fixed skip otherwise),
-		# the owner's pick for the RK3326 after testing (3.1.0).
-		*) FSKIP=2 ;;
+	[ "${ASKIP}" = "0" ] && [ -z "${FSKIP}" ] && FSKIP=0
+	[ "${ASKIP}" = "1" ] && [ "${FSKIP}" = "0" ] && FSKIP=2
+	case "${ASKIP}" in
+		0) ini_set AutoFrameSkip False ;;
+		1) ini_set AutoFrameSkip True ;;
 	esac
-	if [ "${ASKIP}" = "0" ]; then
-		sed -i '/^AutoFrameSkip =/c\AutoFrameSkip = False' ${CONF_DIR}/${PPSSPP_INI}
-	else
-		sed -i '/^AutoFrameSkip =/c\AutoFrameSkip = True' ${CONF_DIR}/${PPSSPP_INI}
-		[ "${FSKIP}" = "0" ] && FSKIP=2
-	fi
-	sed -i "/^FrameSkip =/c\FrameSkip = ${FSKIP}" ${CONF_DIR}/${PPSSPP_INI}
+	[ -n "${FSKIP}" ] && ini_set FrameSkip "${FSKIP}"
 
-  #Graphics Backend
-        if [ "${GRENDERER}" = "opengl" ]; then
-                sed -i '/^GraphicsBackend =/c\GraphicsBackend = 0 (OPENGL)' ${CONF_DIR}/${PPSSPP_INI}
-        elif [ "${GRENDERER}" = "vulkan" ]; then
-                sed -i '/^GraphicsBackend =/c\GraphicsBackend = 3 (VULKAN)' ${CONF_DIR}/${PPSSPP_INI}
-        else
-		sed -i '/^GraphicsBackend =/c\GraphicsBackend = @GRENDERER@' ${CONF_DIR}/${PPSSPP_INI}
+  #Graphics Backend. Vulkan exists only while panfrost drives the GPU: on
+  #libmali a Vulkan backend, set here or in PPSSPP, would not start.
+	case "${GRENDERER}" in
+		opengl) ini_set GraphicsBackend "0 (OPENGL)" ;;
+		vulkan) ini_set GraphicsBackend "3 (VULKAN)" ;;
+	esac
+	if [ ! -d /sys/module/panfrost ] && grep -q '^GraphicsBackend = 3' "${INI}"; then
+		GRENDERER="opengl"
+		ini_set GraphicsBackend "0 (OPENGL)"
 	fi
 
   #Internal Resolution
-	if [ "${IRES}" = "2" ]; then
-		sed -i '/^InternalResolution/c\InternalResolution = 2' ${CONF_DIR}/${PPSSPP_INI}
-	elif [ "${IRES}" = "3" ]; then
-		sed -i '/^InternalResolution/c\InternalResolution = 3' ${CONF_DIR}/${PPSSPP_INI}
-	elif [ "${IRES}" = "4" ]; then
-                sed -i '/^InternalResolution/c\InternalResolution = 4' ${CONF_DIR}/${PPSSPP_INI}
-	else
-		sed -i '/^InternalResolution/c\InternalResolution = 1' ${CONF_DIR}/${PPSSPP_INI}
-        fi
+	case "${IRES}" in
+		[1-4]) ini_set InternalResolution "${IRES}" ;;
+	esac
 
   #Show FPS
-	if [ "${FPS}" = "1" ]; then
-		sed -i '/^iShowStatusFlags =/c\iShowStatusFlags = 2' ${CONF_DIR}/${PPSSPP_INI}
-	else
-		sed -i '/^iShowStatusFlags =/c\iShowStatusFlags = 0' ${CONF_DIR}/${PPSSPP_INI}
-	fi
+	case "${FPS}" in
+		1) ini_set iShowStatusFlags 2 ;;
+		0) ini_set iShowStatusFlags 0 ;;
+	esac
 
   #Skip Buffer Effects
-	if [ "${SKIPB}" = "1" ]; then
-		sed -i '/^SkipBufferEffects =/c\SkipBufferEffects = True' ${CONF_DIR}/${PPSSPP_INI}
-	else
-		sed -i '/^SkipBufferEffects =/c\SkipBufferEffects = False' ${CONF_DIR}/${PPSSPP_INI}
-	fi
+	case "${SKIPB}" in
+		1) ini_set SkipBufferEffects True ;;
+		0) ini_set SkipBufferEffects False ;;
+	esac
 
   #VSYNC: PPSSPP's key is VerticalSync (VSyncInterval is not read, the
-  #setting did nothing). Unset leaves the file's value, on by default.
-  #Configs from older packages only have VSyncInterval: add the key.
+  #setting did nothing). Configs from older packages only have
+  #VSyncInterval: add the key.
 	if [ "${VSYNC}" = "1" ] || [ "${VSYNC}" = "0" ]; then
 		[ "${VSYNC}" = "1" ] && VSYNC_VALUE=True || VSYNC_VALUE=False
-		if grep -q '^VerticalSync =' ${CONF_DIR}/${PPSSPP_INI}; then
-			sed -i "/^VerticalSync =/c\\VerticalSync = ${VSYNC_VALUE}" ${CONF_DIR}/${PPSSPP_INI}
+		if grep -q '^VerticalSync =' "${INI}"; then
+			ini_set VerticalSync "${VSYNC_VALUE}"
 		else
-			sed -i "/^\[Graphics\]/a VerticalSync = ${VSYNC_VALUE}" ${CONF_DIR}/${PPSSPP_INI}
+			sed -i "/^\[Graphics\]/a VerticalSync = ${VSYNC_VALUE}" "${INI}"
 		fi
 	fi
 
-  #Clock Speed
-	if [ "${CLOCK_SPEED}" = "222" ]; then
-		sed -i '/^CPUSpeed =/c\CPUSpeed = 222' ${CONF_DIR}/${PPSSPP_INI}
-	elif [ "${CLOCK_SPEED}" = "333" ]; then
-		sed -i '/^CPUSpeed =/c\CPUSpeed = 333' ${CONF_DIR}/${PPSSPP_INI}
-	else
-		sed -i '/^CPUSpeed =/c\CPUSpeed = 0' ${CONF_DIR}/${PPSSPP_INI}
-	fi
+  #Clock Speed (0 is PPSSPP's default, the PSP's own)
+	case "${CLOCK_SPEED}" in
+		0|222|333) ini_set CPUSpeed "${CLOCK_SPEED}" ;;
+	esac
 
 #Select+Start quits, as in RetroArch and mupen64plus. PPSSPP has no such
 #default: without an "Exit App" mapping the pair did nothing. Built from the
