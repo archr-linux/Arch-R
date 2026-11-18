@@ -192,8 +192,12 @@ class Remote:
             if re.search(r"directory not found|not found|no such file", r.stderr, re.I):
                 return {}
             raise Failure(classify(r.stderr))
-        return {prefix + "/" + e["Path"]: [e["ModTime"], e["Size"]]
-                for e in json.loads(r.stdout or "[]")}
+        listed = {prefix + "/" + e["Path"]: [e["ModTime"], e["Size"]]
+                  for e in json.loads(r.stdout or "[]")}
+        # The folder's own bookkeeping (.archr, conflitos) is not a save.
+        if prefix.startswith((".archr", "conflitos")):
+            return listed
+        return {k: v for k, v in listed.items() if safe(k)}
 
     def put(self, local, key):
         self.rclone(["copyto", local, self.path(key)])
@@ -270,13 +274,29 @@ def prefixes(cfg, system):
     return wanted
 
 
-def local_path(key):
+def safe(key):
+    """A key from the folder names a file under its own base, nothing else:
+    a share could list "saves/../../.config/x"."""
     prefix, _, rel = key.partition("/")
-    if prefix == "saves":
-        return os.path.join(ROMS, rel)
-    if prefix == "psp":
-        return os.path.join(PSP, rel)
-    return os.path.join(ROMS, "savestates", rel)
+    parts = rel.split("/")
+    if prefix not in ("saves", "psp", "savestates") or any(p in ("", ".", "..") for p in parts):
+        return False
+    if prefix == "psp" and parts[0] != "SAVEDATA":
+        return False
+    base = os.path.realpath(_base(prefix))
+    path = os.path.realpath(os.path.join(base, rel))
+    return os.path.commonpath([path, base]) == base
+
+
+def _base(prefix):
+    return {"saves": ROMS, "psp": PSP}.get(prefix, os.path.join(ROMS, "savestates"))
+
+
+def local_path(key):
+    if not safe(key):
+        raise Failure("bad_key")
+    prefix, _, rel = key.partition("/")
+    return os.path.join(_base(prefix), rel)
 
 
 def stat(path):
@@ -294,7 +314,7 @@ def epoch(modtime):
 
 def keep_previous(path, key):
     """The local save a download replaces stays one step behind."""
-    if os.path.exists(path):
+    if os.path.exists(path) and safe(key):
         dest = os.path.join(PREVIOUS, key)
         os.makedirs(os.path.dirname(dest), exist_ok=True)
         shutil.copy2(path, dest)

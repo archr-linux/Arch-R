@@ -105,6 +105,13 @@ on A sync >/dev/null
 expect "restored" "same" "$(cat "${TMP}/A/storage/roms/gba/Ruby.srm")"
 expect "pc kept" "same" "$(cat "${TMP}/pc/SaveSync/saves/gba/Ruby.srm")"
 
+# A folder listing a name outside the ROMs is skipped, nothing written.
+mkdir -p "${TMP}/pc/SaveSync/saves/gba/..evil" "${TMP}/pc/SaveSync/psp/OTHER"
+printf 'x' >"${TMP}/pc/SaveSync/psp/OTHER/bad.bin"
+on A sync >/dev/null
+[ -e "${TMP}/A/storage/.config/ppsspp/PSP/OTHER/bad.bin" ] && fail "outside SAVEDATA written"
+expect "still syncs" "True" "$(on A status | field last.ok)"
+
 # Off, or off after games: nothing runs.
 sed -i 's/^savesync.on_exit=1/savesync.on_exit=0/' "${TMP}/B/storage/.config/system/configs/system.cfg"
 expect "exit off" "disabled" "$(on B sync --exit | field error)"
