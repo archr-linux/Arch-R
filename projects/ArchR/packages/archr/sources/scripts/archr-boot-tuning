@@ -2,21 +2,29 @@
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (C) 2026-present ArchR (https://github.com/archr-linux/Arch-R)
 #
-# archr-boot-tuning: CPU voltages set at boot through a device tree overlay,
-# /flash/overlays/tuning.dtbo, that extlinux.conf lists after the panel's.
-# Never the system DTB (archr-flash-sync replaces it on updates). The
-# initramfs (tuning_guard) counts boots in /flash/tuning.trial while the
+# archr-boot-tuning: CPU and GPU voltages, and two extra CPU steps, set at
+# boot through a device tree overlay, /flash/overlays/tuning.dtbo, that
+# extlinux.conf lists after the panel's. Never the system DTB
+# (archr-flash-sync replaces it on updates). The initramfs (tuning_guard)
+# arms the watchdog and counts boots in /flash/tuning.trial while the
 # overlay differs from the neutral one; a clean shutdown sets it to 0 (the
 # unit's stop), and two unclean boots in a row put the neutral one back.
 #
-#   archr-boot-tuning status            JSON: stock and applied voltages, state
-#   archr-boot-tuning cpu <mV offset>   every CPU step lowered (or raised) by it
-#   archr-boot-tuning reset             the neutral overlay: stock voltages
-#   archr-boot-tuning boot              at start: a revert becomes a toast
-#   archr-boot-tuning clean             at a clean shutdown: trial back to 0
+#   archr-boot-tuning status                 JSON: the whole state
+#   archr-boot-tuning brief                  every step in one line (modules)
+#   archr-boot-tuning set cpu|gpu <MHz> <uV> one step; 0 is its stock voltage,
+#                                            or no step for a new CPU one
+#   archr-boot-tuning offset cpu <uV>        every CPU step moved by it
+#   archr-boot-tuning reset                  the neutral overlay: stock voltages
+#   archr-boot-tuning boot                   at start: a revert becomes a toast
+#   archr-boot-tuning clean                  at a clean shutdown: trial to 0
 #
-# Changes take effect at the next boot. Offsets from -40 to +25 mV, in
-# steps of 5, never under STEP_FLOOR_UV for a step.
+# Changes take effect at the next boot. Voltages go in the regulators'
+# 12.5 mV steps. A CPU step from 50 mV under its stock voltage to 25 over;
+# the new 1200 and 1296 MHz steps between the stock voltages of the steps
+# around them; the GPU only down to 1.1 V, the floor of vdd_logic, which it
+# shares with the DDR (patch 035: lower corrupts the memory), and never
+# over its stock voltage, the rail's ceiling.
 import json
 import os
 import re
@@ -37,13 +45,16 @@ REVERTED_SEEN = REVERTED + ".seen"  # told once, kept for status
 EXTLINUX = FLASH + "/extlinux/extlinux.conf"
 DT = ROOT + "/proc/device-tree"
 CFG = ROOT + "/storage/.config/system/configs/system.cfg"
-CPU_TABLE = "opp-table-0"
-OFFSET_RANGE = (-40, 25)  # -50 already hangs some R36S chips
-STEP_FLOOR_UV = 850000
+TABLES = {"cpu": "opp-table-0", "gpu": "opp-table-1"}
+STEP_UV = 12500
+CPU_RANGE_UV = (-50000, 25000)  # around the stock voltage; -50 hangs some R36S
+CPU_NEW_MHZ = (1200, 1296)
+GPU_FLOOR_UV = 1100000
+RAIL_UV = (850000, 1450000)
 
 
 def out(obj, code=0):
-    print(json.dumps(obj))
+    print(json.dumps(obj, separators=(",", ":")))
     sys.exit(code)
 
 
@@ -95,38 +106,36 @@ def fdt(root):
     return header + rsvmap + body + strings
 
 
-def string_prop(text):
+def fdt_string(text):
     return text.encode() + b"\0"
 
 
-def cells(*values):
+def fdt_cells(*values):
     return b"".join(struct.pack(">I", v) for v in values)
-
-
-def overlay(target_path, opps):
-    """One fragment over target_path giving each opp node new microvolts.
-    No opps: a fragment over / that changes nothing (the neutral one)."""
-    children = [(name, [("opp-microvolt", cells(*uv))], []) for name, uv in opps]
-    target = target_path if opps else "/"
-    fragment = ("fragment@0", [("target-path", string_prop(target))],
-                [("__overlay__", [], children)])
-    return fdt(("", [], [fragment]))
 
 
 # --- the running tree -------------------------------------------------------
 
 def read_table(table):
-    """{opp node: [target, min, max] µV} of a table in the running tree."""
+    """{MHz: {"uv": [...], "latency": ns}} of a table in the running tree."""
     path = os.path.join(DT, table)
     found = {}
     if not os.path.isdir(path):
         return found
-    for name in sorted(os.listdir(path)):
-        uv_file = os.path.join(path, name, "opp-microvolt")
-        if re.fullmatch(r"opp-\d+", name) and os.path.isfile(uv_file):
-            with open(uv_file, "rb") as f:
-                raw = f.read()
-            found[name] = list(struct.unpack(">%dI" % (len(raw) // 4), raw))
+    for name in os.listdir(path):
+        node = os.path.join(path, name)
+        uv_file = os.path.join(node, "opp-microvolt")
+        if not (re.fullmatch(r"opp-\d+", name) and os.path.isfile(uv_file)):
+            continue
+        with open(uv_file, "rb") as f:
+            raw = f.read()
+        entry = {"uv": list(struct.unpack(">%dI" % (len(raw) // 4), raw))}
+        try:
+            with open(os.path.join(node, "clock-latency-ns"), "rb") as f:
+                entry["latency"] = struct.unpack(">I", f.read(4))[0]
+        except (OSError, struct.error):
+            pass
+        found[str(int(name[4:]) // 1000000)] = entry
     return found
 
 
@@ -139,16 +148,16 @@ def is_neutral():
 
 
 def stock():
-    """The stock CPU table: read from the running tree while no tuning
-    runs, then kept in /flash for when one does."""
+    """The stock tables: read from the running tree while no tuning runs,
+    then kept in /flash for when one does."""
     saved = load(STOCK, None)
-    if saved:
+    if isinstance(saved, dict) and all(isinstance(saved.get(t), dict) for t in TABLES):
         return saved
     settings = load(SETTINGS, {})
     if not is_neutral() or settings.get("pending_reboot"):
         return None
-    table = read_table(CPU_TABLE)
-    return {"cpu": table} if table else None
+    tables = {t: read_table(name) for t, name in TABLES.items()}
+    return tables if tables["cpu"] else None
 
 
 def flash_rw():
@@ -198,68 +207,153 @@ def ensure_extlinux():
     return True
 
 
-def tuned(table, offset_mv):
-    """Each step's target and minimum moved by the offset (never under the
-    floor); the maximum stays, or rises to the new target."""
-    opps = []
-    for name, uv in sorted(table.items(), key=lambda kv: int(kv[0][4:])):
-        target = max(STEP_FLOOR_UV, uv[0] + offset_mv * 1000)
-        if len(uv) >= 3:
-            low = max(STEP_FLOOR_UV, min(target, uv[1] + offset_mv * 1000))
-            new = [target, low, max(uv[2], target)]
-        else:
-            new = [target]
-        opps.append((name, new))
-    return opps
+# --- the steps ----------------------------------------------------------------
+
+def mv(uv):
+    v = uv / 1000
+    return int(v) if v == int(v) else v
 
 
-def status():
-    st = stock()
-    settings = load(SETTINGS, {})
-    reverted = None
-    for path in (REVERTED, REVERTED_SEEN):
-        try:
-            with open(path) as f:
-                reverted = f.read().strip()
-            break
-        except OSError:
-            pass
-    trial = load(TRIAL, 0)
-    return {
-        "neutral": is_neutral(),
-        "cpu_offset_mv": settings.get("cpu_offset_mv", 0),
-        "pending_reboot": settings.get("pending_reboot", False),
-        "stock": st.get("cpu") if st else None,
-        "running": read_table(CPU_TABLE),
-        "trial": trial if isinstance(trial, int) else 0,
-        "reverted": reverted,
-    }
+def neighbours(cpu, mhz):
+    """The stock steps just under and over a new one."""
+    keys = sorted(int(k) for k in cpu)
+    under = [k for k in keys if k < mhz]
+    over = [k for k in keys if k > mhz]
+    return (under[-1] if under else None), (over[0] if over else None)
 
 
-def apply(offset_mv):
-    st = stock()
-    if not st:
-        out({"ok": False, "error": "no_stock"}, 1)
+def steps(st):
+    """table -> [(MHz, stock µV or 0, low µV, high µV, base µV)] of what may
+    change; base is where a uniform offset starts."""
+    found = {"cpu": [], "gpu": []}
+    cpu = st["cpu"]
+    for k, e in cpu.items():
+        s = e["uv"][0]
+        found["cpu"].append((int(k), s, max(RAIL_UV[0], s + CPU_RANGE_UV[0]),
+                             min(RAIL_UV[1], s + CPU_RANGE_UV[1]), s))
+    for mhz in CPU_NEW_MHZ:
+        if str(mhz) in cpu:
+            continue
+        under, over = neighbours(cpu, mhz)
+        if under is None or over is None:
+            continue
+        low, high = cpu[str(under)]["uv"][0], cpu[str(over)]["uv"][0]
+        found["cpu"].append((mhz, 0, low, min(RAIL_UV[1], high + CPU_RANGE_UV[1]), high))
+    for k, e in st.get("gpu", {}).items():
+        s = e["uv"][0]
+        if s > GPU_FLOOR_UV:
+            found["gpu"].append((int(k), s, GPU_FLOOR_UV, s, s))
+    for t in found:
+        found[t].sort()
+    return found
+
+
+def overlay(st, settings):
+    """The overlay for these settings: the neutral one (a fragment over /
+    that changes nothing) when there are none."""
+    fragments = []
+    for n, (t, table) in enumerate(TABLES.items()):
+        chosen = settings.get(t, {})
+        nodes = []
+        for k in sorted(chosen, key=int):
+            uv = chosen[k]
+            stock_entry = st[t].get(k)
+            name = "opp-%d" % (int(k) * 1000000)
+            if stock_entry:
+                cells = stock_entry["uv"]
+                new = [uv] if len(cells) == 1 else [uv, uv, max(cells[-1], uv)]
+                nodes.append((name, [("opp-microvolt", fdt_cells(*new))], []))
+            else:
+                _, over = neighbours(st[t], int(k))
+                top = st[t][str(over)]["uv"]
+                latency = next((e.get("latency") for e in st[t].values() if e.get("latency")), 40000)
+                hz = int(k) * 1000000
+                nodes.append((name, [("opp-hz", fdt_cells(hz >> 32, hz & 0xFFFFFFFF)),
+                                     ("opp-microvolt", fdt_cells(uv, uv, max(top[-1], uv))),
+                                     ("clock-latency-ns", fdt_cells(latency))], []))
+        if nodes:
+            fragments.append(("fragment@%d" % n, [("target-path", fdt_string("/" + table))],
+                              [("__overlay__", [], nodes)]))
+    if not fragments:
+        fragments = [("fragment@0", [("target-path", fdt_string("/"))], [("__overlay__", [], [])])]
+    return fdt(("", [], fragments))
+
+
+def check(st, table, mhz, uv):
+    """None when the step may take this voltage (0: its stock one)."""
+    for m, _, low, high, _ in steps(st)[table]:
+        if m == mhz:
+            if uv == 0 or (uv % STEP_UV == 0 and low <= uv <= high):
+                return None
+            return "out_of_range"
+    return "no_step"
+
+
+def save(st, settings):
+    """Writes the overlay for these settings; the next boot runs it."""
     flash_rw()
     try:
         os.makedirs(OVERLAYS, exist_ok=True)
-        if not os.path.exists(STOCK):
+        if load(STOCK, None) != st:
             write(STOCK, json.dumps(st))
-        neutral = overlay("/", [])
+        neutral = overlay(st, {})
         if not os.path.exists(NEUTRAL):
             write(NEUTRAL, neutral)
-        data = neutral if offset_mv == 0 else overlay("/" + CPU_TABLE, tuned(st["cpu"], offset_mv))
-        write(ACTIVE, data)
+        write(ACTIVE, overlay(st, settings))
         if not ensure_extlinux():
             write(ACTIVE, neutral)
             out({"ok": False, "error": "no_extlinux"}, 1)
         for stale in (TRIAL, REVERTED, REVERTED_SEEN):
             if os.path.exists(stale):
                 os.remove(stale)
-        write(SETTINGS, json.dumps({"cpu_offset_mv": offset_mv, "pending_reboot": True}))
+        settings["pending_reboot"] = True
+        write(SETTINGS, json.dumps(settings))
     finally:
         flash_ro()
-    return {"ok": True, "cpu_offset_mv": offset_mv, "reboot": True}
+    return {"ok": True, "reboot": True}
+
+
+def current():
+    settings = load(SETTINGS, {})
+    return {t: {k: v for k, v in settings.get(t, {}).items() if isinstance(v, int)}
+            for t in TABLES} | {"pending_reboot": bool(settings.get("pending_reboot"))}
+
+
+def reverted_count():
+    for path in (REVERTED, REVERTED_SEEN):
+        try:
+            with open(path) as f:
+                return f.read().strip()
+        except OSError:
+            pass
+    return None
+
+
+def status():
+    st = stock()
+    trial = load(TRIAL, 0)
+    return {
+        "neutral": is_neutral(),
+        "settings": current(),
+        "stock": st,
+        "running": {t: read_table(name) for t, name in TABLES.items()},
+        "trial": trial if isinstance(trial, int) else 0,
+        "reverted": reverted_count(),
+    }
+
+
+def brief():
+    """Each step as [MHz, chosen mV (0: stock, or no step), stock mV (0:
+    new), lowest, highest], short enough for a module (600 bytes)."""
+    st = stock()
+    settings = current()
+    if not st:
+        return {"supported": False, "pending": settings["pending_reboot"]}
+    found = steps(st)
+    rows = {t: [[m, mv(settings[t].get(str(m), 0)), mv(s), mv(lo), mv(hi)]
+                for m, s, lo, hi, _ in found[t]] for t in found}
+    return rows | {"pending": settings["pending_reboot"],
+                   "reverted": reverted_count() is not None, "supported": True}
 
 
 TOAST = {
@@ -290,7 +384,7 @@ def language():
 
 def boot():
     """This boot runs what is in place: nothing pending; a revert by the
-    initramfs becomes a toast."""
+    initramfs becomes a toast and clears the settings it undid."""
     settings = load(SETTINGS, None)
     changed = False
     if settings and settings.get("pending_reboot"):
@@ -301,8 +395,8 @@ def boot():
         title, detail = TOAST.get(language(), TOAST["en"])
         subprocess.run(["archr-toast", "error", "errors", title, detail],
                        capture_output=True)
-        if settings and settings.get("cpu_offset_mv"):
-            settings["cpu_offset_mv"] = 0
+        if settings and any(settings.get(t) for t in TABLES):
+            settings = {"pending_reboot": False}
             changed = True
     if changed or reverted:
         flash_rw()
@@ -316,20 +410,19 @@ def boot():
     return {"ok": True, "reverted": reverted}
 
 
+def number(text):
+    try:
+        return int(text)
+    except ValueError:
+        out({"ok": False, "error": "bad_value"}, 2)
+
+
 def main(argv):
     cmd = argv[1] if len(argv) > 1 else "status"
     if cmd == "status":
         out(status())
-    if cmd == "cpu" and len(argv) == 3:
-        try:
-            offset = int(argv[2])
-        except ValueError:
-            out({"ok": False, "error": "bad_value"}, 2)
-        if not OFFSET_RANGE[0] <= offset <= OFFSET_RANGE[1] or offset % 5:
-            out({"ok": False, "error": "out_of_range"}, 2)
-        out(apply(offset))
-    if cmd == "reset":
-        out(apply(0))
+    if cmd == "brief":
+        out(brief())
     if cmd == "boot":
         out(boot())
     if cmd == "clean":
@@ -340,6 +433,37 @@ def main(argv):
             finally:
                 flash_ro()
         out({"ok": True})
+    if cmd not in ("set", "offset", "reset"):
+        out({"ok": False, "error": "usage"}, 2)
+    st = stock()
+    if not st:
+        out({"ok": False, "error": "no_stock"}, 1)
+    settings = current()
+    if cmd == "reset" and len(argv) == 2:
+        out(save(st, {}))
+    if cmd == "set" and len(argv) == 5 and argv[2] in TABLES:
+        table, mhz, uv = argv[2], number(argv[3]), number(argv[4])
+        error = check(st, table, mhz, uv)
+        if error:
+            out({"ok": False, "error": error}, 2)
+        if uv == 0:
+            settings[table].pop(str(mhz), None)
+        else:
+            settings[table][str(mhz)] = uv
+        out(save(st, settings))
+    if cmd == "offset" and len(argv) == 4 and argv[2] == "cpu":
+        offset = number(argv[3])
+        if offset % STEP_UV or not CPU_RANGE_UV[0] <= offset <= CPU_RANGE_UV[1]:
+            out({"ok": False, "error": "out_of_range"}, 2)
+        cpu = {}
+        for m, s, low, high, base in steps(st)["cpu"]:
+            if s == 0 and str(m) not in settings["cpu"]:
+                continue  # a new step stays off
+            uv = max(low, min(high, base + offset))
+            if s == 0 or uv != s:
+                cpu[str(m)] = uv
+        settings["cpu"] = cpu
+        out(save(st, settings))
     out({"ok": False, "error": "usage"}, 2)
 
 
