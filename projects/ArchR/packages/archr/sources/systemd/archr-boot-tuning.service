@@ -1,0 +1,19 @@
+[Unit]
+Description=Boot tuning: a clean shutdown marks the boot good
+Documentation=man:archr-boot-tuning
+# The initramfs counts boots run with a voltage overlay (/flash/tuning.trial);
+# stopping this unit at a clean shutdown sets the count back to 0, so only
+# boots that crashed add up (two in a row restore the stock voltages).
+DefaultDependencies=no
+After=local-fs.target
+Before=shutdown.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/archr-boot-tuning boot
+ExecStop=/usr/bin/archr-boot-tuning clean
+
+[Install]
+WantedBy=multi-user.target

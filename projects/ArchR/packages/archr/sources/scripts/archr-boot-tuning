@@ -1,0 +1,320 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ArchR (https://github.com/archr-linux/Arch-R)
+#
+# archr-boot-tuning: CPU voltages set at boot through a device tree overlay,
+# /flash/overlays/tuning.dtbo, that extlinux.conf lists after the panel's.
+# Never the system DTB (archr-flash-sync replaces it on updates). The
+# initramfs (tuning_guard) counts boots in /flash/tuning.trial while the
+# overlay differs from the neutral one; a clean shutdown sets it to 0 (the
+# unit's stop), and two unclean boots in a row put the neutral one back.
+#
+#   archr-boot-tuning status            JSON: stock and applied voltages, state
+#   archr-boot-tuning cpu <mV offset>   every CPU step lowered (or raised) by it
+#   archr-boot-tuning reset             the neutral overlay: stock voltages
+#   archr-boot-tuning boot              at start: a revert becomes a toast
+#   archr-boot-tuning clean             at a clean shutdown: trial back to 0
+#
+# Changes take effect at the next boot. Offsets from -100 to +50 mV, in
+# steps of 5, never under STEP_FLOOR_UV for a step.
+import json
+import os
+import re
+import struct
+import subprocess
+import sys
+
+ROOT = os.environ.get("ARCHR_TUNING_ROOT", "")  # tests: a scratch root
+FLASH = ROOT + "/flash"
+OVERLAYS = FLASH + "/overlays"
+ACTIVE = OVERLAYS + "/tuning.dtbo"
+NEUTRAL = OVERLAYS + "/tuning.neutral.dtbo"
+STOCK = FLASH + "/tuning.stock.json"
+SETTINGS = FLASH + "/tuning.json"
+TRIAL = FLASH + "/tuning.trial"
+REVERTED = FLASH + "/tuning.reverted"
+REVERTED_SEEN = REVERTED + ".seen"  # told once, kept for status
+EXTLINUX = FLASH + "/extlinux/extlinux.conf"
+DT = ROOT + "/proc/device-tree"
+CPU_TABLE = "opp-table-0"
+OFFSET_RANGE = (-100, 50)
+STEP_FLOOR_UV = 850000
+
+
+def out(obj, code=0):
+    print(json.dumps(obj))
+    sys.exit(code)
+
+
+def load(path, default):
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return default
+
+
+# --- flattened device tree, just enough to write an overlay ---------------
+
+def fdt(root):
+    """An FDT blob from nested (name, props, children) tuples; props are
+    (name, bytes)."""
+    strings = b""
+    offsets = {}
+    body = b""
+
+    def name_off(name):
+        nonlocal strings
+        if name not in offsets:
+            offsets[name] = len(strings)
+            strings += name.encode() + b"\0"
+        return offsets[name]
+
+    def pad(b):
+        return b + b"\0" * (-len(b) % 4)
+
+    def node(name, props, children):
+        nonlocal body
+        body += struct.pack(">I", 1) + pad(name.encode() + b"\0")
+        for pname, value in props:
+            body += struct.pack(">III", 3, len(value), name_off(pname)) + pad(value)
+        for child in children:
+            node(*child)
+        body += struct.pack(">I", 2)
+
+    node(*root)
+    body += struct.pack(">I", 9)
+    rsvmap = b"\0" * 16
+    off_rsv = 40
+    off_struct = off_rsv + len(rsvmap)
+    off_strings = off_struct + len(body)
+    total = off_strings + len(strings)
+    header = struct.pack(">10I", 0xD00DFEED, total, off_struct, off_strings,
+                         off_rsv, 17, 16, 0, len(strings), len(body))
+    return header + rsvmap + body + strings
+
+
+def string_prop(text):
+    return text.encode() + b"\0"
+
+
+def cells(*values):
+    return b"".join(struct.pack(">I", v) for v in values)
+
+
+def overlay(target_path, opps):
+    """One fragment over target_path giving each opp node new microvolts.
+    No opps: a fragment over / that changes nothing (the neutral one)."""
+    children = [(name, [("opp-microvolt", cells(*uv))], []) for name, uv in opps]
+    target = target_path if opps else "/"
+    fragment = ("fragment@0", [("target-path", string_prop(target))],
+                [("__overlay__", [], children)])
+    return fdt(("", [], [fragment]))
+
+
+# --- the running tree -------------------------------------------------------
+
+def read_table(table):
+    """{opp node: [target, min, max] µV} of a table in the running tree."""
+    path = os.path.join(DT, table)
+    found = {}
+    if not os.path.isdir(path):
+        return found
+    for name in sorted(os.listdir(path)):
+        uv_file = os.path.join(path, name, "opp-microvolt")
+        if re.fullmatch(r"opp-\d+", name) and os.path.isfile(uv_file):
+            with open(uv_file, "rb") as f:
+                raw = f.read()
+            found[name] = list(struct.unpack(">%dI" % (len(raw) // 4), raw))
+    return found
+
+
+def is_neutral():
+    try:
+        with open(ACTIVE, "rb") as a, open(NEUTRAL, "rb") as n:
+            return a.read() == n.read()
+    except OSError:
+        return not os.path.exists(ACTIVE)
+
+
+def stock():
+    """The stock CPU table: read from the running tree while no tuning
+    runs, then kept in /flash for when one does."""
+    saved = load(STOCK, None)
+    if saved:
+        return saved
+    settings = load(SETTINGS, {})
+    if not is_neutral() or settings.get("pending_reboot"):
+        return None
+    table = read_table(CPU_TABLE)
+    return {"cpu": table} if table else None
+
+
+def flash_rw():
+    if not ROOT:
+        subprocess.run(["mount", "-o", "remount,rw", "/flash"], check=True)
+
+
+def flash_ro():
+    if not ROOT:
+        os.sync()
+        subprocess.run(["mount", "-o", "remount,ro", "/flash"])
+
+
+def write(path, data):
+    tmp = path + ".new"
+    with open(tmp, "wb" if isinstance(data, bytes) else "w") as f:
+        f.write(data)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+
+
+def ensure_extlinux():
+    """FDTOVERLAYS lists tuning.dtbo, after what it already lists."""
+    try:
+        with open(EXTLINUX) as f:
+            text = f.read()
+    except OSError:
+        return False
+    if "/overlays/tuning.dtbo" in text:
+        return True
+    lines = text.splitlines(keepends=True)
+    for n, line in enumerate(lines):
+        m = re.match(r"^(\s*)FDTOVERLAYS\s+(.*?)\s*$", line)
+        if m:
+            lines[n] = f"{m.group(1)}FDTOVERLAYS {m.group(2)} /overlays/tuning.dtbo\n"
+            break
+    else:
+        for n, line in enumerate(lines):
+            if re.match(r"^\s*FDTDIR\s", line):
+                indent = re.match(r"^(\s*)", line).group(1)
+                lines.insert(n + 1, f"{indent}FDTOVERLAYS /overlays/tuning.dtbo\n")
+                break
+        else:
+            return False
+    write(EXTLINUX, "".join(lines))
+    return True
+
+
+def tuned(table, offset_mv):
+    """Each step's target and minimum moved by the offset (never under the
+    floor); the maximum stays, or rises to the new target."""
+    opps = []
+    for name, uv in sorted(table.items(), key=lambda kv: int(kv[0][4:])):
+        target = max(STEP_FLOOR_UV, uv[0] + offset_mv * 1000)
+        if len(uv) >= 3:
+            low = max(STEP_FLOOR_UV, min(target, uv[1] + offset_mv * 1000))
+            new = [target, low, max(uv[2], target)]
+        else:
+            new = [target]
+        opps.append((name, new))
+    return opps
+
+
+def status():
+    st = stock()
+    settings = load(SETTINGS, {})
+    reverted = None
+    for path in (REVERTED, REVERTED_SEEN):
+        try:
+            with open(path) as f:
+                reverted = f.read().strip()
+            break
+        except OSError:
+            pass
+    trial = load(TRIAL, 0)
+    return {
+        "neutral": is_neutral(),
+        "cpu_offset_mv": settings.get("cpu_offset_mv", 0),
+        "pending_reboot": settings.get("pending_reboot", False),
+        "stock": st.get("cpu") if st else None,
+        "running": read_table(CPU_TABLE),
+        "trial": trial if isinstance(trial, int) else 0,
+        "reverted": reverted,
+    }
+
+
+def apply(offset_mv):
+    st = stock()
+    if not st:
+        out({"ok": False, "error": "no_stock"}, 1)
+    flash_rw()
+    try:
+        os.makedirs(OVERLAYS, exist_ok=True)
+        if not os.path.exists(STOCK):
+            write(STOCK, json.dumps(st))
+        neutral = overlay("/", [])
+        if not os.path.exists(NEUTRAL):
+            write(NEUTRAL, neutral)
+        data = neutral if offset_mv == 0 else overlay("/" + CPU_TABLE, tuned(st["cpu"], offset_mv))
+        write(ACTIVE, data)
+        if not ensure_extlinux():
+            write(ACTIVE, neutral)
+            out({"ok": False, "error": "no_extlinux"}, 1)
+        for stale in (TRIAL, REVERTED, REVERTED_SEEN):
+            if os.path.exists(stale):
+                os.remove(stale)
+        write(SETTINGS, json.dumps({"cpu_offset_mv": offset_mv, "pending_reboot": True}))
+    finally:
+        flash_ro()
+    return {"ok": True, "cpu_offset_mv": offset_mv, "reboot": True}
+
+
+def boot():
+    """This boot runs what is in place: nothing pending; a revert by the
+    initramfs becomes a toast."""
+    settings = load(SETTINGS, None)
+    changed = False
+    if settings and settings.get("pending_reboot"):
+        settings["pending_reboot"] = False
+        changed = True
+    reverted = os.path.exists(REVERTED)
+    if reverted:
+        subprocess.run(["archr-toast", "error", "errors",
+                        "Ajuste de tensão desfeito: o console travou duas vezes",
+                        "As tensões de fábrica voltaram"], capture_output=True)
+        if settings and settings.get("cpu_offset_mv"):
+            settings["cpu_offset_mv"] = 0
+            changed = True
+    if changed or reverted:
+        flash_rw()
+        try:
+            if changed:
+                write(SETTINGS, json.dumps(settings))
+            if reverted:
+                os.replace(REVERTED, REVERTED_SEEN)
+        finally:
+            flash_ro()
+    return {"ok": True, "reverted": reverted}
+
+
+def main(argv):
+    cmd = argv[1] if len(argv) > 1 else "status"
+    if cmd == "status":
+        out(status())
+    if cmd == "cpu" and len(argv) == 3:
+        try:
+            offset = int(argv[2])
+        except ValueError:
+            out({"ok": False, "error": "bad_value"}, 2)
+        if not OFFSET_RANGE[0] <= offset <= OFFSET_RANGE[1] or offset % 5:
+            out({"ok": False, "error": "out_of_range"}, 2)
+        out(apply(offset))
+    if cmd == "reset":
+        out(apply(0))
+    if cmd == "boot":
+        out(boot())
+    if cmd == "clean":
+        if os.path.exists(TRIAL):
+            flash_rw()
+            try:
+                write(TRIAL, "0\n")
+            finally:
+                flash_ro()
+        out({"ok": True})
+    out({"ok": False, "error": "usage"}, 2)
+
+
+if __name__ == "__main__":
+    main(sys.argv)

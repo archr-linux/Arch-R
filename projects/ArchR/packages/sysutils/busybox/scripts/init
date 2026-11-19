@@ -805,6 +805,39 @@ mount_flash() {
   fi
 }
 
+# Boot tuning (archr-boot-tuning): /flash/overlays/tuning.dtbo changes the
+# CPU, GPU or RAM voltages. While it differs from the neutral overlay each
+# boot counts one in /flash/tuning.trial and a clean shutdown sets it back
+# to 0 (archr-boot-tuning.service). Two boots in a row that never shut
+# down cleanly, the usual sign of a voltage too low under load, and this
+# one puts the neutral overlay back, leaves /flash/tuning.reverted for the
+# system to say why, and boots again with the stock voltages. The overlay
+# is replaced, never removed: extlinux.conf keeps listing a file that is
+# there. A hang before this point is not covered; the voltages only change
+# once cpufreq scales, well after it.
+tuning_guard() {
+  local active=/flash/overlays/tuning.dtbo neutral=/flash/overlays/tuning.neutral.dtbo
+  local trial=/flash/tuning.trial count
+  [ -f "${active}" -a -f "${neutral}" ] || return 0
+  [ "$(md5sum < "${active}")" = "$(md5sum < "${neutral}")" ] && return 0
+  count=$(cat "${trial}" 2>/dev/null)
+  case "${count}" in ''|*[!0-9]*) count=0 ;; esac
+  mount -o remount,rw /flash || return 0
+  if [ "${count}" -ge 2 ]; then
+    cp "${active}" /flash/overlays/tuning.failed.dtbo
+    cp "${neutral}" "${active}"
+    echo "${count}" > /flash/tuning.reverted
+    rm -f "${trial}"
+    sync
+    mount -o remount,ro /flash
+    echo "Boot tuning: ${count} unclean boots in a row, stock voltages restored"
+    do_reboot
+  fi
+  echo $((count + 1)) > "${trial}"
+  sync
+  mount -o remount,ro /flash
+}
+
 cleanup_flash() {
   progress "Cleaning up flash (if required)"
 
@@ -1475,6 +1508,7 @@ for BOOT_STEP in \
     recovery_mode \
     check_disks \
     mount_flash \
+    tuning_guard \
     set_consolefont \
     cleanup_flash \
     update_bootmenu \

@@ -16,7 +16,7 @@ PKG_NAME="archr"
 # versions; the install silently skipped a PKG_INSTALL dir that did not
 # exist and the image assembly then failed in post_install.
 PKG_VERSION="$(date +%Y%m%d)"
-PKG_REV="49"
+PKG_REV="50"
 PKG_LICENSE="GPLv2"
 PKG_SITE=""
 PKG_URL=""
@@ -221,6 +221,10 @@ EOF
   for unit in archr-error-report.path archr-error-report-kernel.service; do
     ln -sf ../${unit} ${units}/multi-user.target.wants/${unit}
   done
+  # Boot tuning (archr-boot-tuning): its stop at a clean shutdown tells the
+  # initramfs guard that the voltages held.
+  cp ${PKG_DIR}/sources/systemd/archr-boot-tuning.service ${units}
+  ln -sf ../archr-boot-tuning.service ${units}/multi-user.target.wants/archr-boot-tuning.service
   for dir in archr- iwd connman sway; do
     mkdir -p ${units}/${dir}.service.d
     cp ${PKG_DIR}/sources/systemd/10-error-report.conf ${units}/${dir}.service.d
