@@ -140,9 +140,21 @@ sed -i '/\[Cheevos\]/,/^\s*$/s/Enabled =.*/Enabled = false/' ${CONF_FILE}
 export PAN_MESA_DEBUG=forcepack
 export MESA_NO_ERROR=1
 
+# /etc/profile opts into PanVK on panfrost (041-panfrost). DuckStation then
+# shows even the software renderer through PanVK and crashes a few seconds
+# in (SIGSEGV in its page fault handler); OpenGL works. PanVK stays only
+# for the Vulkan renderer, picked on purpose.
+[ "${RENDERER}" = "vulkan" ] || unset PAN_I_WANT_A_BROKEN_VULKAN_DRIVER
+
 #Run Duckstation
 # A state to start from (runemu.sh --entrystate): the resume state
 # archr-game-save-exit left, or one picked on the launcher's Saves screen.
 STATE=""
 [ -f "${ARCHR_ENTRY_STATE}" ] && STATE="${ARCHR_ENTRY_STATE}"
-${EMUPERF} duckstation-sa -fullscreen -bigpicture -nogui ${STATE:+-statefile "${STATE}"} -- "${1}" > /dev/null 2>&1
+# Errors (LogLevel = Error) go to the console, and the console to runemu's
+# exec.log: an abort then reaches the error report with its reason. Panfrost
+# writes an AFBC-P line per packed texture (thousands a minute) that would
+# push the reason out of the report; those are left out.
+sed -i '/^LogToConsole =/c\LogToConsole = true' ${CONF_FILE}
+${EMUPERF} duckstation-sa -fullscreen -bigpicture -nogui ${STATE:+-statefile "${STATE}"} -- "${1}" \
+  2> >(grep --line-buffered -v '^MESA: warning: AFBC-P' >&2)
