@@ -104,7 +104,17 @@ then
     fi
 elif [ "${CORE}" = "gba" ]
 then
-    if [ $(get_setting tblur "${PLATFORM}" "${GAME}") = "1" ]
+    # The BIOS is optional for mednafen's GBA module, but a name in
+    # gba.bios that is not there stops every game ("Error opening file
+    # .../gba_bios.bin"). Use it when the user has one, else the
+    # built-in one.
+    if [ -f /storage/roms/bios/gba_bios.bin ]
+    then
+        sed -i 's|^gba\.bios .*|gba.bios gba_bios.bin|' "${MEDNAFEN_HOME}/mednafen.cfg"
+    else
+        sed -i 's|^gba\.bios .*|gba.bios |' "${MEDNAFEN_HOME}/mednafen.cfg"
+    fi
+    if [ "$(get_setting tblur "${PLATFORM}" "${GAME}")" = "1" ]
     then
         FEATURES_CMDLINE+=" -${CORE}.tblur 1"
     else
