@@ -293,10 +293,14 @@ mangohud_note() {
     panfrost:pt*) echo "MangoHud precisa do driver Panfrost: Configurações › Sistema › Driver de GPU" ;;
     panfrost:es*) echo "MangoHud necesita el controlador Panfrost: Configuración › Sistema › Controlador GPU" ;;
     panfrost:ru*) echo "MangoHud работает только с драйвером Panfrost: Настройки › Система › Драйвер GPU" ;;
+    panfrost:de*) echo "MangoHud braucht den Panfrost-Treiber: Einstellungen › System › GPU-Treiber" ;;
+    panfrost:zh*) echo "MangoHud 需要 Panfrost 驱动：设置 › 系统 › GPU 驱动" ;;
     panfrost:*)   echo "MangoHud needs the Panfrost driver: Settings › System › GPU driver" ;;
     off:pt*) echo "MangoHud desligado: Configurações › Jogos › Ajustes do MangoHud" ;;
     off:es*) echo "MangoHud desactivado: Configuración › Juegos › Ajustes de MangoHud" ;;
     off:ru*) echo "MangoHud выключен: Настройки › Игры › Настройки MangoHud" ;;
+    off:de*) echo "MangoHud ist aus: Einstellungen › Spiele › MangoHud-Einstellungen" ;;
+    off:zh*) echo "MangoHud 已关闭：设置 › 游戏 › MangoHud 设置" ;;
     off:*)   echo "MangoHud is off: Settings › Games › MangoHud settings" ;;
   esac
 }

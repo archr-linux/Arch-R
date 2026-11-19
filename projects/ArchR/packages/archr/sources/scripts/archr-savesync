@@ -428,6 +428,8 @@ TOAST = {
     "pt": ("Save em conflito: {}", "Escolha qual manter em Configurações › Sistema › Sincronizar saves"),
     "es": ("Partida en conflicto: {}", "Elige cuál conservar en Configuración › Sistema › Sincronizar partidas"),
     "ru": ("Конфликт сохранения: {}", "Выберите, какое оставить: Настройки › Система › Синхронизация сохранений"),
+    "de": ("Spielstand-Konflikt: {}", "Wähle unter Einstellungen › System › Spielstände abgleichen, welcher bleibt"),
+    "zh": ("存档冲突：{}", "在 设置 › 系统 › 存档同步 中选择保留哪一个"),
     "en": ("Save conflict: {}", "Choose which to keep in Settings › System › Save sync"),
 }
 

@@ -393,11 +393,15 @@ function port_runtime_ready() {
         log $0 "Port runtime ${missing[*]} missing and no network: not started"
         local name
         name=$(port_title "${script}" "${dir}")
-        if [[ "$(get_setting system.language)" == pt* ]]; then
-                archr-toast error errors "${name} precisa de ${missing[*]}" "Conecte à internet uma vez para baixar"
-        else
-                archr-toast error errors "${name} needs ${missing[*]}" "Connect to the internet once to download it"
-        fi
+        local need="${missing[*]}"
+        case "$(get_setting system.language)" in
+        pt*) archr-toast error errors "${name} precisa de ${need}" "Conecte à internet uma vez para baixar" ;;
+        es*) archr-toast error errors "${name} necesita ${need}" "Conéctate a internet una vez para descargarlo" ;;
+        ru*) archr-toast error errors "${name}: нужен ${need}" "Подключитесь к интернету один раз, чтобы скачать" ;;
+        de*) archr-toast error errors "${name} braucht ${need}" "Einmal mit dem Internet verbinden, um es zu laden" ;;
+        zh*) archr-toast error errors "${name} 需要 ${need}" "请连接一次互联网以下载" ;;
+        *) archr-toast error errors "${name} needs ${need}" "Connect to the internet once to download it" ;;
+        esac
         return 1
 }
 
