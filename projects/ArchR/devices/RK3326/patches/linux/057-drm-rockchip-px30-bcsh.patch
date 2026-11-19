@@ -1,0 +1,275 @@
+From: ArchR <noreply@arch-r.io>
+Subject: [PATCH] drm/rockchip: px30: post-blend brightness, contrast, saturation and hue
+
+The PX30 VOPB has a BCSH block after blending (BCSH_CTRL/BCS/H at
+0x160) that mainline never turns on. Drive it from four module
+parameters, 0 to 100 with 50 meaning the panel as it is and the block
+off: bcsh_brightness, bcsh_contrast, bcsh_saturation and bcsh_hue in
+/sys/module/rockchipdrm/parameters. Writing one applies at once (the
+compositor needs no part in it), and a commit writes the registers again
+after the VOP was powered off. The scale is the Rockchip BSP tv_state.
+
+---
+diff --color -ruN a/drivers/gpu/drm/rockchip/rockchip_drm_vop.c b/drivers/gpu/drm/rockchip/rockchip_drm_vop.c
+--- a/drivers/gpu/drm/rockchip/rockchip_drm_vop.c
++++ b/drivers/gpu/drm/rockchip/rockchip_drm_vop.c
+@@ -7,6 +7,7 @@
+ #include <linux/clk.h>
+ #include <linux/component.h>
+ #include <linux/delay.h>
++#include <linux/fixp-arith.h>
+ #include <linux/iopoll.h>
+ #include <linux/kernel.h>
+ #include <linux/log2.h>
+@@ -186,6 +187,9 @@
+ 	/* optional internal rgb encoder */
+ 	struct rockchip_rgb *rgb;
+ 
++	/* BCSH as written last; -1 when the registers must be written again */
++	int bcsh_applied;
++
+ 	struct vop_win win[];
+ };
+ 
+@@ -244,6 +248,110 @@
+ 	return ret;
+ }
+ 
++/*
++ * BCSH: brightness, contrast, saturation and hue after blending, for the
++ * VOPs that have it (PX30 VOPB). Module parameters from 0 to 100, 50 being
++ * the panel as it is (the block stays off); writing one applies at once,
++ * and a commit writes the registers again after the VOP was off. Same
++ * scale as the tv_state of the Rockchip BSP.
++ */
++static int bcsh_brightness = 50;
++static int bcsh_contrast = 50;
++static int bcsh_saturation = 50;
++static int bcsh_hue = 50;
++static DEFINE_MUTEX(vop_bcsh_lock);
++static struct vop *vop_bcsh_vops[2];
++
++static int vop_bcsh_key(void)
++{
++	return (bcsh_brightness << 24) | (bcsh_contrast << 16) |
++	       (bcsh_saturation << 8) | bcsh_hue;
++}
++
++static int vop_bcsh_scale(int y1, int y2, int x)
++{
++	return y1 + (y2 - y1) * x / 100;
++}
++
++/* Called with vop->reg_lock held and the VOP powered. */
++static void vop_bcsh_write(struct vop *vop)
++{
++	const struct vop_bcsh *bcsh = vop->data->bcsh;
++	int key = vop_bcsh_key();
++	int brightness, contrast, saturation, hue;
++
++	if (!bcsh || vop->bcsh_applied == key)
++		return;
++	vop->bcsh_applied = key;
++	if (bcsh_brightness == 50 && bcsh_contrast == 50 &&
++	    bcsh_saturation == 50 && bcsh_hue == 50) {
++		vop_reg_set(vop, &bcsh->en, 0, ~0, 0, "bcsh_en");
++		vop_reg_set(vop, &bcsh->r2y_en, 0, ~0, 0, "bcsh_r2y_en");
++		vop_reg_set(vop, &bcsh->y2r_en, 0, ~0, 0, "bcsh_y2r_en");
++		return;
++	}
++	brightness = vop_bcsh_scale(-64, 63, bcsh_brightness);
++	contrast = vop_bcsh_scale(0, 511, bcsh_contrast);
++	saturation = vop_bcsh_scale(0, 511, bcsh_saturation);
++	hue = vop_bcsh_scale(-30, 30, bcsh_hue);
++	/* RGB in and out: through YUV for the block, BT.601 both ways. */
++	vop_reg_set(vop, &bcsh->r2y_en, 0, ~0, 1, "bcsh_r2y_en");
++	vop_reg_set(vop, &bcsh->y2r_en, 0, ~0, 1, "bcsh_y2r_en");
++	vop_reg_set(vop, &bcsh->r2y_csc_mode, 0, ~0, 0, "bcsh_r2y_csc_mode");
++	vop_reg_set(vop, &bcsh->y2r_csc_mode, 0, ~0, 0, "bcsh_y2r_csc_mode");
++	vop_reg_set(vop, &bcsh->out_mode, 0, ~0, 3, "bcsh_out_mode");
++	vop_reg_set(vop, &bcsh->brightness, 0, ~0, brightness & 0xff, "bcsh_brightness");
++	vop_reg_set(vop, &bcsh->contrast, 0, ~0, contrast, "bcsh_contrast");
++	vop_reg_set(vop, &bcsh->sat_con, 0, ~0, saturation * contrast / 0x100, "bcsh_sat_con");
++	vop_reg_set(vop, &bcsh->sin_hue, 0, ~0, (fixp_sin32(hue) >> 23) & 0x1ff, "bcsh_sin_hue");
++	vop_reg_set(vop, &bcsh->cos_hue, 0, ~0, (fixp_cos32(hue) >> 23) & 0x1ff, "bcsh_cos_hue");
++	vop_reg_set(vop, &bcsh->en, 0, ~0, 1, "bcsh_en");
++}
++
++static void vop_bcsh_apply_all(void)
++{
++	int i;
++
++	mutex_lock(&vop_bcsh_lock);
++	for (i = 0; i < ARRAY_SIZE(vop_bcsh_vops); i++) {
++		struct vop *vop = vop_bcsh_vops[i];
++
++		if (!vop)
++			continue;
++		mutex_lock(&vop->vop_lock);
++		if (vop->is_enabled) {
++			spin_lock(&vop->reg_lock);
++			vop_bcsh_write(vop);
++			VOP_REG_SET(vop, common, cfg_done, 1);
++			spin_unlock(&vop->reg_lock);
++		}
++		mutex_unlock(&vop->vop_lock);
++	}
++	mutex_unlock(&vop_bcsh_lock);
++}
++
++static int vop_bcsh_param_set(const char *val, const struct kernel_param *kp)
++{
++	int v, ret = kstrtoint(val, 0, &v);
++
++	if (ret)
++		return ret;
++	if (v < 0 || v > 100)
++		return -EINVAL;
++	*(int *)kp->arg = v;
++	vop_bcsh_apply_all();
++	return 0;
++}
++
++static const struct kernel_param_ops vop_bcsh_param_ops = {
++	.set = vop_bcsh_param_set,
++	.get = param_get_int,
++};
++module_param_cb(bcsh_brightness, &vop_bcsh_param_ops, &bcsh_brightness, 0644);
++module_param_cb(bcsh_contrast, &vop_bcsh_param_ops, &bcsh_contrast, 0644);
++module_param_cb(bcsh_saturation, &vop_bcsh_param_ops, &bcsh_saturation, 0644);
++module_param_cb(bcsh_hue, &vop_bcsh_param_ops, &bcsh_hue, 0644);
++
+ static inline void vop_cfg_done(struct vop *vop)
+ {
+ 	VOP_REG_SET(vop, common, cfg_done, 1);
+@@ -770,6 +878,7 @@
+ 	vop_dsp_hold_valid_irq_disable(vop);
+ 
+ 	vop->is_enabled = false;
++	vop->bcsh_applied = -1;
+ 
+ 	/*
+ 	 * vop standby complete, so iommu detach is safe.
+@@ -1592,6 +1701,7 @@
+ 	/* Enable AFBC if there is some AFBC window, disable otherwise. */
+ 	s = to_rockchip_crtc_state(crtc->state);
+ 	VOP_AFBC_SET(vop, enable, s->enable_afbc);
++	vop_bcsh_write(vop);
+ 	vop_cfg_done(vop);
+ 
+ 	/* Ack the DMA transfer of the previous frame (RK3066). */
+@@ -2107,6 +2217,7 @@
+ 	clk_disable(vop->aclk);
+ 
+ 	vop->is_enabled = false;
++	vop->bcsh_applied = -1;
+ 
+ 	pm_runtime_put_sync(vop->dev);
+ 
+@@ -2214,6 +2325,7 @@
+ 	vop->dev = dev;
+ 	vop->data = vop_data;
+ 	vop->drm_dev = drm_dev;
++	vop->bcsh_applied = -1;
+ 	dev_set_drvdata(dev, vop);
+ 
+ 	vop_win_init(vop);
+@@ -2256,6 +2368,19 @@
+ 
+ 	pm_runtime_enable(&pdev->dev);
+ 
++	if (vop_data->bcsh) {
++		int i;
++
++		mutex_lock(&vop_bcsh_lock);
++		for (i = 0; i < ARRAY_SIZE(vop_bcsh_vops); i++) {
++			if (!vop_bcsh_vops[i]) {
++				vop_bcsh_vops[i] = vop;
++				break;
++			}
++		}
++		mutex_unlock(&vop_bcsh_lock);
++	}
++
+ 	ret = vop_initial(vop);
+ 	if (ret < 0) {
+ 		DRM_DEV_ERROR(&pdev->dev,
+@@ -2289,6 +2414,13 @@
+ static void vop_unbind(struct device *dev, struct device *master, void *data)
+ {
+ 	struct vop *vop = dev_get_drvdata(dev);
++	int i;
++
++	mutex_lock(&vop_bcsh_lock);
++	for (i = 0; i < ARRAY_SIZE(vop_bcsh_vops); i++)
++		if (vop_bcsh_vops[i] == vop)
++			vop_bcsh_vops[i] = NULL;
++	mutex_unlock(&vop_bcsh_lock);
+ 
+ 	if (vop->rgb)
+ 		rockchip_rgb_fini(vop->rgb);
+diff --color -ruN a/drivers/gpu/drm/rockchip/rockchip_drm_vop.h b/drivers/gpu/drm/rockchip/rockchip_drm_vop.h
+--- a/drivers/gpu/drm/rockchip/rockchip_drm_vop.h
++++ b/drivers/gpu/drm/rockchip/rockchip_drm_vop.h
+@@ -127,6 +127,21 @@
+ 	struct vop_reg standby;
+ };
+ 
++/* Post-blend brightness, contrast, saturation and hue (PX30 VOPB). */
++struct vop_bcsh {
++	struct vop_reg en;
++	struct vop_reg r2y_en;
++	struct vop_reg y2r_en;
++	struct vop_reg r2y_csc_mode;
++	struct vop_reg y2r_csc_mode;
++	struct vop_reg out_mode;
++	struct vop_reg brightness;
++	struct vop_reg contrast;
++	struct vop_reg sat_con;
++	struct vop_reg sin_hue;
++	struct vop_reg cos_hue;
++};
++
+ struct vop_misc {
+ 	struct vop_reg global_regdone_en;
+ };
+@@ -228,6 +243,7 @@
+ 	const struct vop_modeset *modeset;
+ 	const struct vop_output *output;
+ 	const struct vop_afbc *afbc;
++	const struct vop_bcsh *bcsh;
+ 	const struct vop_win_yuv2yuv_data *win_yuv2yuv;
+ 	const struct vop_win_data *win;
+ 	unsigned int win_size;
+diff --color -ruN a/drivers/gpu/drm/rockchip/rockchip_vop_reg.c b/drivers/gpu/drm/rockchip/rockchip_vop_reg.c
+--- a/drivers/gpu/drm/rockchip/rockchip_vop_reg.c
++++ b/drivers/gpu/drm/rockchip/rockchip_vop_reg.c
+@@ -280,6 +280,20 @@
+ 	.dsp_lut_en = VOP_REG(PX30_DSP_CTRL2, 0x1, 5),
+ };
+ 
++static const struct vop_bcsh px30_bcsh = {
++	.en = VOP_REG(PX30_BCSH_CTRL, 0x1, 0),
++	.r2y_csc_mode = VOP_REG(PX30_BCSH_CTRL, 0x1, 1),
++	.out_mode = VOP_REG(PX30_BCSH_CTRL, 0x3, 2),
++	.y2r_csc_mode = VOP_REG(PX30_BCSH_CTRL, 0x3, 4),
++	.y2r_en = VOP_REG(PX30_BCSH_CTRL, 0x1, 6),
++	.r2y_en = VOP_REG(PX30_BCSH_CTRL, 0x1, 7),
++	.brightness = VOP_REG(PX30_BCSH_BCS, 0xff, 0),
++	.contrast = VOP_REG(PX30_BCSH_BCS, 0x1ff, 8),
++	.sat_con = VOP_REG(PX30_BCSH_BCS, 0x3ff, 20),
++	.sin_hue = VOP_REG(PX30_BCSH_H, 0x1ff, 0),
++	.cos_hue = VOP_REG(PX30_BCSH_H, 0x1ff, 16),
++};
++
+ static const struct vop_modeset px30_modeset = {
+ 	.htotal_pw = VOP_REG(PX30_DSP_HTOTAL_HS_END, 0x0fff0fff, 0),
+ 	.hact_st_end = VOP_REG(PX30_DSP_HACT_ST_END, 0x0fff0fff, 0),
+@@ -372,6 +386,7 @@
+ 	.intr = &px30_intr,
+ 	.feature = VOP_FEATURE_INTERNAL_RGB,
+ 	.common = &px30_common,
++	.bcsh = &px30_bcsh,
+ 	.modeset = &px30_modeset,
+ 	.output = &px30_output,
+ 	.win = px30_vop_big_win_data,

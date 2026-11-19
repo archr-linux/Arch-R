@@ -10,13 +10,16 @@
 # pacman reads hooks again at PostTransaction, so this one also runs in
 # the transaction that installs it. An update of the launcher alone changes
 # its session unit too ("changed on disk" until a reboot), so it counts.
+# archr-gamma holds the screen's curve and hands the saturation to the
+# kernel: a new one only reads new keys once restarted.
 [Trigger]
 Operation = Upgrade
 Type = Package
 Target = archr
 Target = archr-launcher
+Target = archr-gamma
 
 [Action]
 Description = Reloading systemd and restarting Arch R background services...
 When = PostTransaction
-Exec = /bin/sh -c 'systemctl daemon-reload; systemctl try-restart --no-block archr-battery-guard.service; systemctl start --no-block archr-error-report.path; { echo 1 >/proc/sys/debug/exception-trace; } 2>/dev/null; true'
+Exec = /bin/sh -c 'systemctl daemon-reload; systemctl try-restart --no-block archr-battery-guard.service archr-gamma.service; systemctl start --no-block archr-error-report.path; { echo 1 >/proc/sys/debug/exception-trace; } 2>/dev/null; true'

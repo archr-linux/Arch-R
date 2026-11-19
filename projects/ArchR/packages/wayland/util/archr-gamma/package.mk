@@ -3,7 +3,7 @@
 
 PKG_NAME="archr-gamma"
 PKG_VERSION="1.0"
-PKG_REV="2"
+PKG_REV="3"
 PKG_LICENSE="GPL"
 PKG_SITE=""
 PKG_URL=""

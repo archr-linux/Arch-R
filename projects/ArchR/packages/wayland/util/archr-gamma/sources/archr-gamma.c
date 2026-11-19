@@ -11,6 +11,11 @@
 // SIGHUP reads them again and applies at once, so Settings can show each
 // step while the user moves the value. At 1.00 and 6500 K it holds no
 // curve at all: the panel's gamma table stays off, as without this program.
+//
+// It also hands display.saturation, display.contrast and display.hue (0 to
+// 100, 50 = as it is) to the kernel's BCSH block, where the VOP has one
+// (/sys/module/rockchipdrm/parameters/bcsh_*): written at start and on each
+// SIGHUP, whether or not the compositor takes a gamma curve.
 #define _GNU_SOURCE
 #include <errno.h>
 #include <math.h>
@@ -83,7 +88,30 @@ static char *setting(const char *key, char *buf, size_t len) {
 	return found ? buf : NULL;
 }
 
+static const char *bcsh_dir = "/sys/module/rockchipdrm/parameters";
+
+// display.<key> (0..100, else 50) into bcsh_<name>, when the kernel has it.
+static void write_bcsh(const char *key, const char *name) {
+	char buf[64], path[160], *end;
+	long v = 50;
+	FILE *f;
+	if (setting(key, buf, sizeof(buf))) {
+		long n = strtol(buf, &end, 10);
+		if (end != buf && n >= 0 && n <= 100)
+			v = n;
+	}
+	snprintf(path, sizeof(path), "%s/bcsh_%s", bcsh_dir, name);
+	f = fopen(path, "w");
+	if (!f)
+		return;
+	fprintf(f, "%ld\n", v);
+	fclose(f);
+}
+
 static void read_settings(void) {
+	write_bcsh("display.saturation", "saturation");
+	write_bcsh("display.contrast", "contrast");
+	write_bcsh("display.hue", "hue");
 	char buf[64];
 	char *end;
 	gamma_value = 1.0;
@@ -194,6 +222,10 @@ int main(int argc, char **argv) {
 		config = argv[1];
 	sa.sa_handler = on_hup;
 	sigaction(SIGHUP, &sa, NULL);
+	// The BCSH needs no compositor: in place before waiting for one.
+	write_bcsh("display.saturation", "saturation");
+	write_bcsh("display.contrast", "contrast");
+	write_bcsh("display.hue", "hue");
 
 	display = connect_compositor(60);
 	if (!display) {
