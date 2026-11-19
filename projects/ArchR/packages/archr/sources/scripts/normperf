@@ -1,0 +1,12 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2025-present ArchR (https://github.com/archr-linux/Arch-R)
+#
+# normperf (perfnorm on ArkOS): ports made for dArkOS/ArkOS call it when
+# the game ends. Back to the governor the player chose, as runemu does.
+
+. /etc/profile
+case "$(get_setting system.cpugovernor)" in
+performance | ondemand | schedutil | powersave) "$(get_setting system.cpugovernor)" ;;
+*) ondemand ;;
+esac

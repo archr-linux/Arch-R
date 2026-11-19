@@ -16,7 +16,7 @@ PKG_NAME="archr"
 # versions; the install silently skipped a PKG_INSTALL dir that did not
 # exist and the image assembly then failed in post_install.
 PKG_VERSION="$(date +%Y%m%d)"
-PKG_REV="52"
+PKG_REV="53"
 PKG_LICENSE="GPLv2"
 PKG_SITE=""
 PKG_URL=""
@@ -250,6 +250,10 @@ EOF
   ln -sfn . ${INSTALL}/usr/lib/aarch64-linux-gnu
   ln -sfn ../lib32 ${INSTALL}/usr/lib/arm-linux-gnueabihf
   install -m644 ${PKG_DIR}/sources/systemd/oga_events.service ${units}/oga_events.service
+  # Their helpers come from sources/scripts (maxperf, normperf,
+  # show_splash.sh, lspci); ArkOS names the first two perfmax and perfnorm.
+  ln -sf maxperf ${INSTALL}/usr/bin/perfmax
+  ln -sf normperf ${INSTALL}/usr/bin/perfnorm
   # The kernel names the faulting library and address of a crashed program
   # in its log, which the report carries (no core dumps on the console).
   mkdir -p ${INSTALL}/usr/lib/sysctl.d

@@ -1,0 +1,9 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2025-present ArchR (https://github.com/archr-linux/Arch-R)
+#
+# maxperf (perfmax on ArkOS): ports made for dArkOS/ArkOS call it before
+# the game. Same as the performance governor Arch R gives gameplay.
+
+. /etc/profile
+performance

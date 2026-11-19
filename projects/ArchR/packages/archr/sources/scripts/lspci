@@ -1,0 +1,8 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2025-present ArchR (https://github.com/archr-linux/Arch-R)
+#
+# lspci: ports and desktops made for Debian ask it for the graphics card.
+# These consoles have no PCI bus, so the list is empty, as pciutils would
+# print it on a board without one, but without its error.
+exit 0
