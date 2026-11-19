@@ -58,6 +58,26 @@ expect "auto frame skip" "True" "$(key AutoFrameSkip "${INI}")"
 expect "frame skip cap" "2" "$(key FrameSkip "${INI}")"
 expect "vsync as shipped" "True" "$(key VerticalSync "${INI}")"
 expect "no old vsync key" "" "$(key VSyncInterval "${INI}")"
+expect "new install: high quality depth" "True" "$(key HighQualityDepth "${INI}")"
+expect "new install: backoff cache" "False" "$(key TextureBackoffCache "${INI}")"
+
+# A config from before 20261119.6 (the values we shipped then; one the
+# player changed in PPSSPP): back to PPSSPP's defaults once, except the
+# player's own.
+rm -f "${TMP}/conf/.defaults-20261119"
+ini HighQualityDepth False
+ini TextureBackoffCache True
+ini RenderDuplicateFrames True
+ini SkipGPUReadbackMode 2
+run
+expect "old depth back to default" "True" "$(key HighQualityDepth "${INI}")"
+expect "old backoff back to default" "False" "$(key TextureBackoffCache "${INI}")"
+expect "old duplicate frames back to default" "False" "$(key RenderDuplicateFrames "${INI}")"
+expect "the player's own readback mode stays" "2" "$(key SkipGPUReadbackMode "${INI}")"
+# Only once: what the player sets afterwards stays.
+ini TextureBackoffCache True
+run
+expect "migration runs once" "True" "$(key TextureBackoffCache "${INI}")"
 
 # A second start adds no second Exit App; the user's own Exit App stays.
 run

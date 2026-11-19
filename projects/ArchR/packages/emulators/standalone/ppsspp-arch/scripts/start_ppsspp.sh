@@ -31,6 +31,27 @@ INI="${CONF_DIR}/${PPSSPP_INI}"
 ini_set() {
   sed -i "/^${1} =/c\\${1} = ${2}" "${INI}"
 }
+# Once per config: four keys back to PPSSPP's own defaults, which run
+# faster on the RK3326 (GTA VCS 70% -> 78% on a Soy Sauce, 2026-11-18)
+# than the values we shipped before. Only a key still at the value we
+# shipped changes: one the player set in PPSSPP stays. New installs get
+# them from the ini already.
+DEFAULTS_MARK="${CONF_DIR}/.defaults-20261119"
+# ini_back KEY DEFAULT OLD...: KEY to DEFAULT while it is one of OLD
+ini_back() {
+  key=$1 default=$2 now=$(sed -n "s/^${1} = //p" "${INI}")
+  shift 2
+  for old in "$@"; do
+    [ "${now}" = "${old}" ] && ini_set "${key}" "${default}" && return
+  done
+}
+if [ -f "${INI}" ] && [ ! -e "${DEFAULTS_MARK}" ]; then
+  ini_back HighQualityDepth True 0 False
+  ini_back TextureBackoffCache False True 1
+  ini_back RenderDuplicateFrames False True 1
+  ini_back SkipGPUReadbackMode 0 1
+  touch "${DEFAULTS_MARK}"
+fi
 ASKIP=$(get_setting auto_frame_skip "${PLATFORM}" "${GAME}")
 FSKIP=$(get_setting frame_skip "${PLATFORM}" "${GAME}")
 FPS=$(get_setting show_fps "${PLATFORM}" "${GAME}")
