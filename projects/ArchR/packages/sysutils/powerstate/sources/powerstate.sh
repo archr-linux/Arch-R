@@ -15,8 +15,26 @@ unset CURRENT_MODE
 unset AC_STATUS
 ledcontrol $(get_setting led.color)
 
+# The status a change has to hold before it counts, and for how many polls.
+# On boards that charge through their own IC (R36S and clones) the status
+# comes from the pack's net current, which crosses zero over and over while
+# a game is played on the charger: without the wait the GPU level flipped
+# every two seconds and undid the level runemu set for the game.
+PENDING=""
+HELD=0
+SETTLE=3
+
 while true; do
   AC_STATUS="$(cat /sys/class/power_supply/[bB][aA][tT]*/status 2>/dev/null)"
+  if [ "${AC_STATUS}" = "${PENDING}" ]; then
+    HELD=$(( HELD + 1 ))
+  else
+    PENDING="${AC_STATUS}"
+    HELD=1
+  fi
+  if [ -n "${CURRENT_MODE}" ] && (( HELD < SETTLE )); then
+    AC_STATUS="${CURRENT_MODE}"
+  fi
   if [[ ! "${CURRENT_MODE}" =~ ${AC_STATUS} ]]; then
     case ${AC_STATUS} in
       Disch*)
