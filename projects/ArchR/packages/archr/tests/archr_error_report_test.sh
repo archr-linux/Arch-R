@@ -332,7 +332,10 @@ localStorage load file "/storage/.local/share/eludi/arcajs/asteroludi.json" erro
 arm_release_ver: g24p0-00eac0, rk_so_ver: 10
 WARN: WindowControllerOpen(0): already opened
 ** Error ** : Oups, updateDB_stats() failed: failed to load XML stats.xml
-** Error ** : Oups, updateDB_favorite() failed: failed to load XML favoriteLevels.xml'
+** Error ** : Oups, updateDB_favorite() failed: failed to load XML favoriteLevels.xml
+startup: video SDL_CreateWindow begin; size=640x480 flags=0x00000005
+startup: SDL_Init ready; video driver=wayland
+has monolibtic? no (libs/libkoreader-monolibtic.so: cannot open shared object file: No such file or directory)'
 port() {
   printf 'old run: Segmentation fault\n' >"${R}/var/log/exec.log"
   local offset

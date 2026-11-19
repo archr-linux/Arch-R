@@ -278,6 +278,10 @@ PORT_NOISE+='|^/tmp/weston/westonwrap\.sh: line [0-9]+: \[: : integer expected$'
 PORT_NOISE+='|^\[SDL2 PATCH LIBRARY\]'
 # X-Moto on its first run: no stats or favourites yet.
 PORT_NOISE+='|Oups, updateDB_[a-z]+\(\) failed: failed to load XML'
+# TrackWerk tracing its startup step by step (SDL_CreateWindow begin/ready).
+PORT_NOISE+='|^startup: '
+# KOReader probing for its monolithic build before loading the split libs.
+PORT_NOISE+='|has monolibtic\? no'
 # Lines that only look like errors: they count on a run that ended
 # within SHORT seconds (nothing was played).
 PORT_SOFT='[Ee]rror|ERROR|[Ff]ail|[Cc]annot|[Uu]nable to|not found|No such file'
