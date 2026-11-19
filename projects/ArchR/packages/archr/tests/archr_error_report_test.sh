@@ -335,7 +335,9 @@ WARN: WindowControllerOpen(0): already opened
 ** Error ** : Oups, updateDB_favorite() failed: failed to load XML favoriteLevels.xml
 startup: video SDL_CreateWindow begin; size=640x480 flags=0x00000005
 startup: SDL_Init ready; video driver=wayland
-has monolibtic? no (libs/libkoreader-monolibtic.so: cannot open shared object file: No such file or directory)'
+has monolibtic? no (libs/libkoreader-monolibtic.so: cannot open shared object file: No such file or directory)
+[DBG]: failed to load tunl_2_bend because TXD roadtunnel is not in memory
+[ERROR]: Could not load custom controller mapping (SDL_GAMECONTROLLERCONFIG_FILE env variable'
 port() {
   printf 'old run: Segmentation fault\n' >"${R}/var/log/exec.log"
   local offset

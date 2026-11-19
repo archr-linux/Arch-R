@@ -282,6 +282,10 @@ PORT_NOISE+='|Oups, updateDB_[a-z]+\(\) failed: failed to load XML'
 PORT_NOISE+='|^startup: '
 # KOReader probing for its monolithic build before loading the split libs.
 PORT_NOISE+='|has monolibtic\? no'
+# re3 (GTA III): streaming a model before its texture dictionary, and no
+# SDL_GAMECONTROLLERCONFIG_FILE set; the game plays and quits normally.
+PORT_NOISE+='|^\[DBG\]: failed to load [^ ]+ because TXD [^ ]+ is not in memory$'
+PORT_NOISE+='|^\[ERROR\]: Could not load custom controller mapping \(SDL_GAMECONTROLLERCONFIG_FILE env variable'
 # Lines that only look like errors: they count on a run that ended
 # within SHORT seconds (nothing was played).
 PORT_SOFT='[Ee]rror|ERROR|[Ff]ail|[Cc]annot|[Uu]nable to|not found|No such file'
