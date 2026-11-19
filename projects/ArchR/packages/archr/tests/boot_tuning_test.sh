@@ -70,7 +70,7 @@ expect "pending" "True" "$(run status | field pending_reboot)"
 # The running tree now carries the tuning: the stock kept in /flash stays.
 run cpu -40 >/dev/null
 expect "from stock" "910000,910000,1350000" "$(voltages "${TMP}/flash/overlays/tuning.dtbo" | cut -d' ' -f1)"
-expect "range" "out_of_range" "$(run cpu -105 | field error)"
+expect "range" "out_of_range" "$(run cpu -45 | field error)"
 expect "step" "out_of_range" "$(run cpu -12 | field error)"
 run reset >/dev/null
 expect "neutral" "True" "$(run status | field neutral)"
@@ -82,6 +82,8 @@ echo 2 >"${TMP}/flash/tuning.reverted"
 expect "revert told" "True" "$(run boot | field reverted)"
 expect "once" "False" "$(run boot | field reverted)"
 expect "one toast" "1" "$(wc -l <"${TMP}/toasts")"
+expect "in English without a language" "error errors Voltage tuning undone: the console froze twice Stock voltages restored" \
+  "$(cat "${TMP}/toasts")"
 expect "status keeps it" "2" "$(run status | field reverted)"
 expect "offset back to 0" "0" "$(run status | field cpu_offset_mv)"
 [ ${FAILED} -eq 0 ] && echo "ok   archr-boot-tuning"

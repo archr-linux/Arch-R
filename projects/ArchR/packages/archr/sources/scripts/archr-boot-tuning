@@ -15,7 +15,7 @@
 #   archr-boot-tuning boot              at start: a revert becomes a toast
 #   archr-boot-tuning clean             at a clean shutdown: trial back to 0
 #
-# Changes take effect at the next boot. Offsets from -100 to +50 mV, in
+# Changes take effect at the next boot. Offsets from -40 to +25 mV, in
 # steps of 5, never under STEP_FLOOR_UV for a step.
 import json
 import os
@@ -36,8 +36,9 @@ REVERTED = FLASH + "/tuning.reverted"
 REVERTED_SEEN = REVERTED + ".seen"  # told once, kept for status
 EXTLINUX = FLASH + "/extlinux/extlinux.conf"
 DT = ROOT + "/proc/device-tree"
+CFG = ROOT + "/storage/.config/system/configs/system.cfg"
 CPU_TABLE = "opp-table-0"
-OFFSET_RANGE = (-100, 50)
+OFFSET_RANGE = (-40, 25)  # -50 already hangs some R36S chips
 STEP_FLOOR_UV = 850000
 
 
@@ -261,6 +262,32 @@ def apply(offset_mv):
     return {"ok": True, "cpu_offset_mv": offset_mv, "reboot": True}
 
 
+TOAST = {
+    "pt": ("Ajuste de tensão desfeito: o console travou duas vezes",
+           "As tensões de fábrica voltaram"),
+    "es": ("Ajuste de voltaje deshecho: la consola se colgó dos veces",
+           "Se restauraron los voltajes de fábrica"),
+    "ru": ("Настройка напряжения отменена: консоль дважды зависла",
+           "Восстановлены заводские напряжения"),
+    "de": ("Spannungsanpassung zurückgenommen: die Konsole hing zweimal",
+           "Werksspannungen wiederhergestellt"),
+    "zh": ("电压调整已撤销：主机连续两次死机", "已恢复出厂电压"),
+    "en": ("Voltage tuning undone: the console froze twice",
+           "Stock voltages restored"),
+}
+
+
+def language():
+    try:
+        with open(CFG, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                if line.startswith("system.language="):
+                    return line.split("=", 1)[1].strip()[:2] or "en"
+    except OSError:
+        pass
+    return "en"
+
+
 def boot():
     """This boot runs what is in place: nothing pending; a revert by the
     initramfs becomes a toast."""
@@ -271,9 +298,9 @@ def boot():
         changed = True
     reverted = os.path.exists(REVERTED)
     if reverted:
-        subprocess.run(["archr-toast", "error", "errors",
-                        "Ajuste de tensão desfeito: o console travou duas vezes",
-                        "As tensões de fábrica voltaram"], capture_output=True)
+        title, detail = TOAST.get(language(), TOAST["en"])
+        subprocess.run(["archr-toast", "error", "errors", title, detail],
+                       capture_output=True)
         if settings and settings.get("cpu_offset_mv"):
             settings["cpu_offset_mv"] = 0
             changed = True

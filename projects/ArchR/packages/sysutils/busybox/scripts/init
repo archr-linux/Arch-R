@@ -813,8 +813,11 @@ mount_flash() {
 # one puts the neutral overlay back, leaves /flash/tuning.reverted for the
 # system to say why, and boots again with the stock voltages. The overlay
 # is replaced, never removed: extlinux.conf keeps listing a file that is
-# there. A hang before this point is not covered; the voltages only change
-# once cpufreq scales, well after it.
+# there. A boot that hangs never gets to shut down, so with a tuning in
+# place the hardware watchdog is armed here (opening it starts its 30 s);
+# the descriptor is closed before switch_root, the kernel then feeds it
+# until systemd (RuntimeWatchdogSec) takes it over, and a hang anywhere in
+# between resets the console instead of leaving it on a black screen.
 tuning_guard() {
   local active=/flash/overlays/tuning.dtbo neutral=/flash/overlays/tuning.neutral.dtbo
   local trial=/flash/tuning.trial count
@@ -836,6 +839,7 @@ tuning_guard() {
   echo $((count + 1)) > "${trial}"
   sync
   mount -o remount,ro /flash
+  [ -c /dev/watchdog ] && exec 8>/dev/watchdog
 }
 
 cleanup_flash() {
@@ -1595,6 +1599,7 @@ else
 fi
 
 # switch to new sysroot and start real init
+exec 8>&-
 exec /usr/bin/busybox switch_root /sysroot /usr/lib/systemd/systemd ${INIT_ARGS} ${INIT_UNIT}
 
 error "switch_root" "Error in initramfs. Could not switch to new root"
