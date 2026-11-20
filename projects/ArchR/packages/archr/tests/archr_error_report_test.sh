@@ -602,6 +602,22 @@ echo "[ 980.5] Out of memory: Killed process 901 (retroarch)" >>"${TMP}/dmesg"
 game 137 'Killed\n' 'Re-Volt.z64'
 check "an OOM during the run is" "$(count "${Q}")" "1"
 rm -f "${R}/proc/uptime"
+# printk.time off (the R36S): the lines get their times for the read only.
+rm -f "${Q}"/*.txt "${R}/storage/.cache/error-reports/today" "${R}/storage/.cache/error-reports/seen"
+PT="${R}/sys/module/printk/parameters/time"
+mkdir -p "${PT%/*}"
+echo N >"${PT}"
+echo "1000.00 3000.00" >"${R}/proc/uptime"
+printf '[  99.0] Out of memory: Killed process 900 (reVC)\n' >"${TMP}/dmesg-timed"
+fake dmesg 'if [ "$(cat "'"${PT}"'")" = Y ]; then cat "'"${TMP}"'/dmesg-timed"; else sed "s/^\[[^]]*\] //" "'"${TMP}"'/dmesg-timed"; fi'
+game 137 'Killed\n' 'Re-Volt.z64'
+check "printk.time off: an earlier OOM is not this run's" "$(count "${Q}")" "0"
+check "printk.time back to N" "$(cat "${PT}")" "N"
+printf '[ 980.5] Out of memory: Killed process 901 (retroarch)\n' >>"${TMP}/dmesg-timed"
+game 137 'Killed\n' 'Re-Volt.z64'
+check "printk.time off: an OOM during the run is" "$(count "${Q}")" "1"
+fake dmesg 'cat "'"${TMP}"'/dmesg" 2>/dev/null'
+rm -f "${R}/proc/uptime" "${PT}"
 
 BLOCK=$(sed -n "/^### A port's script usually exits 0/,/^fi$/p" "${SCRIPTS}/runemu.sh")
 runemu_report() {

@@ -92,14 +92,25 @@ bump() {
   echo "${TODAY} ${created} ${sent}" >"${DIR}/today"
 }
 
-# The kernel's OOM killer acted during this run: an OOM line in dmesg no
-# older than SECONDS (plus a little slack). An OOM of an earlier game in
-# the same boot is not this run's; without an uptime, any recent OOM.
+# dmesg with each line's time: with printk.time off (the R36S) the lines
+# have none, and switching it on for the read gives every line its time.
+timed_dmesg() {
+  local p="${ROOT}/sys/module/printk/parameters/time" old
+  old=$(cat "${p}" 2>/dev/null)
+  [ "${old}" = N ] && echo Y >"${p}" 2>/dev/null
+  run dmesg
+  [ "${old}" = N ] && echo N >"${p}" 2>/dev/null
+  :
+}
+
+# The kernel's OOM killer acted during this run: an OOM line no older than
+# SECONDS (plus a little slack). An OOM of an earlier game in the same boot
+# is not this run's. Without SECONDS or times, any recent OOM.
 oom_during() {
   local lines now
-  lines=$(run dmesg | tail -n 80 | grep -iE 'out of memory|oom-kill') || return 1
+  lines=$(timed_dmesg | tail -n 80 | grep -iE 'out of memory|oom-kill') || return 1
   now=$(cut -d' ' -f1 "${ROOT}/proc/uptime" 2>/dev/null)
-  { [ -n "$1" ] && [ -n "${now}" ]; } || return 0
+  { [ -n "$1" ] && [ -n "${now}" ] && grep -qE '^\[ *[0-9.]+\]' <<<"${lines}"; } || return 0
   awk -v since="${now}" -v s="$1" '
     BEGIN { since -= s + 5 }
     match($0, /^\[ *[0-9.]+\]/) && substr($0, RSTART + 1, RLENGTH - 2) + 0 >= since { found = 1 }
