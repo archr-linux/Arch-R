@@ -1,0 +1,35 @@
+From: ArchR <noreply@arch-r.io>
+Subject: [PATCH] wifi: rtl8xxxu: cancel the works on disconnect
+
+rtl8xxxu_start() submits the RX URBs, schedules ra_watchdog and only
+then returns the error of the last URB it could not submit. A dongle
+dropping off the bus (an RTL8723BU behind a USB hub on the OTG port,
+reconnecting dozens of times) fails that submit with -ENODEV: mac80211
+treats the start as failed and never calls stop, so nothing cancels
+the watchdog, which re-arms itself every 2 s. rtl8xxxu_disconnect()
+then freed the hw with the delayed work still queued: an oops in
+ieee80211_iterate_stations_atomic() from rtl8xxxu_watchdog_callback(),
+or its timer left in the timer wheel until the block was reused and
+__run_timers() panicked on the corrupted entry. Cancel every work in
+disconnect, after unregistering, whatever start and stop did.
+---
+--- a/drivers/net/wireless/realtek/rtl8xxxu/core.c
++++ b/drivers/net/wireless/realtek/rtl8xxxu/core.c
+@@ -7999,6 +7999,17 @@
+ 
+ 	ieee80211_unregister_hw(hw);
+ 
++	/*
++	 * rtl8xxxu_start() arms ra_watchdog before it returns the error of
++	 * an RX URB it could not submit (a dongle dropping off the bus), and
++	 * mac80211 calls no stop after a failed start: the watchdog kept
++	 * re-arming and outlived ieee80211_free_hw() below.
++	 */
++	cancel_work_sync(&priv->rx_urb_wq);
++	cancel_work_sync(&priv->c2hcmd_work);
++	cancel_delayed_work_sync(&priv->ra_watchdog);
++	cancel_delayed_work_sync(&priv->update_beacon_work);
++
+ 	priv->fops->power_off(priv);
+ 
+ 	usb_set_intfdata(interface, NULL);
