@@ -850,11 +850,15 @@ send() {
     read -r _ sent <<<"$(counts)"
     [ "${sent}" -lt "${DAILY}" ] || break
     name=${f##*/}
+    # The suffix comes from the text: when the server kept a report but
+    # the answer was lost (time out, the network dropping), the retry
+    # writes the same name again instead of a second copy.
     code=$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 10 --max-time 60 -X PUT \
       -H 'Content-Type: text/plain; charset=utf-8' --data-binary "@${f}" \
-      "${URL}/${name%.txt}${id}_$(od -An -N2 -tx1 /dev/urandom | tr -d ' \n').txt" 2>/dev/null)
+      "${URL}/${name%.txt}${id}_$(sha256sum "${f}" | cut -c 1-4).txt" 2>/dev/null)
     case "${code}" in
-      201 | 204)
+      # 409: that name is on the server already (a retry after a lost answer).
+      201 | 204 | 409)
         mv -f "${f}" "${SENT}/${name}" && touch "${SENT}/${name}"
         bump sent
         echo "archr-error-report: sent ${name}" >&2

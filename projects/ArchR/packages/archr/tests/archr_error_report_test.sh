@@ -253,6 +253,18 @@ U=$(ls "${TMP}/uploads" | head -n 1)
 if [[ "${U}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}_${CID}_[0-9a-f]{4}\.txt$ ]]; then echo "ok   upload name ${U}"; else echo "FAIL upload name ${U}"; FAILED=1; fi
 check "upload is the queued text" "$(cmp -s "${TMP}/uploads/${U}" "${S}/${U%_"${CID}"_*}.txt" && echo same)" "same"
 check "sent today" "$(cut -d' ' -f3 "${R}/storage/.cache/error-reports/today")" "3"
+# The server kept it but the answer was lost: the retry goes under the
+# same name, so the server holds one copy, not two.
+game 1 'error: answer lost\n' lost.z64
+rm -f "${TMP}/uploads"/*
+echo 000 >"${TMP}/code"
+report send
+check "answer lost: it waits" "$(count "${Q}")" "1"
+SENT_BEFORE=$(count "${S}")
+echo 409 >"${TMP}/code"
+report send
+check "answer lost: one name on the server" "$(count "${Q}") $(ls "${TMP}/uploads" | wc -l)" "0 1"
+check "answer lost: the 409 counts as sent" "$(count "${S}")" "$((SENT_BEFORE + 1))"
 # A 0-byte report (a power-off before it reached the card) is dropped, never sent.
 : >"${Q}/2026-01-01_00-00-00_dead.txt"
 rm -f "${TMP}/uploads"/*
