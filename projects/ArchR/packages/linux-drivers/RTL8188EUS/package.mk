@@ -3,7 +3,7 @@
 
 PKG_NAME="RTL8188EUS"
 PKG_VERSION="af3bf004458f76b7aec33e9ba552cd382ed1f5c3"
-PKG_REV="4"
+PKG_REV="5"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/aircrack-ng/rtl8188eus"
 PKG_URL="${PKG_SITE}.git"

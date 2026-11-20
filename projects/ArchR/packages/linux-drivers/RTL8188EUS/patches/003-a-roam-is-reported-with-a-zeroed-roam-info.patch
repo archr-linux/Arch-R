@@ -1,0 +1,21 @@
+A roam reported with stack garbage for its BSS
+
+rtw_cfg80211_indicate_connect() has a zeroed roam_info at the top, but
+the roaming branch declares a second one that shadows it and is never
+initialised. links[0].bss, valid_links and the FILS fields then hold
+whatever was on the stack: cfg80211_roamed() skips the BSS lookup for a
+non-NULL bss and later calls cfg80211_put_bss() on it, a kernel panic in
+the USB interrupt thread (seen on an R36S Clone with an 8188eu, after
+waking from sleep, when the dongle rejoined the same network).
+
+--- a/os_dep/linux/ioctl_cfg80211.c
++++ b/os_dep/linux/ioctl_cfg80211.c
+@@ -1099,7 +1099,7 @@
+ 		u32 freq;
+ 		u16 channel = cur_network->network.Configuration.DSConfig;
+ #if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 12, 0) || defined(RHEL79))
+-		struct cfg80211_roam_info roam_info;
++		struct cfg80211_roam_info roam_info = {};
+ #endif
+ 
+ 		freq = rtw_ch2freq(channel);
