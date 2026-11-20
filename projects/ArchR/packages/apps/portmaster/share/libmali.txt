@@ -1,0 +1,12 @@
+# PortMaster ports that run on Arch R only with GPU DRIVER = libmali.
+#
+# The launcher reads this list when a port starts on panfrost and offers to
+# switch the driver (Ports-libmali). These builds ask for an OpenGL ES 2.0
+# context and draw through gl4es: on panfrost gl4es crashes in its own
+# eglGetDisplay or draws nothing, and Mesa's ES context has no fixed
+# function. Ports that ask for desktop OpenGL run on panfrost (Mesa) and are
+# not listed here. Tested on the R36S, 2026-11-20 (issue #65).
+#
+# One port name per line, as PortMaster names it (NAME.zip).
+
+billyfrontier.zip

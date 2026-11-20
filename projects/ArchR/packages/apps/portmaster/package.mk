@@ -3,7 +3,7 @@
 
 PKG_NAME="portmaster"
 PKG_VERSION="2026.04.01-1426"
-PKG_REV="10"
+PKG_REV="11"
 PKG_ARCH="arm aarch64"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/PortsMaster/PortMaster-GUI"
@@ -25,9 +25,10 @@ makeinstall_target() {
   mkdir -p ${INSTALL}/usr/bin
     cp -a ${PKG_DIR}/scripts/* ${INSTALL}/usr/bin
 
-  # Ports the launcher offers to run with panfrost (see the file).
+  # Ports the launcher offers to run with panfrost or libmali (see the files).
   mkdir -p ${INSTALL}/usr/share/archr/portmaster
     cp -a ${PKG_DIR}/share/panfrost.txt ${INSTALL}/usr/share/archr/portmaster
+    cp -a ${PKG_DIR}/share/libmali.txt ${INSTALL}/usr/share/archr/portmaster
 
   mkdir -p ${INSTALL}/usr/config/PortMaster/release
     curl -Lo ${INSTALL}/usr/config/PortMaster/release/PortMaster.zip ${PKG_URL}

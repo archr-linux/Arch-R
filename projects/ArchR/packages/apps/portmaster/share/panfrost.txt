@@ -11,5 +11,5 @@
 bzflag.zip
 
 # gl4es on libmali: aborts on a GL error, or draws without the tunnel
-# (LIBGL_NOERROR=1). Full picture on panfrost with libgl_ArchR.txt.
+# (LIBGL_NOERROR=1). Full picture on panfrost, on Mesa's own OpenGL.
 a7xpg.zip

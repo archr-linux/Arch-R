@@ -6,23 +6,25 @@
 ## gl4es settings for ArchR, sourced by ports that bundle gl4es in place of
 ## PortMaster's libgl_default.txt.
 #
-# Same as the default, except on panfrost: there gl4es's GBM backend
-# (LIBGL_FB=4) draws nothing under sway; the PBuffer one (3) does.
+# gl4es only for libmali (mali_kbase), which has OpenGL ES alone. A Mesa
+# driver has desktop OpenGL (panfrost: 3.1 with ARB_compatibility) and runs
+# the port on it, as PortMaster does on ROCKNIX: gl4es on panfrost drew
+# nothing (a7xpg) or crashed in its own eglGetDisplay (Billy Frontier). Ports
+# that pick gl4es only when LIBGL_FB is set get the system libGL. Not glxinfo:
+# it takes ~0.7 s and starts Xwayland at every launch.
 
-export LIBGL_ES=2
-export LIBGL_GL=21
-if [ -d /sys/module/panfrost ]; then
-  export LIBGL_FB=3
-else
+if [ -d /sys/module/mali_kbase ]; then
+  export LIBGL_ES=2
+  export LIBGL_GL=21
   export LIBGL_FB=4
-fi
-if [ ! -e "/dev/dri/card0" ]; then
-  export LIBGL_FB=2
-fi
-if [ -d "$PWD/gl4es.$DEVICE_ARCH" ]; then
-  export LD_LIBRARY_PATH="$PWD/gl4es.$DEVICE_ARCH:$LD_LIBRARY_PATH"
-elif [ -d "$PWD/gl4es" ]; then
-  export LD_LIBRARY_PATH="$PWD/gl4es:$LD_LIBRARY_PATH"
+  if [ ! -e "/dev/dri/card0" ]; then
+    export LIBGL_FB=2
+  fi
+  if [ -d "$PWD/gl4es.$DEVICE_ARCH" ]; then
+    export LD_LIBRARY_PATH="$PWD/gl4es.$DEVICE_ARCH:$LD_LIBRARY_PATH"
+  elif [ -d "$PWD/gl4es" ]; then
+    export LD_LIBRARY_PATH="$PWD/gl4es:$LD_LIBRARY_PATH"
+  fi
 fi
 if [ -d "$PWD/libs.$DEVICE_ARCH" ]; then
   export LD_LIBRARY_PATH="$PWD/libs.$DEVICE_ARCH:$LD_LIBRARY_PATH"
