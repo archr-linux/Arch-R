@@ -113,10 +113,11 @@ fi
   fi
 
   #Video Backend
-	if [ "$RENDERER" = "opengl" ]; then
+  # Vulkan here is PanVK, which crashes DuckStation a few seconds into any
+  # game (SIGSEGV in its page fault handler; libmali has no Vulkan at all):
+  # a Vulkan pick runs on OpenGL instead.
+	if [ "$RENDERER" = "opengl" ] || [ "$RENDERER" = "vulkan" ]; then
     sed -i '/^Renderer =/c\Renderer = OpenGL' ${CONF_FILE}
-  elif [ "$RENDERER" = "vulkan" ]; then
-    sed -i '/^Renderer =/c\Renderer = Vulkan' ${CONF_FILE}
   else
     #Default to software renderer
     sed -i '/^Renderer =/c\Renderer = Software' ${CONF_FILE}
@@ -142,9 +143,9 @@ export MESA_NO_ERROR=1
 
 # /etc/profile opts into PanVK on panfrost (041-panfrost). DuckStation then
 # shows even the software renderer through PanVK and crashes a few seconds
-# in (SIGSEGV in its page fault handler); OpenGL works. PanVK stays only
-# for the Vulkan renderer, picked on purpose.
-[ "${RENDERER}" = "vulkan" ] || unset PAN_I_WANT_A_BROKEN_VULKAN_DRIVER
+# in (SIGSEGV in its page fault handler), and its Vulkan renderer does the
+# same; OpenGL works. No PanVK for DuckStation.
+unset PAN_I_WANT_A_BROKEN_VULKAN_DRIVER
 
 #Run Duckstation
 # A state to start from (runemu.sh --entrystate): the resume state
