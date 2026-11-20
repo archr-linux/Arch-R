@@ -122,6 +122,12 @@ fi
 		GRENDERER="opengl"
 		ini_set GraphicsBackend "0 (OPENGL)"
 	fi
+	# Nor may PPSSPP's own menu switch to Vulkan there: it restarts itself
+	# on the new backend and aborts the same way. With no Vulkan driver in
+	# sight it finds no Vulkan device and offers none.
+	if [ ! -d /sys/module/panfrost ] || ! sdl_vulkan; then
+		export VK_DRIVER_FILES=/dev/null VK_ICD_FILENAMES=/dev/null
+	fi
 
   #Internal Resolution
 	case "${IRES}" in
