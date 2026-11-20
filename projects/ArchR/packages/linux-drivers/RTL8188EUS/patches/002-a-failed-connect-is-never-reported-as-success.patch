@@ -1,0 +1,31 @@
+From: ArchR <noreply@arch-r.io>
+Subject: [PATCH] 8188eu: a failed connect is never reported as success
+
+rtw_cfg80211_indicate_disconnect() replaces the driver's private reason
+codes with 0 and, while a connect is still in progress, hands that
+reason to cfg80211_connect_result() as the status, with no BSSID. 0 is
+WLAN_STATUS_SUCCESS: cfg80211 took the aborted connect as made and
+copied the missing BSSID, a NULL dereference in
+__cfg80211_connect_result() (an R36S clone whose 0bda:8179 dongle
+dropped off the bus while connecting). Report a failure instead.
+---
+--- a/os_dep/linux/ioctl_cfg80211.c
++++ b/os_dep/linux/ioctl_cfg80211.c
+@@ -1216,7 +1216,7 @@
+ 		if (pwdev->sme_state == CFG80211_SME_CONNECTING) {
+ 			RTW_INFO(FUNC_ADPT_FMT" call cfg80211_connect_result\n", FUNC_ADPT_ARG(padapter));
+ 			rtw_cfg80211_connect_result(pwdev, NULL, NULL, 0, NULL, 0,
+-				reason, GFP_ATOMIC);
++				reason ? reason : WLAN_STATUS_UNSPECIFIED_FAILURE, GFP_ATOMIC);
+ 		} else if (pwdev->sme_state == CFG80211_SME_CONNECTED) {
+ 			RTW_INFO(FUNC_ADPT_FMT" call cfg80211_disconnected\n", FUNC_ADPT_ARG(padapter));
+ 			rtw_cfg80211_disconnected(pwdev, reason, NULL, 0, locally_generated, GFP_ATOMIC);
+@@ -1227,7 +1227,7 @@
+ 		if (pwdev_priv->connect_req) {
+ 			RTW_INFO(FUNC_ADPT_FMT" call cfg80211_connect_result\n", FUNC_ADPT_ARG(padapter));
+ 			rtw_cfg80211_connect_result(pwdev, NULL, NULL, 0, NULL, 0,
+-				reason, GFP_ATOMIC);
++				reason ? reason : WLAN_STATUS_UNSPECIFIED_FAILURE, GFP_ATOMIC);
+ 		} else {
+ 			RTW_INFO(FUNC_ADPT_FMT" call cfg80211_disconnected\n", FUNC_ADPT_ARG(padapter));
+ 			rtw_cfg80211_disconnected(pwdev, reason, NULL, 0, locally_generated, GFP_ATOMIC);
