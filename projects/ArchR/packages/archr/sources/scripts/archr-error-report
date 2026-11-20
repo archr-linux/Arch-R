@@ -92,8 +92,23 @@ bump() {
   echo "${TODAY} ${created} ${sent}" >"${DIR}/today"
 }
 
+# The kernel's OOM killer acted during this run: an OOM line in dmesg no
+# older than SECONDS (plus a little slack). An OOM of an earlier game in
+# the same boot is not this run's; without an uptime, any recent OOM.
+oom_during() {
+  local lines now
+  lines=$(run dmesg | tail -n 80 | grep -iE 'out of memory|oom-kill') || return 1
+  now=$(cut -d' ' -f1 "${ROOT}/proc/uptime" 2>/dev/null)
+  { [ -n "$1" ] && [ -n "${now}" ]; } || return 0
+  awk -v since="${now}" -v s="$1" '
+    BEGIN { since -= s + 5 }
+    match($0, /^\[ *[0-9.]+\]/) && substr($0, RSTART + 1, RLENGTH - 2) + 0 >= since { found = 1 }
+    END { exit !found }' <<<"${lines}"
+}
+
 # "128+n" is signal n. TERM, KILL, INT and HUP come from outside (the exit
-# hotkey, a shutdown), not from a bug; a KILL from the OOM killer counts.
+# hotkey, a shutdown), not from a bug; a KILL from the OOM killer during
+# the run (oom_during SECONDS) counts.
 describe() {
   local rc=$1
   if [ "${rc}" -gt 128 ] && [ "${rc}" -lt 160 ]; then
@@ -105,7 +120,7 @@ describe() {
 external() {
   case "$1" in
     0 | 129 | 130 | 143) return 0 ;;
-    137) ! run dmesg | tail -n 80 | grep -qiE 'out of memory|oom-kill' ;;
+    137) ! oom_during "$2" ;;
     *) return 1 ;;
   esac
 }
@@ -298,7 +313,7 @@ port_failures() {
   local seconds=$1 out
   out=$(grep -av -E "${PORT_NOISE}")
   grep -a -E "${PORT_FAILS}" <<<"${out}"
-  if grep -aqE '(^| )Killed( |$)' <<<"${out}" && run dmesg | tail -n 80 | grep -qiE 'out of memory|oom-kill'; then
+  if grep -aqE '(^| )Killed( |$)' <<<"${out}" && oom_during "${seconds}"; then
     grep -aE '(^| )Killed( |$)' <<<"${out}"
   fi
   [ "${seconds}" -lt "${SHORT}" ] && grep -a -E "${PORT_SOFT}" <<<"${out}" | grep -av -E "${PORT_FAILS}"
@@ -410,7 +425,7 @@ port() {
   failures=$(printf '%s\n%s\n' "${OUTPUT}" "${own}" | port_failures "${seconds}" | awk '!seen[$0]++' | head -n 20)
   # Nothing failed: a clean exit, or one from outside.
   if [ -z "${failures}" ]; then
-    { [ "${rc}" = 0 ] || external "${rc}"; } && return 0
+    { [ "${rc}" = 0 ] || external "${rc}" "${seconds}"; } && return 0
   fi
   port_toast "$(port_cause "${rc}" "$(printf '%s\n%s\n' "${OUTPUT}" "${own}")" "${failures}")"
   # The toast goes with reports off too (runemu.sh sends every port run).
@@ -525,7 +540,7 @@ game() {
   local rc=$1 seconds=$2 offset=$3 system=$4 emulator=$5 core=$6 what full rom
   shift 6
   [ "$1" = -- ] && shift
-  external "${rc}" && return 0
+  external "${rc}" "${seconds}" && return 0
   rom=$1
   what=${core:-${emulator:-${system}}}
   [ "${emulator}" = retroarch ] && what="retroarch/${core}"

@@ -591,6 +591,18 @@ check "the bin, sparse: no blocks, zeros" "$(grep '^Dino Crisis.bin:' <<<"${GF}"
   "Dino Crisis.bin: 1048576 bytes, 0 blocks of 512 allocated, starts 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00"
 check "a named file that is not there" "$(grep -c '^Missing.cue: not found$' <<<"${GF}")" "1"
 
+# --- a KILL counts only with an OOM during the run (42 s here) ---
+rm -f "${Q}"/*.txt "${R}/storage/.cache/error-reports/today" "${R}/storage/.cache/error-reports/seen"
+mkdir -p "${R}/proc"
+echo "1000.00 3000.00" >"${R}/proc/uptime"
+echo "[  99.0] Out of memory: Killed process 900 (reVC)" >"${TMP}/dmesg"
+game 137 'Killed\n' 'Re-Volt.z64'
+check "an OOM of an earlier game is not this run's" "$(count "${Q}")" "0"
+echo "[ 980.5] Out of memory: Killed process 901 (retroarch)" >>"${TMP}/dmesg"
+game 137 'Killed\n' 'Re-Volt.z64'
+check "an OOM during the run is" "$(count "${Q}")" "1"
+rm -f "${R}/proc/uptime"
+
 BLOCK=$(sed -n "/^### A port's script usually exits 0/,/^fi$/p" "${SCRIPTS}/runemu.sh")
 runemu_report() {
   local PLATFORM=$1 ret_error=$2 ROMNAME=/storage/roms/ports/A.sh EMULATOR=x CORE=y RUN_OFFSET=10 RUN_START=0 SECONDS=7
