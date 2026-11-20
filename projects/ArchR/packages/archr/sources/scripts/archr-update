@@ -152,6 +152,7 @@
 : "${PACMAN_CONF:=/etc/pacman.conf}"
 : "${ARCHR_UPDATE_OFFLINE_DIR:=/storage/roms/update}"
 : "${OFFLINE_WORK:=/storage/.archr-update-offline}"
+: "${MOVED_DIR:=/storage/.config/archr-update-moved}"
 # Extra pacman options: the offline path's temporary config; empty online.
 PACMAN_ARGS=()
 REPO="https://github.com/archr-linux/archr-repo/releases/download"
@@ -629,8 +630,26 @@ drop_cache() {
     return 0
 }
 
+# pacman refuses a transaction that would write over a file no package
+# owns ("pkg: /path exists in filesystem"), before it changes anything. A
+# port or a script put such files in /usr (a link, a copied library), and
+# the console could never update again. They are moved, path kept, into
+# MOVED_DIR and the install runs once more. A file another package owns
+# ("(owned by x)") is left alone: that is a fault in the repo.
+move_unowned() {
+    local dest path moved=1
+    dest="${MOVED_DIR}/$(date '+%Y%m%d-%H%M%S')"
+    while IFS= read -r path; do
+        [ -e "${path}" ] || [ -L "${path}" ] || continue
+        mkdir -p "${dest}${path%/*}" && mv -f -- "${path}" "${dest}${path}" || return 1
+        logf "moved ${path} (no package owns it) to ${dest}${path}"
+        moved=0
+    done < <(sed -n 's#^[^ :]*: \(/.*\) exists in filesystem$#\1#p' "$1")
+    return "${moved}"
+}
+
 run_install() {
-    local rc line
+    local rc line conflict
     # Past this point nothing stops pacman: not this script's signals, not
     # pacman's (ignored dispositions survive exec), not a closed reader.
     trap '' TERM HUP INT
@@ -665,6 +684,15 @@ run_install() {
             fail space "Not enough free space to install." "${line}" ;;
         *"failed retrieving file"*)
             [ -n "${OFFLINE}" ] && fail offline-incomplete "${INCOMPLETE_MESSAGE}" "${line}" ;;
+        *"conflicting files"*)
+            if [ "${CHANGED}" = false ] && [ -z "${MOVED_ONCE:-}" ] && move_unowned "${WORK}/install"; then
+                MOVED_ONCE=1
+                run_install
+                return
+            fi
+            # Which file: the report shows only this line.
+            conflict="$(grep -m 1 ' exists in \| are in conflict' "${WORK}/install")"
+            line="${line}${conflict:+: ${conflict}}" ;;
     esac
     fail install "Install failed." "${line}"
 }

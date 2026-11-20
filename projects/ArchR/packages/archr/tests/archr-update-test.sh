@@ -100,6 +100,20 @@ case "$1" in
     echo ":: Starting full system upgrade..."
     echo "checking package integrity..."
     [ -n "${FAKE_FULL:-}" ] && { echo "error: Partition / too full: 9 blocks needed, 1 blocks free"; exit 1; }
+    # As pacman does: file conflicts stop it before anything changes.
+    echo "checking for file conflicts..."
+    if [ -n "${FAKE_CONFLICT:-}" ] && [ -e "${FAKE}/root/usr/sbin/ldconfig" ]; then
+      echo "error: failed to commit transaction (conflicting files)"
+      echo "archr: ${FAKE}/root/usr/sbin/ldconfig exists in filesystem"
+      echo "archr: ${FAKE}/root/usr/lib/aarch64-linux-gnu exists in filesystem"
+      echo "Errors occurred, no packages were upgraded."
+      exit 1
+    fi
+    [ -n "${FAKE_CONFLICT_OWNED:-}" ] && {
+      echo "error: failed to commit transaction (conflicting files)"
+      echo "util-linux: /usr/bin/flock exists in filesystem (owned by busybox)"
+      echo "Errors occurred, no packages were upgraded."
+      exit 1; }
     CACHE=$([ -n "${CONF}" ] && sed -n 's#^CacheDir = ##p' "${CONF}")
     while read -r n v s; do
       [ -n "${CACHE}" ] && [ ! -f "${CACHE}/$n-$v-aarch64.pkg.tar.zst" ] &&
@@ -287,6 +301,23 @@ OUT=$(FAKE_INSTALL_FAIL=1 run)
 check "install failure: reason" "$(field reason <<<"${OUT}")|$(field line <<<"${OUT}")|$(field changed <<<"${OUT}")" \
   "install|error: failed to commit transaction (conflicting files)|true"
 check "a failed install keeps the cache" "$(find "${TMP}/storage-cache" -name '*.pkg.tar*' | wc -l | tr -d ' ')" 2
+# Files no package owns in the way of the update (a port's link, a copied
+# tool): moved aside, path kept, and the install runs again.
+reset
+mkdir -p "${TMP}/root/usr/sbin" "${TMP}/root/usr/lib"
+echo port >"${TMP}/root/usr/sbin/ldconfig"
+ln -s /usr/lib "${TMP}/root/usr/lib/aarch64-linux-gnu"
+OUT=$(FAKE_CONFLICT=1 run MOVED_DIR="${TMP}/moved")
+check "unowned files in the way: installed" "$?|$(field phase <<<"${OUT}")|$(grep -c 'pacman -Su ' "${TMP}/calls")" "0|done|2"
+check "unowned files in the way: kept aside" \
+  "$(cat "${TMP}"/moved/*"${TMP}/root/usr/sbin/ldconfig")|$(readlink "${TMP}"/moved/*"${TMP}/root/usr/lib/aarch64-linux-gnu")|$([ -e "${TMP}/root/usr/sbin/ldconfig" ] && echo left || echo gone)" \
+  "port|/usr/lib|gone"
+check "unowned files in the way: logged" "$(grep -c 'no package owns it' "${TMP}/log/archr-update.log")" 2
+reset
+OUT=$(FAKE_CONFLICT_OWNED=1 run MOVED_DIR="${TMP}/moved2")
+check "a file another package owns: not moved, named in the error" \
+  "$(field reason <<<"${OUT}")|$(field line <<<"${OUT}")|$(field changed <<<"${OUT}")|$(grep -c 'pacman -Su ' "${TMP}/calls")|$([ -e "${TMP}/moved2" ] && echo moved || echo none)" \
+  "install|error: failed to commit transaction (conflicting files): util-linux: /usr/bin/flock exists in filesystem (owned by busybox)|false|1|none"
 reset
 OUT=$(FAKE_FULL=1 run)
 check "install without room: space" "$(field reason <<<"${OUT}")|$(field changed <<<"${OUT}")" "space|false"
