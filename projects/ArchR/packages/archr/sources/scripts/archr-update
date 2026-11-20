@@ -419,6 +419,22 @@ ensure_key() {
     fail keyring "The Arch R package key could not be loaded."
 }
 
+# A console whose RTC lost its time boots in the past, and an offline update
+# has no network to set the clock: gpg refused the key and the signatures
+# (made "in the future") and the update stopped at "The date is wrong". The
+# bundle names when it was made (created=); a clock before that moment is
+# moved forward to it, never back, and the RTC keeps it. The network's time
+# corrects it later if it is off.
+clock_from_bundle() {
+    local made
+    [[ ${B_CREATED} =~ ^20[0-9]{2}-[01][0-9]-[0-3][0-9]T[0-2][0-9]:[0-5][0-9]:[0-5][0-9]Z$ ]] || return 0
+    made=$(date -u -d "${B_CREATED}" +%s 2>/dev/null) || return 0
+    [ "${made}" -gt "${ARCHR_KEY_SINCE}" ] && [ "$(date +%s)" -lt "${made}" ] || return 0
+    date -u -s "@${made}" >/dev/null 2>&1 || return 0
+    hwclock -w -u 2>/dev/null
+    logf "clock: was in the past; set to ${B_CREATED}, when the update file was made"
+}
+
 sync_repo() {
     write_mirrorlist
     seed_local_db >>"${UPDATE_LOG}" 2>&1 ||
@@ -786,9 +802,11 @@ read_manifest() {
     local text
     B_ID=""
     B_CHANNEL=""
+    B_CREATED=""
     text="$(tar -xOf "$1" archr-update.txt 2>/dev/null | head -c 4096 | tr -d '\r')" || return 1
     B_ID="$(printf '%s\n' "${text}" | sed -n 's/^id=//p' | head -n 1)"
     B_CHANNEL="$(printf '%s\n' "${text}" | sed -n 's/^channel=//p' | head -n 1)"
+    B_CREATED="$(printf '%s\n' "${text}" | sed -n 's/^created=//p' | head -n 1)"
     is_update_id "${B_ID}" && [[ ${B_CHANNEL} =~ ^[a-z]+$ ]]
 }
 
@@ -955,6 +973,7 @@ cmd_update_offline() {
     seed_local_db >>"${UPDATE_LOG}" 2>&1 ||
         fail seed "No package database for this image; reflash to update."
     emit '"phase":"sync"'
+    clock_from_bundle
     ensure_key
     # -yy: the bundle's db replaces the synced one whatever their dates.
     logged "${WORK}/sync" pacman -Syy --noconfirm --color never "${PACMAN_ARGS[@]}" ||

@@ -153,6 +153,21 @@ cat >"${TMP}/bin/tar" <<EOF
 [ "\$1" = -x ] && [ -n "\${FAKE_TAR_SLOW:-}" ] && sleep "\${FAKE_TAR_SLOW}"
 exec $(command -v tar) "\$@"
 EOF
+# The clock: FAKE_NOW stands for "now"; setting it (-s) and the RTC are logged.
+cat >"${TMP}/bin/date" <<'EOF'
+#!/bin/bash
+for a in "$@"; do
+  case "${a}" in
+    -s) echo "date $*" >>"${FAKE}/calls"; exit 0 ;;
+  esac
+done
+[ -n "${FAKE_NOW:-}" ] && [ "$*" = +%s ] && { echo "${FAKE_NOW}"; exit 0; }
+exec /usr/bin/date "$@"
+EOF
+cat >"${TMP}/bin/hwclock" <<'EOF'
+#!/bin/bash
+echo "hwclock $*" >>"${FAKE}/calls"
+EOF
 chmod +x "${TMP}/bin/"*
 printf '2.1.2\n\nLauncher 1.5: "temas" e sons.\nKernel novo.\n' >"${TMP}/changelog"
 echo 80 >"${TMP}/power/battery/capacity"
@@ -469,6 +484,18 @@ check "update --from: the tar is deleted" "$(count "${CARD}")" 0
 check "update --from: the work dir is removed" "$(count "${TMP}/storage")" 0
 check "update --from: id recorded" "$(cat "${TMP}/state/update-id") $(cat "${TMP}/state/version")" "20261113.4 20261113.4"
 check "update --from: the progress file holds the same lines" "$(cat "${TMP}/run/progress")" "${OUT}"
+check "update --from: a clock already past the file's date is left alone" "$(grep -c '^date\|^hwclock' "${TMP}/calls")" 0
+
+# A console whose RTC lost its time (2024): the clock goes forward to when
+# the file was made, the RTC keeps it, and the update goes on.
+reset
+offline_reset
+bundle "${CARD}/archr-update.tar" 20261113.4
+OUT=$(FAKE_PING=1 run FAKE_NOW=1719300000)
+check "clock in 2024: the update goes on" "$?|$(field phase <<<"${OUT}")" "0|done"
+check "clock in 2024: set to the file's date, then the RTC" "$(grep '^date\|^hwclock' "${TMP}/calls" | tr '\n' ';')" \
+  "date -u -s @$(/usr/bin/date -u -d 2026-11-13T12:00:00Z +%s);hwclock -w -u;"
+check "clock in 2024: logged" "$(grep -c 'clock: was in the past; set to 2026-11-13T12:00:00Z' "${TMP}/log/archr-update.log")" 1
 bundle "${CARD}/archr-update.tar" 20261113.4
 ARGS=(offline --json)
 check "after the update the same file is not newer" "$(run | field newer)" false
