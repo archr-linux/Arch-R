@@ -5,7 +5,7 @@
 
 PKG_NAME="util-linux"
 PKG_VERSION="2.39.2"
-PKG_REV="2"
+PKG_REV="3"
 PKG_LICENSE="GPL"
 PKG_URL="https://www.kernel.org/pub/linux/utils/util-linux/v$(get_pkg_version_maj_min)/${PKG_NAME}-${PKG_VERSION}.tar.xz"
 PKG_DEPENDS_HOST="ccache:host autoconf:host automake:host intltool:host libtool:host pkg-config:host"
@@ -91,11 +91,15 @@ fi
 # the build container's gettext its Makefile comes out without top_builddir
 # ("No rule to make target '/config.status'"). Skip it.
 post_configure_target() {
-  # flock with -w (ports call `flock -w`; BusyBox's has no timeout). 2.39
-  # has no --enable-flock: --disable-all-programs decides it, so the
-  # condition is turned on in config.status and the Makefile made again.
-  sed -i -e 's/^S\["BUILD_FLOCK_TRUE"\]="#"/S["BUILD_FLOCK_TRUE"]=""/' \
-         -e 's/^S\["BUILD_FLOCK_FALSE"\]=""/S["BUILD_FLOCK_FALSE"]="#"/' config.status
+  # flock with -w (ports call `flock -w`; BusyBox's has no timeout) and
+  # setsid with --fork/--wait (Cuphead's launcher; BusyBox's takes only -c).
+  # 2.39 has no --enable-flock or --enable-setsid: --disable-all-programs
+  # decides them, so the conditions are turned on in config.status and the
+  # Makefile made again.
+  for prog in FLOCK SETSID; do
+    sed -i -e "s/^S\\[\"BUILD_${prog}_TRUE\"\\]=\"#\"/S[\"BUILD_${prog}_TRUE\"]=\"\"/" \
+           -e "s/^S\\[\"BUILD_${prog}_FALSE\"\\]=\"\"/S[\"BUILD_${prog}_FALSE\"]=\"#\"/" config.status
+  done
   ./config.status Makefile
   sed -i 's/^SUBDIRS = po /SUBDIRS = /' Makefile
 }
