@@ -1,0 +1,37 @@
+#!/bin/sh
+# Ports written for other systems end by restarting their game menu
+# (PortMaster's installer: "systemctl restart emustation"). ArchR has no
+# EmulationStation: the launcher is not running while a port is, and it
+# re-reads the ports folder when the port returns. runemu.sh puts this
+# directory first on a port's PATH; a start, stop or restart of the
+# menu succeeds here, and everything else goes to the real systemctl.
+real=${ARCHR_REAL_SYSTEMCTL:-/usr/bin/systemctl}
+
+verb=
+menu=0
+other=0
+for arg in "$@"; do
+    case "$arg" in
+        -*) ;;
+        *)
+            if [ -z "$verb" ]; then
+                verb=$arg
+                continue
+            fi
+            case "$arg" in
+                emustation|emustation.service|emulationstation|emulationstation.service)
+                    menu=1 ;;
+                *) other=1 ;;
+            esac
+            ;;
+    esac
+done
+
+case "$verb" in
+    start|stop|restart|try-restart|reload|reload-or-restart|try-reload-or-restart)
+        if [ "$menu" -eq 1 ] && [ "$other" -eq 0 ]; then
+            exit 0
+        fi
+        ;;
+esac
+exec "$real" "$@"

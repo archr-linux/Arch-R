@@ -733,6 +733,9 @@ case ${EMULATOR} in
       ;;
       "ports")
         portmaster_ready
+        # A port's own "systemctl restart emustation" (PortMaster's installer)
+        # must not fail: the shim answers it, the launcher re-reads the list.
+        export PATH="/usr/lib/archr/port-shims:${PATH}"
         port_binds dead | port_unbind
         PORT_BINDS_BEFORE=$(port_binds)
         if [[ "${ROMNAME,,}" == *".appimage" ]]; then

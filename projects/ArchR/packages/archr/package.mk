@@ -16,7 +16,7 @@ PKG_NAME="archr"
 # versions; the install silently skipped a PKG_INSTALL dir that did not
 # exist and the image assembly then failed in post_install.
 PKG_VERSION="$(date +%Y%m%d)"
-PKG_REV="59"
+PKG_REV="60"
 PKG_LICENSE="GPLv2"
 PKG_SITE=""
 PKG_URL=""
@@ -191,6 +191,11 @@ EOF
   mkdir -p ${INSTALL}/usr/bin
   cp ${PKG_DIR}/sources/scripts/* ${INSTALL}/usr/bin
   chmod 0755 ${INSTALL}/usr/bin/* 2>/dev/null ||:
+  # Commands a port expects from the system it was written for; runemu.sh
+  # puts this directory first on a port's PATH (only there).
+  mkdir -p ${INSTALL}/usr/lib/archr/port-shims
+  cp ${PKG_DIR}/sources/port-shims/* ${INSTALL}/usr/lib/archr/port-shims
+  chmod 0755 ${INSTALL}/usr/lib/archr/port-shims/*
   mkdir -p ${INSTALL}/etc/pacman.d/hooks
   cp ${PKG_DIR}/sources/pacman-hooks/*.hook ${INSTALL}/etc/pacman.d/hooks
   # Units from system.d/ reach an updated device through image-files/
