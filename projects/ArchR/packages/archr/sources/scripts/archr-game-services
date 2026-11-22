@@ -1,0 +1,82 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026-present ArchR (https://github.com/archr-linux/Arch-R)
+
+# Settings › System › During a game: what stops while a game runs and comes
+# back when it ends. runemu.sh calls "pause" before the game and "resume"
+# after it; the launcher session calls "resume" again when the game's scope
+# ends, for a runemu that was killed. Both are safe to repeat.
+#
+#   game.wifi       keep | off     the radio, only if Wi-Fi is on
+#   game.bluetooth  keep | off     a Bluetooth pad stops answering
+#   game.sharing    pause | keep   Samba, the web file server, the discovery
+#   game.ssh        keep | off     open sessions stay; new ones wait
+#
+# "pause" writes what it stopped to STATE; "resume" starts exactly that,
+# so a service that was already off stays off. STATE lives in /run: after
+# a reboot mid-game every service starts as usual, and Wi-Fi follows
+# wifi.enabled at boot (rfkill is not kept).
+
+. "${ARCHR_PROFILE:-/etc/profile}"
+
+STATE=${ARCHR_GAME_SERVICES_STATE:-/run/archr-game-services}
+SYSTEMCTL=${ARCHR_SYSTEMCTL:-systemctl}
+WIFICTL=${ARCHR_WIFICTL:-wifictl}
+RFKILL=${ARCHR_RFKILL:-rfkill}
+
+# The socket first: with it listening, avahi-daemon would start again.
+SHARING_UNITS="smbd.service nmbd.service wsdd2.service avahi-daemon.socket avahi-daemon.service simple-http-server.service"
+
+active() {
+  "${SYSTEMCTL}" is-active --quiet "$1"
+}
+
+wifi_on() {
+  [ "$(get_setting wifi.enabled)" = 1 ] &&
+    ! "${RFKILL}" list wifi 2>/dev/null | grep -q 'Soft blocked: yes'
+}
+
+pause() {
+  # Paused already (two launches, or resume never ran): keep that list.
+  [ -e "${STATE}" ] && return 0
+  local units=() unit
+  if [ "$(get_setting game.sharing)" != keep ]; then
+    for unit in ${SHARING_UNITS}; do
+      active "${unit}" && units+=("${unit}")
+    done
+  fi
+  [ "$(get_setting game.bluetooth)" = off ] && active bluetooth.service &&
+    units+=(bluetooth.service)
+  [ "$(get_setting game.ssh)" = off ] && active sshd.service &&
+    units+=(sshd.service)
+  local wifi=0
+  [ "$(get_setting game.wifi)" = off ] && wifi_on && wifi=1
+
+  { printf 'wifi=%s\n' "${wifi}"; printf 'unit=%s\n' "${units[@]}"; } >"${STATE}.tmp" &&
+    mv -f "${STATE}.tmp" "${STATE}" || return 1
+  [ "${#units[@]}" -gt 0 ] && "${SYSTEMCTL}" stop "${units[@]}"
+  [ "${wifi}" = 1 ] && "${WIFICTL}" disable
+  return 0
+}
+
+resume() {
+  [ -e "${STATE}" ] || return 0
+  local units=() wifi=0 line
+  while IFS= read -r line; do
+    case "${line}" in
+      wifi=1) wifi=1 ;;
+      unit=?*) units+=("${line#unit=}") ;;
+    esac
+  done <"${STATE}"
+  rm -f "${STATE}"
+  [ "${wifi}" = 1 ] && "${WIFICTL}" enable
+  # The socket's service started on its own: start the rest, in order.
+  [ "${#units[@]}" -gt 0 ] && "${SYSTEMCTL}" start "${units[@]}"
+  return 0
+}
+
+case "$1" in
+  pause) pause ;;
+  resume) resume ;;
+  *) echo "usage: $0 pause|resume" >&2; exit 2 ;;
+esac

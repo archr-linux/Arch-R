@@ -883,6 +883,17 @@ fi
 RUN_OFFSET=$(stat -c %s "${OUTPUT_LOG}" 2>/dev/null || echo 0)
 RUN_START=${SECONDS}
 
+### Settings › System › During a game: the services the player chose stop
+### (archr-game-services) and the memory guard watches beside the game
+### (archr-memory-guard), in this scope. Both end with the game below.
+archr-game-services pause >/dev/null 2>&1 &
+GAME_SERVICES=$!
+MEMORY_GUARD=""
+if [ "$(get_setting game.memory_guard)" != 0 ]; then
+  archr-memory-guard $$ "${ROMNAME##*/}" >/dev/null 2>&1 &
+  MEMORY_GUARD=$!
+fi
+
 # If the rom is a shell script just execute it, useful for DOSBOX and ScummVM scan scripts
 if [[ "${ROMNAME}" == *".sh" ]] && [ ! "${PLATFORM}" = "ports" ] && [ ! "${PLATFORM}" = "windows" ]; then
         ${VERBOSE} && log $0 "Executing shell script ${ROMNAME}"
@@ -908,6 +919,12 @@ else
           wait "${PERF_PROBE}" 2>/dev/null
         fi
 fi
+
+[ -n "${MEMORY_GUARD}" ] && kill "${MEMORY_GUARD}" 2>/dev/null
+# After the pause (a game that ends at once), and in the background: Wi-Fi
+# coming back must not hold the menu.
+wait "${GAME_SERVICES}" 2>/dev/null
+setsid archr-game-services resume >/dev/null 2>&1 </dev/null &
 
 if [ "${PLATFORM}" = "ports" ]; then
   comm -13 <(printf '%s\n' "${PORT_BINDS_BEFORE}") <(port_binds) | port_unbind

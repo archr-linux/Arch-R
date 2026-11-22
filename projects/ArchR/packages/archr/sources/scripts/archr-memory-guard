@@ -1,0 +1,94 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026-present ArchR (https://github.com/archr-linux/Arch-R)
+
+# Settings › System › During a game › Close the game when memory runs out
+# (game.memory_guard, on unless 0).
+#
+# A heavy port (Android ones above all, with the GPU's memory) can bring a
+# 1 GB console to a stall: the kernel spends its time reclaiming, nothing
+# runs, no OOM kill comes, and the hardware watchdog resets the board with
+# no trace. The kernel's own OOM killer handles plain exhaustion well (it
+# closed a test filling the RAM cleanly); this is for the stall before it.
+#
+# runemu.sh starts it beside the game, in the game's scope:
+#   archr-memory-guard <runemu pid> <game name>
+# Each second it reads the memory pressure (PSI): the share of time every
+# task waited for memory, over 10 s. Held at LIMIT % for HOLD seconds, it
+# kills the rest of the scope (not runemu, which then cleans up), says so
+# in the kernel log ("out of memory", which archr-error-report counts as
+# the reason) and leaves a note for the launcher's message.
+
+RUNEMU=$1
+GAME=${2:-game}
+PSI=${ARCHR_PSI:-/proc/pressure/memory}
+LIMIT=${ARCHR_GUARD_LIMIT:-40}
+HOLD=${ARCHR_GUARD_HOLD:-3}
+TICK=${ARCHR_GUARD_TICK:-1}
+KMSG=${ARCHR_KMSG:-/dev/kmsg}
+NOTE=${ARCHR_GUARD_NOTE:-/run/archr-launcher/out-of-memory}
+
+[ -n "${RUNEMU}" ] && [ -r "${PSI}" ] || exit 0
+
+# It must still run when the game has the memory: ahead of the game (nice
+# -19) and the last the OOM killer would pick.
+renice -n -20 -p $$ >/dev/null 2>&1
+echo -1000 >/proc/$$/oom_score_adj 2>/dev/null
+
+# The processes of this scope: the systemd hierarchy (hybrid cgroups), else
+# the unified one.
+scope_procs() {
+  if [ -n "${ARCHR_GUARD_PROCS:-}" ]; then
+    cat "${ARCHR_GUARD_PROCS}"
+    return
+  fi
+  local line path=
+  while IFS= read -r line; do
+    case "${line}" in
+      *:name=systemd:*) path=/sys/fs/cgroup/systemd${line#*:name=systemd:} ;;
+      0::*) [ -z "${path}" ] && path=/sys/fs/cgroup/unified${line#0::} ;;
+    esac
+  done </proc/$$/cgroup
+  [ -n "${path}" ] && cat "${path}/cgroup.procs" 2>/dev/null
+}
+
+# "full avg10=12.34 ..." → 12
+full_avg10() {
+  local kind avg rest
+  while read -r kind avg rest; do
+    if [ "${kind}" = full ]; then
+      avg=${avg#avg10=}
+      echo "${avg%%.*}"
+      return
+    fi
+  done <"${PSI}"
+  echo 0
+}
+
+close_game() {
+  local pid
+  for pid in $(scope_procs); do
+    { [ "${pid}" = $$ ] || [ "${pid}" = "${RUNEMU}" ]; } && continue
+    kill -KILL "${pid}" 2>/dev/null
+  done
+  echo "archr-memory-guard: out of memory, the console stalled ($1% waiting): closed ${GAME}" \
+    >"${KMSG}" 2>/dev/null
+  mkdir -p "${NOTE%/*}" 2>/dev/null
+  printf '%s\n' "${GAME}" >"${NOTE}" 2>/dev/null
+}
+
+over=0
+while kill -0 "${RUNEMU}" 2>/dev/null; do
+  avg=$(full_avg10)
+  if [ "${avg:-0}" -ge "${LIMIT}" ]; then
+    over=$((over + 1))
+    if [ "${over}" -ge "${HOLD}" ]; then
+      close_game "${avg}"
+      exit 0
+    fi
+  else
+    over=0
+  fi
+  sleep "${TICK}"
+done
+exit 0
