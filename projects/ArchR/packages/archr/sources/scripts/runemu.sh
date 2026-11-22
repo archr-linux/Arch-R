@@ -452,10 +452,11 @@ function bluetooth() {
         fi
 }
 
-### Sync/VPN/HTTP daemons compete with the emulator for CPU, RAM and microSD
+### Sync and VPN daemons compete with the emulator for CPU, RAM and microSD
 ### I/O. Stop them on launch and restart only the ones that were running on
-### exit (so we never enable a service the user had off).
-GAMEPLAY_PAUSE_SERVICES="syncthing tailscaled zerotier-one simple-http-server"
+### exit (so we never enable a service the user had off). The web file
+### server follows Settings › System › During a game (archr-game-services).
+GAMEPLAY_PAUSE_SERVICES="syncthing tailscaled zerotier-one"
 SERVICES_PAUSED_DURING_GAME=""
 
 function pause_background_services() {
