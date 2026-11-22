@@ -4,6 +4,7 @@
 
 PKG_NAME="openssl"
 PKG_VERSION="3.3.2"
+PKG_REV="2"
 PKG_LICENSE="Apache-2.0"
 PKG_SITE="https://openssl-library.org"
 PKG_URL="https://github.com/openssl/openssl/releases/download/${PKG_NAME}-${PKG_VERSION}/${PKG_NAME}-${PKG_VERSION}.tar.gz"
@@ -97,6 +98,10 @@ post_makeinstall_target() {
     ln -sf /run/archr/cacert.pem ${INSTALL}/etc/pki/tls/certs/ca-bundle.crt
   mkdir -p ${INSTALL}/usr/lib/ssl
     ln -sf /run/archr/cacert.pem ${INSTALL}/usr/lib/ssl/cert.pem
+  # Debian/Ubuntu's path: ports built there (PortMaster's Luanti, its curl)
+  # look only here and fail every HTTPS fetch without it.
+  mkdir -p ${INSTALL}/etc/ssl/certs
+    ln -sf /run/archr/cacert.pem ${INSTALL}/etc/ssl/certs/ca-certificates.crt
 }
 
 post_install() {
