@@ -16,7 +16,7 @@ PKG_NAME="archr"
 # versions; the install silently skipped a PKG_INSTALL dir that did not
 # exist and the image assembly then failed in post_install.
 PKG_VERSION="$(date +%Y%m%d)"
-PKG_REV="63"
+PKG_REV="64"
 PKG_LICENSE="GPLv2"
 PKG_SITE=""
 PKG_URL=""
@@ -99,6 +99,9 @@ EOF
 
   ### Compatibility links for ports
   ln -s /storage/roms ${INSTALL}/roms
+  # The second card, as ArkOS and dArkOS name it: ports written for them
+  # (GTA Chinatown Wars) cd there. automount points the link at its ROMs.
+  ln -s /run/archr/card2 ${INSTALL}/roms2
 
   ### Add some quality of life customizations for hardworking devs.
   if [ -n "${LOCAL_SSH_KEYS_FILE}" ]

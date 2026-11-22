@@ -268,6 +268,27 @@ run
 check "overlay leftovers: work dirs and bind dir removed" '! [ -e "${EXT}/.tmp/games-workdir" ] && ! [ -e "${STORAGE}/.tmp/games-workdir" ] && ! [ -e "${STORAGE}/.games-internal-bind" ]'
 check "overlay leftovers: ROMs untouched, union mounted" '[ -f "${EXT}/roms/snes/B.sfc" ] && [ -f "${STORAGE}/roms/snes/Internal.sfc" ] && [ "$(fstype "${STORAGE}/roms")" = fuse.mergerfs ]'
 
+# An exFAT card holds no whiteouts: it is not walked (150 s on a big card).
+MERGED=1 setup exfat 62000000 "roms/snes/C.sfc" ".tmp/games-workdir/work/x"
+run
+check "overlay leftovers on exFAT: work dir gone, the card not walked" '! [ -e "${EXT}/.tmp/games-workdir" ] && grep -q "whiteouts in ${STORAGE}/roms\.$" "${TMP}/log" && [ "$(fstype "${STORAGE}/roms")" = fuse.mergerfs ]'
+# A work dir that cannot go (a card mounted read-only) starts no walk.
+MERGED=1 setup ext4 62000000 "roms/snes/D.sfc" ".tmp/games-workdir/work/x"
+chmod 555 "${SD2}.card/.tmp"
+run
+chmod 755 "${SD2}.card/.tmp" 2>/dev/null; chmod -R u+w "${EXT}/.tmp" 2>/dev/null
+check "work dir that stays: no whiteout walk" '! grep -q "whiteouts" "${TMP}/log" 2>/dev/null'
+
+# /roms2 (ArkOS ports): the card's ROM folder, separate or unified; gone with the card.
+setup exfat 62000000 "ports/gtactw/x"
+run
+check "card2 link: the card root (dArkOS layout)" '[ "$(readlink "${TMP}/run/card2")" = "${EXT}" ]'
+MERGED=1 setup exfat 62000000 "roms/ports/gtactw/x"
+run
+check "card2 link kept while unified" '[ "$(readlink "${TMP}/run/card2")" = "${EXT}/roms" ] && ! [ -e "${TMP}/run/roms2" ]'
+run eject
+check "card2 link removed on eject" '! [ -L "${TMP}/run/card2" ]'
+
 # Automount off: never mounts.
 setup exfat 62000000 "snes/A.sfc"
 echo "system.automount=0" >>"${TMP}/system.cfg"

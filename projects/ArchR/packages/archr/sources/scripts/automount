@@ -29,6 +29,10 @@ PROC="${AUTOMOUNT_PROC:-/proc}"
 SYS_BLOCK="${AUTOMOUNT_SYS:-/sys/class/block}"
 RUN="${AUTOMOUNT_RUN:-/run/archr}"
 ROMS2="${RUN}/roms2"
+# The second card's ROM folder for ports written for ArkOS and dArkOS, which
+# name it /roms2 (/roms2 -> this link, from the archr package). Unlike
+# ROMS2 it stays while unified: such a port finds its own folder either way.
+CARD2="${RUN}/card2"
 # Present while the mounted card failed its check; the Storage page warns.
 ERRORS="${ROMS2}.errors"
 MS_PATH="${STORAGE}/roms"
@@ -52,6 +56,12 @@ mounted_at() {
 }
 fstype_at() {
   awk -v p="$1" '$2 == p { t = $3 } END { print t }' "${PROC}/mounts"
+}
+# The filesystem a path lives on: the deepest mount above it.
+fstype_of() {
+  awk -v p="$1" '
+    { m = $2; if ((p == m || index(p, (m == "/" ? "/" : m "/")) == 1) && length(m) >= best) { best = length(m); t = $3 } }
+    END { print t }' "${PROC}/mounts"
 }
 # The whole disk of a partition: mmcblk0p1 -> mmcblk0, sda1 -> sda.
 disk_of() {
@@ -83,18 +93,30 @@ publish() {
 # files deleted through the overlay), which would shadow real files in the
 # union. A file deleted that way while the other card still had it shows up
 # again: nothing is lost. Runs once, while a work dir is left.
+#
+# Whiteouts exist only where an overlay could keep them (ext4, btrfs...): a
+# walk of an exFAT or FAT card finds none and took 150 s on a big ROM card,
+# past archr-autostart's start timeout. Only a work dir actually removed
+# starts the walk: a card mounted read-only (not cleanly unmounted) kept its
+# work dir and walked the whole card at every boot.
 forget_overlay() {
-  local work found=
+  local work found= dir dirs=()
   for work in "${STORAGE}/.tmp/games-workdir" "${EXTERNAL}/.tmp/games-workdir"
   do
     [ -d "${work}" ] || continue
-    rm -rf "${work}"
-    found=1
+    rm -rf "${work}" 2>/dev/null
+    [ -e "${work}" ] || found=1
   done
   rmdir "${STORAGE}/.games-internal-bind/roms" "${STORAGE}/.games-internal-bind" 2>/dev/null
   [ -n "${found}" ] || return 0
-  log $0 "Dropping the old overlay's whiteouts."
-  find "${MS_PATH}" "$(card_roms)" -xdev -type c -exec sh -c \
+  for dir in "${MS_PATH}" "$(card_roms)"; do
+    case $(fstype_of "${dir}") in
+      ext2 | ext3 | ext4 | btrfs | xfs | f2fs) dirs+=("${dir}") ;;
+    esac
+  done
+  [ ${#dirs[@]} -gt 0 ] || return 0
+  log $0 "Dropping the old overlay's whiteouts in ${dirs[*]}."
+  find "${dirs[@]}" -xdev -type c -exec sh -c \
     'for f; do [ "$(stat -c %t:%T "$f")" = 0:0 ] && rm -f "$f"; done' sh {} +
 }
 
@@ -141,6 +163,8 @@ separate() {
 
 # The card is mounted: unified or two folders, as the setting says.
 apply() {
+  mkdir -p "${RUN}"
+  ln -sfn "$(card_roms)" "${CARD2}"
   if [ "$(get_setting system.merged.storage)" = 1 ]
   then
     unify && return 0
@@ -180,7 +204,7 @@ release() {
   device=$(mounted_at "${EXTERNAL}")
   [ -n "${device}" ] || return 0
   [ -z "${1}" ] || [ "${1}" = "${device}" ] || return 0
-  rm -f "${ROMS2}" "${ERRORS}"
+  rm -f "${ROMS2}" "${CARD2}" "${ERRORS}"
   separate
   umount ${2} "${EXTERNAL}" || return 1
   log $0 "Released ${device}."
@@ -341,7 +365,7 @@ then
   exit 0
 fi
 [ -z "${CURRENT}" ] || release "" -l
-rm -f "${ROMS2}" "${ERRORS}"
+rm -f "${ROMS2}" "${CARD2}" "${ERRORS}"
 
 if [ -e "${STORAGE}/.please_resize_me" ]
 then
