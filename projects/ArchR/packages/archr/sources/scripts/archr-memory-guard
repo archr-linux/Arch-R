@@ -67,14 +67,16 @@ full_avg10() {
 
 close_game() {
   local pid
-  for pid in $(scope_procs); do
-    { [ "${pid}" = $$ ] || [ "${pid}" = "${RUNEMU}" ]; } && continue
-    kill -KILL "${pid}" 2>/dev/null
-  done
+  # The note and the log line first: the moment the game is gone, runemu
+  # stops this guard.
   echo "archr-memory-guard: out of memory, the console stalled ($1% waiting): closed ${GAME}" \
     >"${KMSG}" 2>/dev/null
   mkdir -p "${NOTE%/*}" 2>/dev/null
   printf '%s\n' "${GAME}" >"${NOTE}" 2>/dev/null
+  for pid in $(scope_procs); do
+    { [ "${pid}" = $$ ] || [ "${pid}" = "${RUNEMU}" ]; } && continue
+    kill -KILL "${pid}" 2>/dev/null
+  done
 }
 
 over=0
