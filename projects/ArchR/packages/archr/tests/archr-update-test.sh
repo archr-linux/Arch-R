@@ -84,6 +84,16 @@ case "$1" in
     mkdir -p "${PACMAN_CACHE}/download-XyZ"
     while read -r n v s; do
       f="$n-$v-aarch64.pkg.tar.zst"
+      # A link that works but drops: each try brings more of the file.
+      if [ "$n" = "${FAKE_DOWNLOAD_DROPS_PKG:-}" ]; then
+        drops=$(cat "${FAKE}/drops" 2>/dev/null || echo 0)
+        if [ "${drops}" -lt "${FAKE_DOWNLOAD_DROPS}" ]; then
+          echo $((drops + 1)) >"${FAKE}/drops"
+          head -c $(((drops + 1) * s / 8)) /dev/zero >"${PACMAN_CACHE}/download-XyZ/$f.part"
+          echo "error: failed to commit transaction (unexpected error)"
+          exit 1
+        fi
+      fi
       if [ "$n" = "${FAKE_DOWNLOAD_FAIL:-}" ] ||
          { [ "$n" = "${FAKE_DOWNLOAD_FAIL_ONCE:-}" ] && [ ! -e "${FAKE}/failed-once" ]; }; then
         touch "${FAKE}/failed-once"
@@ -197,7 +207,7 @@ wait_for() {
   done
 }
 reset() {
-  rm -rf "${TMP}/cache"/* "${TMP}/state" "${TMP}/calls" "${TMP}/installed-ok" "${TMP}/inhibit" "${TMP}/failed-once"
+  rm -rf "${TMP}/cache"/* "${TMP}/state" "${TMP}/calls" "${TMP}/installed-ok" "${TMP}/inhibit" "${TMP}/failed-once" "${TMP}/drops"
 }
 
 ### check --json
@@ -305,7 +315,12 @@ check "download failure: reason and pacman line" "$(field reason <<<"${OUT}")|$(
   "download|error: failed retrieving file 'retroarch-1.22.0-1-aarch64.pkg.tar.zst' from example.invalid : Could not resolve host|false"
 check "download failure installs nothing" "$(grep -c 'pacman -Su ' "${TMP}/calls")" 0
 check "an interrupted download stays for the next run" "$(find "${TMP}/storage-cache" -name '*.pkg.tar*' | wc -l | tr -d ' ')" 1
-check "download failure: tried three times" "$(grep -c 'pacman -Suw' "${TMP}/calls")" 3
+# linux came on the first try, which does not count: three more without a byte.
+check "download failure: three tries in a row without progress" "$(grep -c 'pacman -Suw' "${TMP}/calls")" 4
+
+reset
+OUT=$(FAKE_DOWNLOAD_DROPS_PKG=retroarch FAKE_DOWNLOAD_DROPS=5 run)
+check "a link that drops five times while it works installs" "$?|$(grep -c 'pacman -Suw' "${TMP}/calls")|$(field phase <<<"$(tail -n 1 <<<"${OUT}")")" "0|6|done"
 
 reset
 OUT=$(FAKE_DOWNLOAD_FAIL_ONCE=retroarch run)

@@ -552,16 +552,21 @@ cancel() {
 }
 
 # A download that stalls or drops (weak Wi-Fi, the link coming back after
-# sleep) is tried again, up to DOWNLOAD_TRIES times: pacman keeps the
-# partial files and resumes them.
+# sleep) is tried again: pacman keeps the partial files and resumes them.
+# It gives up after DOWNLOAD_TRIES tries in a row that brought nothing; a
+# try that brought bytes does not count. A weak link dropped three times
+# while it worked, and the update ended at 60 % with half the files here.
 run_download() {
-    local try=1
+    local try=1 before after
     while :; do
+        before="$(cached_bytes)"
         download_once && break
         [ -n "${CANCELLED}" ] && fail cancelled "Download cancelled."
+        after="$(cached_bytes)"
+        [ "${after%% *}" -gt "${before%% *}" ] && try=0
         [ "${try}" -ge "${DOWNLOAD_TRIES}" ] &&
             fail download "Download failed." "$(last_error "${WORK}/download")"
-        logf "download failed (try ${try} of ${DOWNLOAD_TRIES}): $(last_error "${WORK}/download"); trying again"
+        logf "download failed (${try} of ${DOWNLOAD_TRIES} without progress): $(last_error "${WORK}/download"); trying again"
         try=$((try + 1))
         # A pause in ticks, so a cancel is seen at once.
         for _ in $(seq 1 "${RETRY_TICKS}"); do
