@@ -128,6 +128,18 @@ fi
 	if [ ! -d /sys/module/panfrost ] || ! sdl_vulkan; then
 		export VK_DRIVER_FILES=/dev/null VK_ICD_FILENAMES=/dev/null
 	fi
+	# PPSSPP marks the backend it starts in FailedGraphicsBackends.txt and
+	# clears the mark after 10 frames. A start that dies before that (a
+	# crash, a kill) makes the next one fall back to OpenGL without a word
+	# and save OpenGL to ppsspp.ini. Vulkan chosen in system.cfg and usable
+	# here is what runs: the mark goes. Without a setting it stays.
+	FAILED_MARK="${CONF_DIR}/PSP/SYSTEM/FailedGraphicsBackends.txt"
+	if [ -s "${FAILED_MARK}" ]; then
+		echo "PPSSPP failed to start last time on: $(cat "${FAILED_MARK}")"
+		if [ "${GRENDERER}" = "vulkan" ] && grep -q '^GraphicsBackend = 3' "${INI}"; then
+			rm -f "${FAILED_MARK}"
+		fi
+	fi
 
   #Internal Resolution
 	case "${IRES}" in

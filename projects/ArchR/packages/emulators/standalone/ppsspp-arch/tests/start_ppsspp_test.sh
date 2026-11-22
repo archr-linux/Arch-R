@@ -129,6 +129,20 @@ expect "vulkan without panfrost" "0 (OPENGL)" "$(key GraphicsBackend "${INI}")"
 mkdir -p "${TMP}/panfrost"
 run "psp.graphics_backend=vulkan"
 expect "vulkan with panfrost" "3 (VULKAN)" "$(key GraphicsBackend "${INI}")"
+# A start that died before its 10th frame leaves PPSSPP's mark on Vulkan,
+# and the next start falls back to OpenGL on its own. Vulkan set in
+# system.cfg clears the mark; without a setting, PPSSPP's fallback stays.
+FAILED_MARK="${TMP}/conf/PSP/SYSTEM/FailedGraphicsBackends.txt"
+printf 'VULKAN' >"${FAILED_MARK}"
+run "psp.graphics_backend=vulkan"
+expect "vulkan set clears the mark" "no" "$([ -e "${FAILED_MARK}" ] && echo yes || echo no)"
+printf 'VULKAN' >"${FAILED_MARK}"
+run
+expect "mark kept without a setting" "yes" "$([ -e "${FAILED_MARK}" ] && echo yes || echo no)"
+printf 'VULKAN' >"${FAILED_MARK}"
+run "psp.graphics_backend=opengl"
+expect "mark kept with opengl set" "yes" "$([ -e "${FAILED_MARK}" ] && echo yes || echo no)"
+rm -f "${FAILED_MARK}"
 # Panfrost but an SDL without Vulkan: OpenGL, not an abort.
 printf 'no vulkan here' >"${TMP}/libSDL2.so"
 run "psp.graphics_backend=vulkan"
