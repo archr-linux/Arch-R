@@ -13,6 +13,10 @@ After=userconfig.service archr-levels.service
 Wants=archr-levels.service
 
 [Service]
+# Ahead of the services starting beside it (the UI waits for this
+# script); what it runs after the UI sets itself to nice 10-19 (absolute,
+# busybox renice without -n).
+Nice=-10
 Type=oneshot
 Environment=HOME=/storage
 ExecStart=/bin/bash -a -c 'source /etc/profile && exec /usr/bin/autostart'

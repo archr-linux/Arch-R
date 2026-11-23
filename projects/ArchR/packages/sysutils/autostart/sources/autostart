@@ -50,6 +50,48 @@ if [ -d /sys/class/pwm/pwmchip0 ]; then
   echo 0 > /sys/class/pwm/pwmchip0/pwm0/enable 2>/dev/null
 fi
 
+### The GPU driver from the start, beside the quirks and the storage: it
+### reads only gpu.driver from system.cfg, and loading it (modprobe, the
+### bind, the library binds) took ~3 s of phase B, right before the UI.
+### Phase B's wait joins it, so the UI still starts with the GPU ready.
+GPU_SCRIPT="/usr/lib/autostart/common/003-gpudriver"
+if [ -x "${GPU_SCRIPT}" ]; then
+  ( log "Run ${GPU_SCRIPT}"; "${GPU_SCRIPT}" 2>&1 >>${BOOTLOG}; log "Done ${GPU_SCRIPT}" ) &
+  PHASE_B_PIDS+=($!)
+fi
+
+### Read what sway and the launcher map (their binaries and libraries)
+### while the rest runs: they start off a cold card, ~5 s on an R36S. The
+### list comes from their /proc/<pid>/maps after a boot (ui_prefetch_list
+### below, phase C), again whenever the launcher binary changes. Lowest
+### CPU priority: the boot needs the CPU, the card reads in parallel.
+UI_PREFETCH="/storage/.cache/ui-prefetch.list"
+if [ -s "${UI_PREFETCH}" ]; then
+  ( renice 19 -p ${BASHPID} >/dev/null 2>&1
+    while read -r f; do
+      [ -f "${f}" ] && cat "${f}" >/dev/null 2>&1
+    done <"${UI_PREFETCH}" ) &
+  disown $!
+fi
+
+ui_prefetch_list() {
+  local i pid pids=""
+  [ -s "${UI_PREFETCH}" ] && [ "${UI_PREFETCH}" -nt /usr/bin/archr-launcher ] && return 0
+  # The launcher has mapped what its first frame needs a few seconds in.
+  for i in $(seq 1 60); do
+    pid=$(pidof archr-launcher 2>/dev/null) && break
+    sleep 0.5
+  done
+  [ -n "${pid}" ] || return 0
+  sleep 5
+  pids="$(pidof sway 2>/dev/null) $(pidof archr-launcher 2>/dev/null)"
+  for pid in ${pids}; do
+    awk '$6 ~ /^\/usr\// && $7 == "" {print $6}' "/proc/${pid}/maps" 2>/dev/null
+  done | sort -u >"${UI_PREFETCH}.tmp" && [ -s "${UI_PREFETCH}.tmp" ] &&
+    mv -f "${UI_PREFETCH}.tmp" "${UI_PREFETCH}"
+  rm -f "${UI_PREFETCH}.tmp"
+}
+
 ### Load platform + device quirks in parallel. Every quirk writes to its
 ### own /storage/.config/profile.d/NNN-name file or to a hardware sysfs
 ### path — they don't share state, so running them concurrently is safe
@@ -70,7 +112,9 @@ QUIRK_DIRS=()
 # CPU/GPU temperature, no playback path, and the rest of the quirks
 # silently no-op'd. Array iteration with quoted expansion preserves the
 # path verbatim.
-if [ ${#QUIRK_DIRS[@]} -gt 0 ]; then
+run_quirks() {
+  local QDIR script QUIRK_PIDS=()
+  [ ${#QUIRK_DIRS[@]} -gt 0 ] || return 0
   tocon "Applying ${HW_DEVICE} / ${QUIRK_DEVICE} quirks..."
   for QDIR in "${QUIRK_DIRS[@]}"; do
     for script in "${QDIR}"/*; do
@@ -78,10 +122,56 @@ if [ ${#QUIRK_DIRS[@]} -gt 0 ]; then
       log "Run ${script}"
       trace_step "quirk:${script}"
       ( "${script}" 2>&1 >>${BOOTLOG}; log "Done ${script}" ) &
+      QUIRK_PIDS+=($!)
     done
   done
-  wait
+  # Only the quirks: a bare wait would hold the storage for the GPU driver
+  # and the prefetch started above.
+  [ ${#QUIRK_PIDS[@]} -eq 0 ] || wait "${QUIRK_PIDS[@]}"
+}
+
+### Fast boot (the idea of Zenith, a ROCKNIX fork). The quirks only write
+### /storage/.config/profile.d files, which persist, and hardware settings
+### the UI does not need to draw; on an R36S they held the storage and the
+### UI for ~4.5 s (a dozen scripts sourcing /etc/profile off a cold card).
+### When nothing they depend on changed since a boot that finished (this
+### script, the model, the kernel, the GPU driver, the quirks themselves),
+### the UI starts on the files that boot wrote and the quirks run again
+### once the launcher is up. Anything else boots in the usual order:
+###  - no mark, or a different one: first boot, an update, a new driver;
+###  - the pending mark of a fast boot that never finished (power cut,
+###    freeze, a reset): the next boot is a usual one, once;
+###  - /storage/.config/autostart-nofast: always the usual order.
+FAST_SIG="/storage/.cache/autostart-fast.sig"
+FAST_PENDING="/storage/.cache/autostart-fast.pending"
+fast_sig() {
+  { stat -c %Y /usr/bin/autostart
+    echo "${QUIRK_DEVICE}"
+    uname -r
+    get_setting gpu.driver
+    for QDIR in "${QUIRK_DIRS[@]}"; do stat -c '%n %Y' "${QDIR}"/*; done
+  } 2>/dev/null | cksum
+}
+FAST_BOOT=0
+if [ -e "${FAST_PENDING}" ]; then
+  rm -f "${FAST_PENDING}" "${FAST_SIG}"
+  log "Fast boot: the previous one did not finish, usual order this time"
+elif [ ! -e /storage/.config/autostart-nofast ] && [ -s "${FAST_SIG}" ] &&
+  [ "$(cat "${FAST_SIG}")" = "$(fast_sig)" ]; then
+  FAST_BOOT=1
+  mkdir -p "${FAST_PENDING%/*}" && : >"${FAST_PENDING}"
+  log "Fast boot: quirks after the UI"
 fi
+
+# Run once the boot is done (quirks included): the mark for the next one.
+fast_done() {
+  local sig
+  sig=$(fast_sig) && mkdir -p "${FAST_SIG%/*}" &&
+    echo "${sig}" >"${FAST_SIG}.tmp" && mv -f "${FAST_SIG}.tmp" "${FAST_SIG}"
+  rm -f "${FAST_PENDING}"
+}
+
+[ "${FAST_BOOT}" = 1 ] || run_quirks
 
 ### Start the automount service
 trace_step "archr-automount"
@@ -132,10 +222,12 @@ fi
 COMMON="/usr/lib/autostart/common"
 ( [ -x "${COMMON}/${CHAIN_FIRST}" ] && run_common "${COMMON}/${CHAIN_FIRST}"
   [ -x "${COMMON}/${CHAIN_SECOND}" ] && run_common "${COMMON}/${CHAIN_SECOND}" ) &
+PHASE_B_PIDS+=($!)
 DEFERRED=()
 for script in ${COMMON}/*; do
   name="${script##*/}"
   [ "${script}" = "${GATE_SCRIPT}" ] && continue
+  [ "${script}" = "${GPU_SCRIPT}" ] && continue
   [ "${name}" = "${CHAIN_FIRST}" ] || [ "${name}" = "${CHAIN_SECOND}" ] && continue
   [ -x "${script}" ] || continue
   if [[ "${DEFERRED_LIST}" == *" ${name} "* ]]; then
@@ -143,8 +235,10 @@ for script in ${COMMON}/*; do
     continue
   fi
   run_common "${script}" &
+  PHASE_B_PIDS+=($!)
 done
-wait
+# Phase B and the GPU driver; not the prefetch, which must never hold the UI.
+wait "${PHASE_B_PIDS[@]}"
 
 ### Run device start scripts (no parallel — usually 0-2 scripts, ordering may matter)
 if [ -d "/usr/lib/autostart/${HW_DEVICE}" ]
@@ -170,7 +264,7 @@ then
    ${script} 2>&1 >>${BOOTLOG}
   done
 fi
-wait
+# No bare wait here: the only job still running is the UI prefetch.
 
 tocon "Starting user interface..."
 log "Startup complete..."
@@ -186,14 +280,33 @@ systemctl start ${UI_SERVICE} 2>&1 >>${BOOTLOG} &
 ### right now, and at normal priority this phase made EmulationStation,
 ### the previous UI, take ~3s longer to show its window.
 for script in "${DEFERRED[@]}"; do
-  ( renice -n 19 -p ${BASHPID} >/dev/null 2>&1
+  ( renice 19 -p ${BASHPID} >/dev/null 2>&1
     ionice -c 3 -p ${BASHPID} >/dev/null 2>&1
     run_common "${script}" ) &
 done
+# Detached: the governor below must not wait for it (up to ~35 s).
+( renice 19 -p ${BASHPID} >/dev/null 2>&1; ui_prefetch_list ) &
+disown $!
+
+### Fast boot: the quirks, now that the launcher is up (it reads the same
+### files from the boot before). Detached, like the prefetch list.
+if [ "${FAST_BOOT}" = 1 ]; then
+  ( for i in $(seq 1 60); do
+      pidof archr-launcher >/dev/null 2>&1 && break
+      sleep 0.5
+    done
+    sleep 3
+    renice 10 -p ${BASHPID} >/dev/null 2>&1
+    run_quirks
+    fast_done
+    log "Fast boot: quirks done" ) &
+  disown $!
+fi
 wait
 
 DEVICE_CPU_GOVERNOR=$(get_setting system.cpugovernor)
 ${DEVICE_CPU_GOVERNOR} 2>&1 >>${BOOTLOG}
+[ "${FAST_BOOT}" = 1 ] || fast_done
 log "Autostart complete..."
 
 # Boot reached the end without hanging — clear the marker so the next

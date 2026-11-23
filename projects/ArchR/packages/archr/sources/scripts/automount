@@ -242,13 +242,26 @@ load_modules() {
   done
 }
 
+# Done once per folder list and ROM card: on a cold exFAT card the 130-odd
+# folders take ~3 s of every boot (R36S), before the UI. The mark holds
+# the list's checksum and the card under ${MS_PATH} (device and the root's
+# inode, which a reformat changes). A folder the player deleted on purpose
+# comes back with the next list, as before at the next boot.
+GAME_DIRS_MARK="${STORAGE}/.cache/game-dirs.mark"
+game_dirs_key() {
+  printf '%s %s %s\n' "$(cksum <"${1}")" "$(mounted_at "${MS_PATH}")" \
+    "$(stat -L -c '%d:%i' "${MS_PATH}" 2>/dev/null)"
+}
+
 create_game_dirs() {
   ### We don't want systemd to manage this or the directories could be created in the wrong location.
-  if [ -e "/usr/config/system-dirs.conf" ]
-  then
-    log $0 "Creating game directories."
-    systemd-tmpfiles --create /usr/config/system-dirs.conf >/dev/null 2>&1 ||:
-  fi
+  local conf=/usr/config/system-dirs.conf key
+  [ -e "${conf}" ] || return 0
+  key=$(game_dirs_key "${conf}")
+  [ "$(cat "${GAME_DIRS_MARK}" 2>/dev/null)" = "${key}" ] && return 0
+  log $0 "Creating game directories."
+  systemd-tmpfiles --create "${conf}" >/dev/null 2>&1 &&
+    mkdir -p "${GAME_DIRS_MARK%/*}" && echo "${key}" >"${GAME_DIRS_MARK}"
 }
 
 mount_card() {

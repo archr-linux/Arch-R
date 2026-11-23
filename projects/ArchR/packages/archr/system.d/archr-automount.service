@@ -9,6 +9,8 @@ After=systemd-tmpfiles-setup.service
 RequiresMountsFor=/storage
 
 [Service]
+# On the way to the UI, beside the services that start with it.
+Nice=-10
 Type=oneshot
 Environment=HOME=/storage
 EnvironmentFile=/etc/profile

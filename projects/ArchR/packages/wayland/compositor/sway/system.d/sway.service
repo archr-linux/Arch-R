@@ -9,6 +9,8 @@ RequiresMountsFor=/storage
 ConditionKernelCommandLine=!installer
 
 [Service]
+# The first frame before the background services of the boot.
+CPUWeight=10000
 Environment=HOME=/storage
 Environment=XDG_RUNTIME_DIR=/var/run/0-runtime-dir
 Environment=WLR_BACKENDS=drm,libinput

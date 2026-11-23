@@ -240,14 +240,16 @@ load_driver() {
       MODPROBE_PID=$!
       log_event "panfrost: step 4 - modprobe launched pid=${MODPROBE_PID}"
 
+      # Every 50 ms, still 30 s at most: at 1 s steps the bind (about
+      # 50 ms after the modprobe) cost up to a second of every boot.
       _iter=0
-      for _wait in $(seq 1 30); do
+      for _wait in $(seq 1 600); do
         _iter=$_wait
         for g in /sys/bus/platform/drivers/panfrost/[a-f0-9]*.gpu; do
           [ -e "$g" ] && break 2
         done
         kill -0 ${MODPROBE_PID} 2>/dev/null || break
-        sleep 1
+        sleep 0.05
       done
       log_event "panfrost: step 5 - poll loop exited at iter=${_iter}"
 
