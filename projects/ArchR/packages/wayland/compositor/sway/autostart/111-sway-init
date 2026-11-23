@@ -9,9 +9,14 @@ export SWAY_HOME=/storage/.config/sway/
 export SWAY_CONFIG_KIOSK=/usr/share/sway/config.kiosk
 export SWAY_CONFIG_DESKTOP=/usr/share/sway/config.desktop
 
+# A file left where the folder belongs (see sway-config) goes first.
+if [ -e "${SWAY_HOME%/}" ] && [ ! -d "${SWAY_HOME%/}" ]
+then
+  rm -f "${SWAY_HOME%/}"
+fi
 if [ ! -d "$SWAY_HOME" ]
 then
-  mkdir $SWAY_HOME
+  mkdir -p $SWAY_HOME
 fi
 
 # Copy base config, we are overwriting any user config

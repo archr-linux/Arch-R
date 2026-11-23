@@ -27,17 +27,27 @@ if [ ! -d "$SWAY_RUNTIME_DIR" ]; then
   mkdir "$SWAY_RUNTIME_DIR"
 fi
 
-if [ ! -f ${SWAY_CONFIG_USER} ]; then
-  mkdir -p ${SWAY_CONFIG_BASEDIR}
-    cp ${SWAY_CONFIG_USER_DEFAULT} ${SWAY_CONFIG_BASEDIR}
+# A file where the folder belongs (a first boot on a full card: mkdir
+# failed and the copies below, into a folder that was not there, made one
+# file named "sway") kept sway down at every boot after, a black screen
+# for good. Put the folder back and copy into it, never onto its name.
+if [ -e ${SWAY_CONFIG_BASEDIR} ] && [ ! -d ${SWAY_CONFIG_BASEDIR} ]; then
+  rm -f ${SWAY_CONFIG_BASEDIR}
+fi
+mkdir -p ${SWAY_CONFIG_BASEDIR}
+
+# The config comes from 111-sway-init at boot (outputs, rotation); one
+# missing here (that boot could not write it) is made the same way now.
+if [ ! -s ${SWAY_CONFIG_USER} ] && [ -x /usr/lib/autostart/common/111-sway-init ]; then
+  /usr/lib/autostart/common/111-sway-init >/dev/null 2>&1
 fi
 
 if [ ! -f ${SWAY_CONFIG_COLOR} ]; then
-  cp ${SWAY_CONFIG_COLOR_DEFAULT} ${SWAY_CONFIG_BASEDIR}
+  cp ${SWAY_CONFIG_COLOR_DEFAULT} ${SWAY_CONFIG_BASEDIR}/
 fi
 
 if [ ! -f ${SWAY_CONFIG_DAEMON} ]; then
-  cp ${SWAY_CONFIG_DAEMON_DEFAULT} ${SWAY_CONFIG_BASEDIR}
+  cp ${SWAY_CONFIG_DAEMON_DEFAULT} ${SWAY_CONFIG_BASEDIR}/
 fi
 
 if [ -f ${SWAY_CONFIG_DAEMON} ] ; then
