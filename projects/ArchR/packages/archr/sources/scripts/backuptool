@@ -609,7 +609,7 @@ recover() {
     fi
     rm -f -- "${JOURNAL}" "${JOURNAL}.new"
     enter "${CACHE}" || return 1
-    rm -rf -- backuptool-restore.*
+    rm -rf -- backuptool-restore.* backuptool-verify.*
     cd / || return 1
 }
 
@@ -889,8 +889,9 @@ backup() {
     local bytes names cfgsize required available
     take_lock
     recover || exit 1
-    WORKDIR="" ARCHIVEFILENAME=""
+    WORKDIR="" ARCHIVEFILENAME="" VERIFYNAME=""
     trap '[ -z "${WORKDIR}" ] || rm -rf "${WORKDIR}"
+        [ -z "${VERIFYNAME}" ] || rm -rf -- "${CACHE:?}/${VERIFYNAME}"
         if [ -n "${ARCHIVEFILENAME}" ] && [ ! -f "${BACKUPFILE}" ]; then
             mv "${BACKUPFOLDER}/${ARCHIVEFILENAME}" "${BACKUPFILE}"
         fi' EXIT
@@ -947,9 +948,15 @@ backup() {
     # entry deflated: Info-ZIP stores incompressible files only when it can
     # seek back, and BusyBox unzip checks CRCs of deflated entries alone.
     (cd "${WORKDIR}" && zip -q -9 -MM - -@ <files.zip | cat >backup.zip) || exit 1
-    # The finished archive must pass the same checks as a restore.
-    verify_archive "${WORKDIR}/backup.zip" "${WORKDIR}/verify" required || exit 1
-    rm -rf "${WORKDIR}/verify"
+    # The finished archive must pass the same checks as a restore, unpacked
+    # where a restore unpacks it: on /storage (ext4). The ROMs card may be
+    # exFAT, which refuses names a restore writes fine (':' in cache files).
+    enter "${CACHE}" || { echo "${CACHE} is not a real folder." >&2; exit 1; }
+    VERIFYNAME=$(mktemp -d backuptool-verify.XXXXXX) || exit 1
+    cd / || exit 1
+    verify_archive "${WORKDIR}/backup.zip" "${CACHE}/${VERIFYNAME}" required || exit 1
+    rm -rf -- "${CACHE:?}/${VERIFYNAME}"
+    VERIFYNAME=""
     # Keep the last good backup at its usual path until the new ZIP is ready.
     if [ -f "${BACKUPFILE}" ]; then
         ARCHIVEFILENAME="ARCHIVED_${OS_NAME}_BACKUP-${STAMP}-$$.zip"
