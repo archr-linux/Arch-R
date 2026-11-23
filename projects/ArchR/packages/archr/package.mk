@@ -213,11 +213,17 @@ EOF
   # the GPU memory sway and the launcher map counts for them: on a 512 MB
   # console it killed sway and left a black screen. They are protected;
   # runemu.sh puts each game at 300, so the game goes first.
-  for unit in sway:-800 archr-launcher-session:-500; do
+  # The sound too: killed, it came back without pipewire-pulse, and every
+  # game and the launcher went silent until a reboot.
+  for unit in sway:-800 archr-launcher-session:-500 pipewire:-800 wireplumber:-800 pipewire-pulse:-800; do
     mkdir -p ${INSTALL}/usr/lib/systemd/system/${unit%%:*}.service.d
     printf '[Service]\nOOMScoreAdjust=%s\n' "${unit#*:}" \
       >${INSTALL}/usr/lib/systemd/system/${unit%%:*}.service.d/10-oom.conf
   done
+  # pipewire-pulse talks to one pipewire: when that one goes, it goes too,
+  # and its socket starts a new one for the next client.
+  printf '[Unit]\nBindsTo=pipewire.service\nAfter=pipewire.service\n' \
+    >${INSTALL}/usr/lib/systemd/system/pipewire-pulse.service.d/20-bind.conf
   # Error reports (archr-error-report): units, the wants links that enable
   # them and the OnFailure= drop-in, all packaged for the same reason.
   # The drop-in covers archr-*.service and the services the console needs;

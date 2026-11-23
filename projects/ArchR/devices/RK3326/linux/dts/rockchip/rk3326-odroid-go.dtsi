@@ -160,7 +160,7 @@
 		<&cru HCLK_BUS_PRE>, <&cru HCLK_PERI_PRE>,
 		<&cru PCLK_BUS_PRE>, <&cru SCLK_GPU>;
 
-	assigned-clock-rates = <1188000000>,
+	assigned-clock-rates = <1300000000>, /* npll: the GPU's 650 */
 		<200000000>, <200000000>,
 		<150000000>, <150000000>,
 		<100000000>, <200000000>;

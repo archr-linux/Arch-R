@@ -201,14 +201,36 @@ set_gpu_min_freq() {
 }
 
 # The user's GPU ceiling (system.gpu.max_hz, set by archr-perf-limits): one
-# of the GPU's own frequencies in Hz, else nothing.
+# of the GPU's own frequencies in Hz. Unset, the highest step that is not a
+# turbo one: a turbo step (the PX30's 650 MHz) is the player's choice.
 user_gpu_cap() {
   local cap
-  cap=$(get_setting system.gpu.max_hz 2>/dev/null)
-  [[ "${cap}" =~ ^[1-9][0-9]{7,9}$ ]] || return 0
   [ -e "${GPU_FREQ}/available_frequencies" ] || return 0
-  tr ' ' '\n' <"${GPU_FREQ}/available_frequencies" | grep -qx "${cap}" && echo "${cap}"
+  cap=$(get_setting system.gpu.max_hz 2>/dev/null)
+  if [[ "${cap}" =~ ^[1-9][0-9]{7,9}$ ]] &&
+    tr ' ' '\n' <"${GPU_FREQ}/available_frequencies" | grep -qx "${cap}"; then
+    echo "${cap}"
+    return 0
+  fi
+  gpu_default_cap
   return 0
+}
+
+# The highest GPU step without turbo-mode in the device tree, when the GPU
+# has a turbo one; else nothing (no ceiling).
+GPU_OPP_TABLE=${GPU_OPP_TABLE:-/proc/device-tree/opp-table-1}
+gpu_default_cap() {
+  local node hz turbo="" best=""
+  for node in "${GPU_OPP_TABLE}"/opp-*; do
+    [ -r "${node}/opp-hz" ] || continue
+    hz=$(od -An -tu1 "${node}/opp-hz" | awk '{for (i = 1; i <= NF; i++) v = v * 256 + $i} END {printf "%d", v}')
+    if [ -e "${node}/turbo-mode" ]; then
+      turbo=1
+    elif [ -z "${best}" ] || [ "${hz}" -gt "${best}" ]; then
+      best=${hz}
+    fi
+  done
+  [ -n "${turbo}" ] && [ -n "${best}" ] && echo "${best}"
 }
 
 onlinethreads() {
