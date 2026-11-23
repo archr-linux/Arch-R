@@ -4,7 +4,7 @@
 
 PKG_NAME="ppsspp-arch"
 PKG_REPLACES="ppsspp-sa"
-PKG_REV="9"
+PKG_REV="10"
 PKG_SITE="https://github.com/hrydgard/ppsspp"
 PKG_URL="${PKG_SITE}.git"
 # v1.20.2: v1.20.4 runs the emulation thread about 5x slower on the RK3326

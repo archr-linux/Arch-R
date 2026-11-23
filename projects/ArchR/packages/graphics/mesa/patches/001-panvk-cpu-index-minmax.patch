@@ -1,0 +1,212 @@
+diff --color -ruN a/src/panfrost/vulkan/jm/panvk_vX_cmd_draw.c b/src/panfrost/vulkan/jm/panvk_vX_cmd_draw.c
+--- a/src/panfrost/vulkan/jm/panvk_vX_cmd_draw.c	2026-11-23 12:37:50.301450579 -0300
++++ b/src/panfrost/vulkan/jm/panvk_vX_cmd_draw.c	2026-11-23 12:38:30.420647290 -0300
+@@ -43,6 +43,10 @@
+ 
+ struct panvk_draw_data {
+    struct panvk_draw_info info;
++   /* Indexed draw whose index range was found on the CPU: it takes the
++    * direct path (PANVK_CPU_INDEX_MINMAX). */
++   bool cpu_index;
++   uint64_t indices;
+    unsigned vertex_range;
+    unsigned padded_vertex_count;
+    struct mali_invocation_packed invocation;
+@@ -87,7 +91,7 @@
+ is_indirect_draw(const struct panvk_draw_data *draw)
+ {
+    return draw->info.indirect.buffer_dev_addr != 0 ||
+-          draw->info.index.index_size != 0;
++          (draw->info.index.index_size != 0 && !draw->cpu_index);
+ }
+ 
+ static bool
+@@ -941,6 +945,12 @@
+       /* In case of indirect draw, the descriptor will be patched at runtime */
+       cfg.index_count = is_indirect_draw(draw) ? 1 : draw->info.vertex.count;
+ 
++      if (draw->cpu_index) {
++         cfg.indices = draw->indices;
++         cfg.base_vertex_offset =
++            (int64_t)draw->info.vertex.base - draw->info.vertex.raw_offset;
++      }
++
+       cfg.low_depth_cull = cfg.high_depth_cull =
+          vk_rasterization_state_depth_clip_enable(rs);
+ 
+@@ -1426,6 +1436,24 @@
+    return VK_SUCCESS;
+ }
+ 
++/* PANVK_CPU_INDEX_MINMAX=1 (from Zenith's 020-panvk-r36-opt): an indexed
++ * draw whose index buffer is host mapped finds its index range on the CPU
++ * and takes the direct path. Without it every vkCmdDrawIndexed becomes an
++ * indirect draw with a WRITE_VALUE job plus a compute job searching the
++ * whole bound range (to the end of the buffer) for min/max on the GPU. */
++static bool
++panvk_cpu_index_minmax_enabled(void)
++{
++   static int enabled = -1;
++
++   if (enabled < 0) {
++      const char *e = getenv("PANVK_CPU_INDEX_MINMAX");
++      enabled = e && e[0] && strcmp(e, "0") != 0;
++   }
++
++   return enabled;
++}
++
+ static void
+ panvk_cmd_draw(struct panvk_cmd_buffer *cmdbuf, struct panvk_draw_data *draw)
+ {
+@@ -1797,6 +1825,91 @@
+     * firstInstnace. */
+    assert(firstInstance < INT32_MAX);
+ 
++   if (panvk_cpu_index_minmax_enabled() && cmdbuf->state.gfx.ib.host &&
++       cmdbuf->state.gfx.ib.index_size) {
++      const uint32_t isz = cmdbuf->state.gfx.ib.index_size;
++      const bool restart =
++         cmdbuf->vk.dynamic_graphics_state.ia.primitive_restart_enable;
++      const uint8_t *base = cmdbuf->state.gfx.ib.host;
++      uint32_t mn = UINT32_MAX, mx = 0;
++      bool found = false;
++
++      /* One memcpy out of the (uncached) mapping, then scan the copy. */
++      const size_t nbytes = (size_t)indexCount * isz;
++      uint64_t stackbuf[2048];
++      uint8_t *copy = NULL;
++
++      if ((uint64_t)firstIndex + indexCount <=
++          cmdbuf->state.gfx.ib.size / isz) {
++         copy = nbytes <= sizeof(stackbuf) ? (uint8_t *)stackbuf
++                                           : (uint8_t *)malloc(nbytes);
++      }
++
++      if (copy) {
++         memcpy(copy, base + (size_t)firstIndex * isz, nbytes);
++         if (isz == 4) {
++            const uint32_t *p = (const uint32_t *)copy;
++            for (uint32_t i = 0; i < indexCount; i++) {
++               uint32_t v = p[i];
++               if (restart && v == UINT32_MAX)
++                  continue;
++               mn = MIN2(mn, v);
++               mx = MAX2(mx, v);
++               found = true;
++            }
++         } else if (isz == 2) {
++            const uint16_t *p = (const uint16_t *)copy;
++            for (uint32_t i = 0; i < indexCount; i++) {
++               uint32_t v = p[i];
++               if (restart && v == UINT16_MAX)
++                  continue;
++               mn = MIN2(mn, v);
++               mx = MAX2(mx, v);
++               found = true;
++            }
++         } else {
++            const uint8_t *p = copy;
++            for (uint32_t i = 0; i < indexCount; i++) {
++               uint32_t v = p[i];
++               if (restart && v == UINT8_MAX)
++                  continue;
++               mn = MIN2(mn, v);
++               mx = MAX2(mx, v);
++               found = true;
++            }
++         }
++
++         if (copy != (uint8_t *)stackbuf)
++            free(copy);
++
++         /* Only restart indices: nothing to draw. */
++         if (!found)
++            return;
++
++         uint32_t vertex_range = mx - mn + 1;
++         struct panvk_draw_data draw = {
++            .cpu_index = true,
++            .indices =
++               cmdbuf->state.gfx.ib.dev_addr + (uint64_t)firstIndex * isz,
++            .info = {
++               .index = panvk_draw_info_index(cmdbuf, firstIndex),
++               .vertex.base = vertexOffset,
++               .vertex.raw_offset = (int32_t)mn + vertexOffset,
++               .vertex.count = indexCount,
++               .instance.base = firstInstance,
++               .instance.count = instanceCount,
++               .prim = panvk_get_client_prim(cmdbuf),
++            },
++            .vertex_range = vertex_range,
++            .padded_vertex_count =
++               padded_vertex_count(cmdbuf, vertex_range, instanceCount),
++         };
++
++         panvk_cmd_draw(cmdbuf, &draw);
++         return;
++      }
++   }
++
+    struct pan_ptr indirect_index_alloc = panvk_cmd_alloc_dev_mem(
+       cmdbuf, desc, sizeof(struct VkDrawIndexedIndirectCommand), 8);
+ 
+diff --color -ruN a/src/panfrost/vulkan/panvk_buffer.c b/src/panfrost/vulkan/panvk_buffer.c
+--- a/src/panfrost/vulkan/panvk_buffer.c	2026-11-23 12:37:50.292708003 -0300
++++ b/src/panfrost/vulkan/panvk_buffer.c	2026-11-23 12:38:30.419483448 -0300
+@@ -89,6 +89,8 @@
+          *bind_status->pResult = VK_SUCCESS;
+ 
+       buffer->vk.device_address = mem->addr.dev + pBindInfos[i].memoryOffset;
++      buffer->mem = mem;
++      buffer->mem_offset = pBindInfos[i].memoryOffset;
+ 
+       panvk_address_binding_report(device, &buffer->vk.base,
+                                    buffer->vk.device_address, buffer->vk.size,
+diff --color -ruN a/src/panfrost/vulkan/panvk_buffer.h b/src/panfrost/vulkan/panvk_buffer.h
+--- a/src/panfrost/vulkan/panvk_buffer.h	2026-11-23 12:37:50.290294787 -0300
++++ b/src/panfrost/vulkan/panvk_buffer.h	2026-11-23 12:38:30.419427627 -0300
+@@ -12,8 +12,15 @@
+ 
+ struct panvk_priv_bo;
+ 
++struct panvk_device_memory;
++
+ struct panvk_buffer {
+    struct vk_buffer vk;
++
++   /* Bound memory, for the CPU index min/max search
++    * (PANVK_CPU_INDEX_MINMAX). */
++   struct panvk_device_memory *mem;
++   uint64_t mem_offset;
+ };
+ 
+ VK_DEFINE_NONDISP_HANDLE_CASTS(panvk_buffer, vk.base, VkBuffer,
+diff --color -ruN a/src/panfrost/vulkan/panvk_cmd_draw.h b/src/panfrost/vulkan/panvk_cmd_draw.h
+--- a/src/panfrost/vulkan/panvk_cmd_draw.h	2026-11-23 12:37:50.296486535 -0300
++++ b/src/panfrost/vulkan/panvk_cmd_draw.h	2026-11-23 12:38:30.419573649 -0300
+@@ -217,6 +217,9 @@
+       uint64_t dev_addr;
+       uint64_t size;
+       uint8_t index_size;
++      /* CPU address of the bound index data, NULL when the memory is not
++       * host mapped (PANVK_CPU_INDEX_MINMAX). */
++      const void *host;
+    } ib;
+ 
+    struct {
+diff --color -ruN a/src/panfrost/vulkan/panvk_vX_cmd_draw.c b/src/panfrost/vulkan/panvk_vX_cmd_draw.c
+--- a/src/panfrost/vulkan/panvk_vX_cmd_draw.c	2026-11-23 12:37:50.298714888 -0300
++++ b/src/panfrost/vulkan/panvk_vX_cmd_draw.c	2026-11-23 12:38:30.419688690 -0300
+@@ -1017,6 +1017,11 @@
+    VK_FROM_HANDLE(panvk_cmd_buffer, cmdbuf, commandBuffer);
+    VK_FROM_HANDLE(panvk_buffer, buf, buffer);
+ 
++   cmdbuf->state.gfx.ib.host = NULL;
++   if (buf && buf->mem && buf->mem->addr.host)
++      cmdbuf->state.gfx.ib.host =
++         (const uint8_t *)buf->mem->addr.host + buf->mem_offset + offset;
++
+    if (buf) {
+       cmdbuf->state.gfx.ib.size = panvk_buffer_range(buf, offset, size);
+       assert(cmdbuf->state.gfx.ib.size <= UINT32_MAX);

@@ -54,6 +54,7 @@ if [ -f "${INI}" ] && [ ! -e "${DEFAULTS_MARK}" ]; then
 fi
 ASKIP=$(get_setting auto_frame_skip "${PLATFORM}" "${GAME}")
 FSKIP=$(get_setting frame_skip "${PLATFORM}" "${GAME}")
+FSKIP_USER=${FSKIP}
 FPS=$(get_setting show_fps "${PLATFORM}" "${GAME}")
 IRES=$(get_setting internal_resolution "${PLATFORM}" "${GAME}")
 GRENDERER=$(get_setting graphics_backend "${PLATFORM}" "${GAME}")
@@ -140,6 +141,15 @@ fi
 			rm -f "${FAILED_MARK}"
 		fi
 	fi
+	# On Vulkan (PanVK) a skip of 1 runs as fast as 2 does on OpenGL, with
+	# about 40% more frames (God of War, R36S: 73-84% speed, 22-24 fps
+	# against 16): the skip that skip_buffer_effects implies is 1 there,
+	# unless frame_skip says otherwise.
+	if [ "${SKIPB}" = "1" ] && [ -z "${FSKIP_USER}" ] && [ "${ASKIP}" = "0" ] &&
+		grep -q '^GraphicsBackend = 3' "${INI}"; then
+		FSKIP=1
+		ini_set FrameSkip 1
+	fi
 
   #Internal Resolution
 	case "${IRES}" in
@@ -220,5 +230,10 @@ export MESA_NO_ERROR=1
 # thread cuts per-call dispatch latency on Cortex-A35. See
 # docs/mesa-glthread-matrix.md.
 export MESA_GLTHREAD=true
+# PanVK: an indexed draw finds its index range on the CPU and is drawn
+# directly, not as an indirect draw with a min/max search job on the GPU
+# (mesa patch 001-panvk-cpu-index-minmax; from Zenith, a ROCKNIX fork).
+# God of War on Vulkan ran 27-40% of full speed without, 40-58% with.
+export PANVK_CPU_INDEX_MINMAX=1
 
 ${EMUPERF} ppsspp --pause-menu-exit "${ARG}"
