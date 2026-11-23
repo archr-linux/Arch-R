@@ -292,10 +292,12 @@ function restore_ksm() {
 # Ports source /roms/ports/PortMaster/control.txt, which only exists once
 # PortMaster is unpacked; until now that happened only when the PortMaster app
 # was opened. A port copied from the PC on a fresh card, or a system update
-# that changed control.txt or mod_ArchR.txt, must not depend on it.
+# that changed control.txt or mod_ArchR.txt, must not depend on it. control.txt
+# runs mapper.txt: one that lost its exec bit leaves every port without
+# /tmp/gamecontrollerdb.txt (no SDL pad mapping), and the prepare restores it.
 function portmaster_ready() {
         if [ -f /storage/roms/ports/PortMaster/control.txt ] &&
-           [ -f /storage/.config/PortMaster/mapper.txt ] &&
+           [ -x /storage/.config/PortMaster/mapper.txt ] &&
            cmp -s /usr/config/PortMaster/control.txt /storage/roms/ports/PortMaster/control.txt &&
            cmp -s /usr/config/PortMaster/mod_ArchR.txt /storage/roms/ports/PortMaster/mod_ArchR.txt &&
            cmp -s /usr/config/PortMaster/libgl_ArchR.txt /storage/roms/ports/PortMaster/libgl_ArchR.txt; then
