@@ -1,0 +1,336 @@
+From: Douglas Teles <dga.teles@gmail.com>
+Date: Mon, 23 Nov 2026 09:00:00 -0300
+Subject: [PATCH] drm/panfrost: backport error handling fixes from mainline
+
+Backport to 6.12 of these mainline commits:
+
+  616c5b6fe3ad drm/panfrost: Handle job HW submit errors
+  f45f73c68c59 drm/panfrost: Handle error when allocating AS number
+  3d7c626716aa drm/panfrost: Check sgt to know whether pages are already mapped
+  4da352cf8fb1 drm/panfrost: Handle page mapping failure
+  fd4227f03546 drm/panfrost: Prevent division by 0
+  8a597d099b8b drm/panfrost: Explicitly enable MMU interrupts at device init
+
+Under memory pressure (a heavy port on a 1 GB console) a failed page
+table allocation used to be ignored: the job ran on a half mapped heap
+and the GPU faulted or hung. Now the mapping is undone and the error
+reaches the scheduler. 6.12 differences: pfdev->dev instead of
+pfdev->base.dev, no IOMMU_CACHE on heap faults, and panfrost_mmu_map()
+leaves the pages to the BO's sgt on failure (6.12 has no
+drm_gem_shmem_put_pages_locked(), and the BO frees them).
+---
+diff --git a/drivers/gpu/drm/panfrost/panfrost_devfreq.c b/drivers/gpu/drm/panfrost/panfrost_devfreq.c
+index 5d0dce1..9ab4fb3 100644
+--- a/drivers/gpu/drm/panfrost/panfrost_devfreq.c
++++ b/drivers/gpu/drm/panfrost/panfrost_devfreq.c
+@@ -76,7 +76,7 @@ static int panfrost_devfreq_get_dev_status(struct device *dev,
+ 
+ 	dev_dbg(pfdev->dev, "busy %lu total %lu %lu %% freq %lu MHz\n",
+ 		status->busy_time, status->total_time,
+-		status->busy_time / (status->total_time / 100),
++		status->busy_time * 100 / MAX(status->total_time, 1),
+ 		status->current_frequency / 1000 / 1000);
+ 
+ 	return 0;
+diff --git a/drivers/gpu/drm/panfrost/panfrost_job.c b/drivers/gpu/drm/panfrost/panfrost_job.c
+index 7fea2ed..c1e296b 100644
+--- a/drivers/gpu/drm/panfrost/panfrost_job.c
++++ b/drivers/gpu/drm/panfrost/panfrost_job.c
+@@ -195,7 +195,7 @@ panfrost_enqueue_job(struct panfrost_device *pfdev, int slot,
+ 	return 1;
+ }
+ 
+-static void panfrost_job_hw_submit(struct panfrost_job *job, int js)
++static int panfrost_job_hw_submit(struct panfrost_job *job, int js)
+ {
+ 	struct panfrost_device *pfdev = job->pfdev;
+ 	unsigned int subslot;
+@@ -203,17 +203,22 @@ static void panfrost_job_hw_submit(struct panfrost_job *job, int js)
+ 	u64 jc_head = job->jc;
+ 	int ret;
+ 
+-	panfrost_devfreq_record_busy(&pfdev->pfdevfreq);
+-
+ 	ret = pm_runtime_get_sync(pfdev->dev);
+ 	if (ret < 0)
+-		return;
++		goto err_hwsubmit;
+ 
+ 	if (WARN_ON(job_read(pfdev, JS_COMMAND_NEXT(js)))) {
+-		return;
++		ret = -EINVAL;
++		goto err_hwsubmit;
+ 	}
+ 
+-	cfg = panfrost_mmu_as_get(pfdev, job->mmu);
++	ret = panfrost_mmu_as_get(pfdev, job->mmu);
++	if (ret < 0)
++		goto err_hwsubmit;
++
++	cfg = ret;
++
++	panfrost_devfreq_record_busy(&pfdev->pfdevfreq);
+ 
+ 	job_write(pfdev, JS_HEAD_NEXT_LO(js), lower_32_bits(jc_head));
+ 	job_write(pfdev, JS_HEAD_NEXT_HI(js), upper_32_bits(jc_head));
+@@ -261,6 +266,12 @@ static void panfrost_job_hw_submit(struct panfrost_job *job, int js)
+ 			job, js, subslot, jc_head, cfg & 0xf);
+ 	}
+ 	spin_unlock(&pfdev->js->job_lock);
++
++	return 0;
++
++err_hwsubmit:
++	pm_runtime_put_autosuspend(pfdev->dev);
++	return ret;
+ }
+ 
+ static int panfrost_acquire_object_fences(struct drm_gem_object **bos,
+@@ -382,6 +393,7 @@ static struct dma_fence *panfrost_job_run(struct drm_sched_job *sched_job)
+ 	struct panfrost_device *pfdev = job->pfdev;
+ 	int slot = panfrost_job_get_slot(job);
+ 	struct dma_fence *fence = NULL;
++	int ret;
+ 
+ 	if (unlikely(job->base.s_fence->finished.error))
+ 		return NULL;
+@@ -400,7 +412,11 @@ static struct dma_fence *panfrost_job_run(struct drm_sched_job *sched_job)
+ 		dma_fence_put(job->done_fence);
+ 	job->done_fence = dma_fence_get(fence);
+ 
+-	panfrost_job_hw_submit(job, slot);
++	ret = panfrost_job_hw_submit(job, slot);
++	if (ret) {
++		dma_fence_put(fence);
++		return ERR_PTR(ret);
++	}
+ 
+ 	return fence;
+ }
+diff --git a/drivers/gpu/drm/panfrost/panfrost_mmu.c b/drivers/gpu/drm/panfrost/panfrost_mmu.c
+index b91019c..1c9a19b 100644
+--- a/drivers/gpu/drm/panfrost/panfrost_mmu.c
++++ b/drivers/gpu/drm/panfrost/panfrost_mmu.c
+@@ -155,7 +155,7 @@ static void panfrost_mmu_disable(struct panfrost_device *pfdev, u32 as_nr)
+ 	write_cmd(pfdev, as_nr, AS_COMMAND_UPDATE);
+ }
+ 
+-u32 panfrost_mmu_as_get(struct panfrost_device *pfdev, struct panfrost_mmu *mmu)
++int panfrost_mmu_as_get(struct panfrost_device *pfdev, struct panfrost_mmu *mmu)
+ {
+ 	int as;
+ 
+@@ -197,7 +197,10 @@ u32 panfrost_mmu_as_get(struct panfrost_device *pfdev, struct panfrost_mmu *mmu)
+ 			if (!atomic_read(&lru_mmu->as_count))
+ 				break;
+ 		}
+-		WARN_ON(&lru_mmu->list == &pfdev->as_lru_list);
++		if (WARN_ON(&lru_mmu->list == &pfdev->as_lru_list)) {
++			as = -EBUSY;
++			goto out;
++		}
+ 
+ 		list_del_init(&lru_mmu->list);
+ 		as = lru_mmu->as;
+@@ -227,6 +230,12 @@ void panfrost_mmu_as_put(struct panfrost_device *pfdev, struct panfrost_mmu *mmu
+ 	WARN_ON(atomic_read(&mmu->as_count) < 0);
+ }
+ 
++static void panfrost_mmu_enable_interrupts(struct panfrost_device *pfdev)
++{
++	mmu_write(pfdev, MMU_INT_CLEAR, ~0);
++	mmu_write(pfdev, MMU_INT_MASK, ~0);
++}
++
+ void panfrost_mmu_reset(struct panfrost_device *pfdev)
+ {
+ 	struct panfrost_mmu *mmu, *mmu_tmp;
+@@ -246,8 +255,7 @@ void panfrost_mmu_reset(struct panfrost_device *pfdev)
+ 
+ 	spin_unlock(&pfdev->as_lock);
+ 
+-	mmu_write(pfdev, MMU_INT_CLEAR, ~0);
+-	mmu_write(pfdev, MMU_INT_MASK, ~0);
++	panfrost_mmu_enable_interrupts(pfdev);
+ }
+ 
+ static size_t get_pgsize(u64 addr, size_t size, size_t *count)
+@@ -287,13 +295,32 @@ static void panfrost_mmu_flush_range(struct panfrost_device *pfdev,
+ 	pm_runtime_put_autosuspend(pfdev->dev);
+ }
+ 
++static void mmu_unmap_range(struct panfrost_mmu *mmu, u64 iova, size_t len)
++{
++	struct io_pgtable_ops *ops = mmu->pgtbl_ops;
++	size_t pgsize, unmapped_len = 0;
++	size_t unmapped_page, pgcount;
++
++	while (unmapped_len < len) {
++		pgsize = get_pgsize(iova, len - unmapped_len, &pgcount);
++
++		unmapped_page = ops->unmap_pages(ops, iova, pgsize, pgcount, NULL);
++		WARN_ON(unmapped_page != pgsize * pgcount);
++
++		iova += pgsize * pgcount;
++		unmapped_len += pgsize * pgcount;
++	}
++}
++
+ static int mmu_map_sg(struct panfrost_device *pfdev, struct panfrost_mmu *mmu,
+ 		      u64 iova, int prot, struct sg_table *sgt)
+ {
+ 	unsigned int count;
+ 	struct scatterlist *sgl;
+ 	struct io_pgtable_ops *ops = mmu->pgtbl_ops;
++	size_t total_mapped = 0;
+ 	u64 start_iova = iova;
++	int ret;
+ 
+ 	for_each_sgtable_dma_sg(sgt, sgl, count) {
+ 		unsigned long paddr = sg_dma_address(sgl);
+@@ -305,10 +332,14 @@ static int mmu_map_sg(struct panfrost_device *pfdev, struct panfrost_mmu *mmu,
+ 			size_t pgcount, mapped = 0;
+ 			size_t pgsize = get_pgsize(iova | paddr, len, &pgcount);
+ 
+-			ops->map_pages(ops, iova, paddr, pgsize, pgcount, prot,
++			ret = ops->map_pages(ops, iova, paddr, pgsize, pgcount, prot,
+ 				       GFP_KERNEL, &mapped);
++			if (ret)
++				goto err_unmap_pages;
++
+ 			/* Don't get stuck if things have gone wrong */
+ 			mapped = max(mapped, pgsize);
++			total_mapped += mapped;
+ 			iova += mapped;
+ 			paddr += mapped;
+ 			len -= mapped;
+@@ -318,6 +349,10 @@ static int mmu_map_sg(struct panfrost_device *pfdev, struct panfrost_mmu *mmu,
+ 	panfrost_mmu_flush_range(pfdev, mmu, start_iova, iova - start_iova);
+ 
+ 	return 0;
++
++err_unmap_pages:
++	mmu_unmap_range(mmu, start_iova, total_mapped);
++	return ret;
+ }
+ 
+ int panfrost_mmu_map(struct panfrost_gem_mapping *mapping)
+@@ -328,6 +363,7 @@ int panfrost_mmu_map(struct panfrost_gem_mapping *mapping)
+ 	struct panfrost_device *pfdev = to_panfrost_device(obj->dev);
+ 	struct sg_table *sgt;
+ 	int prot = IOMMU_READ | IOMMU_WRITE;
++	int ret;
+ 
+ 	if (WARN_ON(mapping->active))
+ 		return 0;
+@@ -339,8 +375,12 @@ int panfrost_mmu_map(struct panfrost_gem_mapping *mapping)
+ 	if (WARN_ON(IS_ERR(sgt)))
+ 		return PTR_ERR(sgt);
+ 
+-	mmu_map_sg(pfdev, mapping->mmu, mapping->mmnode.start << PAGE_SHIFT,
+-		   prot, sgt);
++	ret = mmu_map_sg(pfdev, mapping->mmu, mapping->mmnode.start << PAGE_SHIFT,
++			 prot, sgt);
++	/* On 6.12 the pages stay pinned by the BO's sgt until it is freed. */
++	if (ret)
++		return ret;
++
+ 	mapping->active = true;
+ 
+ 	return 0;
+@@ -492,10 +532,12 @@ static int panfrost_mmu_map_fault_addr(struct panfrost_device *pfdev, int as,
+ 		bo->base.pages_use_count = 1;
+ 	} else {
+ 		pages = bo->base.pages;
+-		if (pages[page_offset]) {
+-			/* Pages are already mapped, bail out. */
+-			goto out;
+-		}
++	}
++
++	sgt = &bo->sgts[page_offset / (SZ_2M / PAGE_SIZE)];
++	if (sgt->sgl) {
++		/* Pages are already mapped, bail out. */
++		goto out;
+ 	}
+ 
+ 	mapping = bo->base.base.filp->f_mapping;
+@@ -517,7 +559,6 @@ static int panfrost_mmu_map_fault_addr(struct panfrost_device *pfdev, int as,
+ 		}
+ 	}
+ 
+-	sgt = &bo->sgts[page_offset / (SZ_2M / PAGE_SIZE)];
+ 	ret = sg_alloc_table_from_pages(sgt, pages + page_offset,
+ 					NUM_FAULT_PAGES, 0, SZ_2M, GFP_KERNEL);
+ 	if (ret)
+@@ -527,8 +568,10 @@ static int panfrost_mmu_map_fault_addr(struct panfrost_device *pfdev, int as,
+ 	if (ret)
+ 		goto err_map;
+ 
+-	mmu_map_sg(pfdev, bomapping->mmu, addr,
+-		   IOMMU_WRITE | IOMMU_READ | IOMMU_NOEXEC, sgt);
++	ret = mmu_map_sg(pfdev, bomapping->mmu, addr,
++			 IOMMU_WRITE | IOMMU_READ | IOMMU_NOEXEC, sgt);
++	if (ret)
++		goto err_mmu_map_sg;
+ 
+ 	bomapping->active = true;
+ 	bo->heap_rss_size += SZ_2M;
+@@ -542,6 +585,8 @@ out:
+ 
+ 	return 0;
+ 
++err_mmu_map_sg:
++	dma_unmap_sgtable(pfdev->dev, sgt, DMA_BIDIRECTIONAL, 0);
+ err_map:
+ 	sg_free_table(sgt);
+ err_unlock:
+@@ -783,6 +828,8 @@ int panfrost_mmu_init(struct panfrost_device *pfdev)
+ 		return err;
+ 	}
+ 
++	panfrost_mmu_enable_interrupts(pfdev);
++
+ 	return 0;
+ }
+ 
+diff --git a/drivers/gpu/drm/panfrost/panfrost_mmu.h b/drivers/gpu/drm/panfrost/panfrost_mmu.h
+index 022a9a7..e6e6966 100644
+--- a/drivers/gpu/drm/panfrost/panfrost_mmu.h
++++ b/drivers/gpu/drm/panfrost/panfrost_mmu.h
+@@ -16,7 +16,7 @@ void panfrost_mmu_fini(struct panfrost_device *pfdev);
+ void panfrost_mmu_reset(struct panfrost_device *pfdev);
+ void panfrost_mmu_suspend_irq(struct panfrost_device *pfdev);
+ 
+-u32 panfrost_mmu_as_get(struct panfrost_device *pfdev, struct panfrost_mmu *mmu);
++int panfrost_mmu_as_get(struct panfrost_device *pfdev, struct panfrost_mmu *mmu);
+ void panfrost_mmu_as_put(struct panfrost_device *pfdev, struct panfrost_mmu *mmu);
+ 
+ struct panfrost_mmu *panfrost_mmu_ctx_get(struct panfrost_mmu *mmu);
+diff --git a/drivers/gpu/drm/panfrost/panfrost_perfcnt.c b/drivers/gpu/drm/panfrost/panfrost_perfcnt.c
+index 1248855..9e0e1ee 100644
+--- a/drivers/gpu/drm/panfrost/panfrost_perfcnt.c
++++ b/drivers/gpu/drm/panfrost/panfrost_perfcnt.c
+@@ -130,9 +130,11 @@ static int panfrost_perfcnt_enable_locked(struct panfrost_device *pfdev,
+ 		goto err_vunmap;
+ 	}
+ 
+-	perfcnt->user = user;
++	ret = panfrost_mmu_as_get(pfdev, perfcnt->mapping->mmu);
++	if (ret < 0)
++		goto err_vunmap;
+ 
+-	as = panfrost_mmu_as_get(pfdev, perfcnt->mapping->mmu);
++	as = ret;
+ 	cfg = GPU_PERFCNT_CFG_AS(as) |
+ 	      GPU_PERFCNT_CFG_MODE(GPU_PERFCNT_CFG_MODE_MANUAL);
+ 
+@@ -164,6 +166,8 @@ static int panfrost_perfcnt_enable_locked(struct panfrost_device *pfdev,
+ 	/* The BO ref is retained by the mapping. */
+ 	drm_gem_object_put(&bo->base);
+ 
++	perfcnt->user = user;
++
+ 	return 0;
+ 
+ err_vunmap:

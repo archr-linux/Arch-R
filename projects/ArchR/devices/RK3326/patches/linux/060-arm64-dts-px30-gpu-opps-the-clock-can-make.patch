@@ -1,0 +1,44 @@
+From: Douglas Teles <dga.teles@gmail.com>
+Date: Mon, 23 Nov 2026 09:00:00 -0300
+Subject: [PATCH] arm64: dts: px30: list the GPU rates the clock can make
+
+clk_gpu is gpll (1200MHz) through an integer divider or a half divider,
+so the 560MHz OPP ran at 480MHz with 560's voltage, and the 650MHz turbo
+OPP at 600MHz: devfreq reported rates the GPU never ran at and scaled
+its load from them. Measured on an R36S with the userspace governor:
+
+  requested 560MHz -> clk_gpu 480MHz, vdd_logic 1.125V
+  requested 650MHz -> clk_gpu 600MHz, vdd_logic 1.15V
+
+The 560 step now says 480MHz, at the voltage it already ran at, and 650
+is disabled (a second OPP at 600MHz would fail the whole table). The
+node names stay, since the boot tuning overlay addresses steps by them.
+---
+--- a/arch/arm64/boot/dts/rockchip/px30.dtsi	2026-11-23 08:16:04.854833690 -0300
++++ b/arch/arm64/boot/dts/rockchip/px30.dtsi	2026-11-23 08:19:41.720344207 -0300
+@@ -1413,8 +1413,16 @@
+ 			opp-hz = /bits/ 64 <400000000>;
+ 			opp-microvolt = <1100000>;
+ 		};
++		/*
++		 * clk_gpu comes from gpll (1200MHz) through an integer or a
++		 * half divider: 1200/n or 1200/(n+0.5) only. The stock 560MHz
++		 * ran at 480 and 650 at 600 (measured on an R36S), so this step
++		 * says 480, and 650 is off (two OPPs at 600 fail the table).
++		 * The node names stay: archr-boot-tuning's overlay addresses
++		 * the steps by them.
++		 */
+ 		opp-560000000 {
+-			opp-hz = /bits/ 64 <560000000>;
++			opp-hz = /bits/ 64 <480000000>;
+ 			opp-microvolt = <1125000>;
+ 		};
+ 		opp-600000000 {
+@@ -1425,6 +1433,7 @@
+ 			opp-hz = /bits/ 64 <650000000>;
+ 			opp-microvolt = <1150000>;
+ 			turbo-mode;
++			status = "disabled";
+ 		};
+ 	};
+ 

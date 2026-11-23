@@ -1,0 +1,12 @@
+[Unit]
+Description=ArchR compressed memory: idle pages to the second tier
+After=archr-memory-manager.service
+ConditionPathExists=/sys/block/zram0/recompress
+
+[Service]
+Type=oneshot
+# Only when the CPU has nothing else to do: never in a game's way.
+Nice=19
+CPUSchedulingPolicy=idle
+IOSchedulingClass=idle
+ExecStart=/usr/bin/archr-memory-manager --recompress

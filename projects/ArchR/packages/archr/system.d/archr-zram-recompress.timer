@@ -1,0 +1,10 @@
+[Unit]
+Description=ArchR compressed memory: second tier every 5 minutes
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=5min
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

@@ -23,8 +23,10 @@ if [ -f /etc/swap.conf ]; then
 fi
 
 # C. Load User Overrides (Partial Config Support)
+USER_ZRAM_ALGO=""
 if [ -f /storage/.config/swap.conf ]; then
     . /storage/.config/swap.conf
+    grep -q '^ZRAM_ALGO=' /storage/.config/swap.conf && USER_ZRAM_ALGO=1
 fi
 
 # D. Variable Finalization
@@ -380,12 +382,6 @@ apply_tuning() {
         # for Huge Page allocations.
         sysctl -w vm.swappiness=100 >/dev/null
         sysctl -w vm.page-cluster=0 >/dev/null
-        
-        if [ -n "$SECONDARY_ALGO" ] && [ -f /sys/block/zram0/recompress ]; then
-            if grep -q "$SECONDARY_ALGO" /sys/block/zram0/comp_algorithm; then
-                 echo "algo=$SECONDARY_ALGO priority=1" > /sys/block/zram0/recompress 2>/dev/null
-            fi
-        fi
     elif [ "$SWAP_SIZE_VAL" -gt 0 ]; then
         sysctl -w vm.swappiness=60 >/dev/null
         sysctl -w vm.page-cluster=3 >/dev/null
@@ -410,6 +406,19 @@ perform_optimization() {
     fi
 }
 
+recompress_idle() {
+    # Every few minutes (archr-zram-recompress.timer, at idle priority):
+    # pages left untouched since the last pass go to the second tier, then
+    # every page is marked again. zram clears the mark on access, so what
+    # gets recompressed sat unread for a whole interval: the fast first
+    # tier serves the working set, zstd packs the rest (~25% smaller).
+    local z=/sys/block/zram0
+    [ -f "$z/recompress" ] && grep -q '\[' "$z/recomp_algorithm" 2>/dev/null || return 0
+    grep -q /dev/zram0 /proc/swaps || return 0
+    echo "type=idle" > "$z/recompress" 2>/dev/null
+    echo all > "$z/idle" 2>/dev/null
+}
+
 setup_zram() {
     [ "$ZRAM_SIZE_VAL" -le 0 ] && return
 
@@ -431,7 +440,13 @@ setup_zram() {
     
     local algo_path="/sys/block/zram0/comp_algorithm"
     [ -f "$algo_path" ] && echo "$PRIMARY_ALGO" > "$algo_path" 2>/dev/null
-    
+    # The second tier (see recompress_idle), set like the first one before
+    # the size.
+    if [ -n "$SECONDARY_ALGO" ] && [ -f /sys/block/zram0/recomp_algorithm ] &&
+        grep -qw "$SECONDARY_ALGO" "$algo_path"; then
+        echo "algo=$SECONDARY_ALGO priority=1" > /sys/block/zram0/recomp_algorithm 2>/dev/null
+    fi
+
     echo $((ZRAM_SIZE_VAL * 1024 * 1024)) > /sys/block/zram0/disksize
     mkswap /dev/zram0 >/dev/null
     swapon -p 100 /dev/zram0
@@ -516,6 +531,7 @@ while [[ $# -gt 0 ]]; do
         --reload) ACTION="reload"; shift ;;
         --drop-caches) ACTION="drop-caches"; shift ;;
         --optimize) ACTION="optimize"; shift ;;
+        --recompress) ACTION="recompress"; shift ;;
         --status) ACTION="status"; shift ;;
         --json) ACTION="json"; shift ;;
         --help|-h)
@@ -532,6 +548,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --setup        Initial setup"
             echo "  --reload       Safe reload (teardown -> setup)"
             echo "  --optimize     Run runtime optimizations (Recompress/Compact)"
+            echo "  --recompress   Move pages idle since the last pass to the second zram tier"
             echo "  --status       Show status (default interactive)"
             echo "  --json         Show status in JSON"
             exit 0
@@ -583,11 +600,18 @@ if [[ "$ZRAM_ALGO" == "@ZRAM_COMPRESSION_ALGO@" ]]; then
     ZRAM_ALGO="zstd"
 fi
 
+# zstd means two tiers: lz4 for what is swapped out (lzo-rle's ratio on an
+# R36S, faster to read back), zstd for what then stays unread. A 1 GB
+# console gets them unless the player picked an algorithm.
+if [ "$IS_LOW_RAM" = true ] && [ -z "$USER_ZRAM_ALGO" ]; then
+    ZRAM_ALGO="zstd"
+fi
+
 PRIMARY_ALGO="$ZRAM_ALGO"
 SECONDARY_ALGO=""
 
 if [[ "$ZRAM_ALGO" == "zstd" ]]; then
-    PRIMARY_ALGO="lzo-rle"
+    PRIMARY_ALGO="lz4"
     SECONDARY_ALGO="zstd"
 fi
 
@@ -627,6 +651,9 @@ case "$ACTION" in
     optimize)
         exec 1> >(logger -s -t memory-manager) 2>&1
         perform_optimization
+        ;;
+    recompress)
+        recompress_idle
         ;;
     drop-caches)
         drop_caches
