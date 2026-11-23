@@ -10,6 +10,7 @@
 #   archr-perf-limits cpu <kHz|default>   ceiling of the CPU, kept in system.cfg
 #   archr-perf-limits gpu <Hz|default>    ceiling of the GPU, kept in system.cfg
 #   archr-perf-limits apply               both, as saved (boot, after a game)
+#   archr-perf-limits apply-gpu           the GPU's, saved or default (udev)
 #   archr-perf-limits gpu-bench           glmark2 off screen, ~10 s: "result score=<n>"
 #
 # The ceilings hold in games too: set_cpu_max_freq and set_gpu_min_freq
@@ -69,6 +70,12 @@ case "$1" in
         ;;
     apply)
         apply_cpu || :
+        apply_gpu || :
+        ;;
+    apply-gpu)
+        # udev, as the GPU's devfreq appears (71-gpu-ceiling.rules): the
+        # default ceiling holds without a saved one, and under libmali,
+        # whose driver loads after the autostart and starts at the turbo step.
         apply_gpu || :
         ;;
     gpu-bench)

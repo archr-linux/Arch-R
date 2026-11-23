@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ArchR (https://github.com/archr-linux/Arch-R)
+
+# The GPU's ceiling as its devfreq appears: the saved one, or the highest
+# step that is not turbo (600 of the PX30's 650 MHz). The autostart sets
+# only a saved ceiling, and mali_kbase (libmali) loads after it and starts at
+# its top step: libmali consoles ran at the turbo 650 MHz nobody chose.
+ACTION=="add", SUBSYSTEM=="devfreq", KERNEL=="ff400000.gpu", RUN+="/usr/bin/archr-perf-limits apply-gpu"
