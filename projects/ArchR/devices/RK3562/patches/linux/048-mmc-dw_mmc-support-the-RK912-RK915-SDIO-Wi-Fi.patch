@@ -1,0 +1,70 @@
+From: Douglas Teles <dga.teles@gmail.com>
+Subject: [PATCH] mmc: dw_mmc: support the RK912/RK915 SDIO Wi-Fi ("supports-rk912")
+
+The RK915 on the AISLPC RK3562 boards (v10) takes its firmware over SDIO
+and reads it back fine, but never reaches its WAIT_PATCH state: the
+driver gives up with "download firmware failed". The vendor kernel
+handles this chip with two host changes, keyed off "supports-rk912":
+a CMD52 waits for the previous data transfer to end, and the card
+clock is never gated when idle. Do the same here.
+
+---
+diff --color -ru a/drivers/mmc/host/dw_mmc.c b/drivers/mmc/host/dw_mmc.c
+--- a/drivers/mmc/host/dw_mmc.c	2026-11-24 12:04:12.113657770 -0300
++++ b/drivers/mmc/host/dw_mmc.c	2026-11-24 12:04:12.129789944 -0300
+@@ -253,6 +253,8 @@
+ 		cmdr |= SDMMC_CMD_STOP;
+ 	else if (cmd->opcode != MMC_SEND_STATUS && cmd->data)
+ 		cmdr |= SDMMC_CMD_PRV_DAT_WAIT;
++	else if (host->wifi_rk912 && cmd->opcode == SD_IO_RW_DIRECT)
++		cmdr |= SDMMC_CMD_PRV_DAT_WAIT;
+ 
+ 	if (cmd->opcode == SD_SWITCH_VOLTAGE) {
+ 		u32 clk_en_a;
+@@ -1173,7 +1175,8 @@
+ 
+ 		/* enable clock; only low power if no SDIO */
+ 		clk_en_a = SDMMC_CLKEN_ENABLE;
+-		if (!test_bit(DW_MMC_CARD_NO_LOW_PWR, &host->flags))
++		if (!test_bit(DW_MMC_CARD_NO_LOW_PWR, &host->flags) &&
++		    !host->wifi_rk912)
+ 			clk_en_a |= SDMMC_CLKEN_LOW_PWR;
+ 		mci_writel(host, CLKENA, clk_en_a);
+ 
+@@ -1528,7 +1531,9 @@
+ 		clk_en_a = clk_en_a_old & ~clken_low_pwr;
+ 	} else {
+ 		clear_bit(DW_MMC_CARD_NO_LOW_PWR, &host->flags);
+-		clk_en_a = clk_en_a_old | clken_low_pwr;
++		clk_en_a = clk_en_a_old;
++		if (!host->wifi_rk912)
++			clk_en_a |= clken_low_pwr;
+ 	}
+ 
+ 	if (clk_en_a != clk_en_a_old) {
+@@ -3140,6 +3145,8 @@
+ 	if (device_property_present(dev, "fifo-watermark-aligned"))
+ 		host->wm_aligned = true;
+ 
++	host->wifi_rk912 = device_property_read_bool(dev, "supports-rk912");
++
+ 	if (!host->bus_hz && !device_property_read_u32(dev, "clock-frequency", &clock_frequency))
+ 		host->bus_hz = clock_frequency;
+ 
+diff --color -ru a/drivers/mmc/host/dw_mmc.h b/drivers/mmc/host/dw_mmc.h
+--- a/drivers/mmc/host/dw_mmc.h	2026-11-24 12:04:12.115221917 -0300
++++ b/drivers/mmc/host/dw_mmc.h	2026-11-24 12:04:12.129483390 -0300
+@@ -168,6 +168,13 @@
+ 	u32			data_addr_override;
+ 	u32			dma_threshold;
+ 	bool			wm_aligned;
++	/*
++	 * "supports-rk912": a Rockchip RK912/RK915 SDIO Wi-Fi on this host. As
++	 * in the vendor kernel, its CMD52 waits for the previous data transfer
++	 * and the card clock never stops when idle; without both its firmware
++	 * downloads but never starts.
++	 */
++	bool			wifi_rk912;
+ 
+ 	struct scatterlist	*sg;
+ 	struct sg_mapping_iter	sg_miter;

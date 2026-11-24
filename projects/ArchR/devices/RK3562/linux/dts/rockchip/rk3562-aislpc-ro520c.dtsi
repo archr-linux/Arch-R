@@ -949,6 +949,8 @@
 	pinctrl-names = "default";
 	pinctrl-0 = <&sdmmc1_bus4 &sdmmc1_clk &sdmmc1_cmd>;
 	sd-uhs-sdr104;
+	/* RK915 (v10 boards): CMD52 after data, clock never gated (patch 048). */
+	supports-rk912;
 	vmmc-supply = <&vcc_wifi>;
 	status = "okay";
 };
