@@ -1,0 +1,7 @@
+# RK3562 (AISLPC): keep the speaker path powered once it is up.
+# WirePlumber's start-up probe powers the codec path up, and ASoC powers it
+# down 5 s later (pmdown_time); on these consoles that power-down pops the
+# speaker. The outputs stay open afterwards anyway (51-rk3562-no-suspend.conf),
+# so the path never needs to go down. Set as the card appears, before any
+# program opens it.
+ACTION=="add", SUBSYSTEM=="sound", KERNEL=="card*", RUN+="/bin/sh -c 'for f in /sys/devices/platform/sound/*/pmdown_time; do [ -w \"$$f\" ] && echo 3600000 > \"$$f\"; done; exit 0'"
