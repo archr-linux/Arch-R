@@ -5,4 +5,5 @@
 # step that is not turbo (600 of the PX30's 650 MHz). The autostart sets
 # only a saved ceiling, and mali_kbase (libmali) loads after it and starts at
 # its top step: libmali consoles ran at the turbo 650 MHz nobody chose.
-ACTION=="add", SUBSYSTEM=="devfreq", KERNEL=="ff400000.gpu", RUN+="/usr/bin/archr-perf-limits apply-gpu"
+# ff400000 is the PX30 (RK3326) GPU, ff320000 the RK3562 one.
+ACTION=="add", SUBSYSTEM=="devfreq", KERNEL=="ff400000.gpu|ff320000.gpu", RUN+="/usr/bin/archr-perf-limits apply-gpu"

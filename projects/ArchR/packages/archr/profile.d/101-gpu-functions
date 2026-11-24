@@ -6,7 +6,7 @@ function gpu_profiling() {
   local profiling_state=${1}
   
   case "${HW_DEVICE}" in
-    S922X|RK3326)
+    S922X|RK3326|RK3562)
       # Enable Panfrost profiling - see https://docs.kernel.org/gpu/panfrost.html
       if [[ -e "/sys/bus/platform/drivers/panfrost" ]]; then
         case "${profiling_state}" in

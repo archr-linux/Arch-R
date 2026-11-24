@@ -164,7 +164,7 @@ gpu_is_bound() {
   log_event "${driver} bind check FAILED (card=${have_card} bind=${have_bind} display=${have_display})"
   # Last lines mentioning the driver, so the failure mode is recoverable
   # from /storage without needing a serial console.
-  dmesg 2>/dev/null | grep -iE "${driver}|mali|gpu@ff400000|panfrost" | tail -20 >>"${GPUDRIVER_LOG}" 2>/dev/null
+  dmesg 2>/dev/null | grep -iE "${driver}|mali|gpu@ff400000|gpu@ff320000|panfrost" | tail -20 >>"${GPUDRIVER_LOG}" 2>/dev/null
   return 1
 }
 
