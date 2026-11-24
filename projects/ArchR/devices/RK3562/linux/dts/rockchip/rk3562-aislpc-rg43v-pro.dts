@@ -43,16 +43,12 @@
 };
 
 /*
- * Vertical case: the left stick module is mounted like the right one, so
- * both read low voltage as right/down. AveyondFly's rk3562-rg43v.dts drops
- * the BSP "left-stick-invert" of the RG43H for this reason. [I] check with
- * evtest on the bench. GPIO1_D4 is FN (BTN_MODE, from the dtsi) and the
- * ADC buttons press at 600 mV (dtsi default) on this model.
+ * Vertical case: the left stick reads the same polarity as the RG52's
+ * (invert 0 from the dtsi). AveyondFly's rk3562-rg43v.dts inverts it, but
+ * on a v10 board that sent up as down and left as right in games.
+ * GPIO1_D4 is FN (BTN_MODE, from the dtsi) and the ADC buttons press at
+ * 600 mV (dtsi default) on this model.
  */
-&joypad {
-	invert-absx = <1>;
-	invert-absy = <1>;
-};
 
 &panel {
 	/* LCD enable GPIO0_B0 active high (fab .dts panel@0 enable-gpios). */
