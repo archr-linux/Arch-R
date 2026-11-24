@@ -524,7 +524,25 @@
 	};
 };
 
+/*
+ * GPU clocks as in the factory DT (fab gpu@ff320000): the rate is set
+ * through the SCMI GPU clock, the firmware programs the GPU PLL. The CRU
+ * clk_gpu is only a gate of clk_gpu_pre (gpll/cpll divider, 594 MHz at
+ * most), so scaling it, as the mainline node does, capped the GPU at
+ * 594 MHz while devfreq reported 900. The first clock is the scaled one
+ * for panfrost (and the OPP core); kbase looks it up by "clk_mali". The
+ * CRU gates stay enabled while bound (panfrost patch 013, kbase 7.3/002).
+ * The mainline OPP table already holds the factory L0 voltages
+ * (300-600 MHz 825 mV, 700 900 mV, 800 950 mV, 900 1000 mV).
+ * upthreshold/downdifferential: factory devfreq thresholds, read by
+ * kbase (7.3/003); panfrost keeps its own 45/5.
+ */
 &gpu {
+	clocks = <&scmi_clk CLK_GPU>, <&cru CLK_GPU>, <&cru CLK_GPU_BRG>,
+		 <&cru ACLK_GPU_PRE>;
+	clock-names = "clk_mali", "clk_gpu", "clk_gpu_brg", "aclk_gpu";
+	upthreshold = <40>;
+	downdifferential = <10>;
 	mali-supply = <&vdd_gpu>;
 	status = "okay";
 };
