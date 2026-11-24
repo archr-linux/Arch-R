@@ -1,0 +1,413 @@
+From: ArchR <noreply@archr-linux>
+Subject: [PATCH] archr-joypad: PWM rumble with strength
+
+The AISLPC RG43V PRO and RG52 MINI have two small ERM motors. Each one
+is driven through a pwm-gpio provider, so the joypad can set how hard
+it vibrates.
+
+The joypad input device gets FF_RUMBLE (ff-memless). The strong
+magnitude drives the "strong" PWM, the weak magnitude the "weak" one
+(pwm-names). Effects stop when the device is closed and when the driver
+goes away.
+
+sysfs on the joypad platform device:
+- rumble_enable: 0/1, same name and meaning as archr-singleadc-joypad;
+- rumble_strength: 0..100, scales the duty (default 100);
+- rumble_min_duty: 0..100, duty of the weakest effect, so small motors
+  still spin (default from rumble-min-duty-percent, else 0);
+- rumble_test: write N to run both motors for N ms (1..5000).
+
+--- a/archr-joypad.c
++++ b/archr-joypad.c
+@@ -14,6 +14,8 @@
+ #include <linux/gpio/consumer.h>
+ #include <linux/of.h>
+ #include <linux/property.h>
++#include <linux/pwm.h>
++#include <linux/workqueue.h>
+ #include "archr-joypad.h"
+ 
+ /*----------------------------------------------------------------------------*/
+@@ -123,12 +125,339 @@
+ 	int bt_adc_deadzone;
+ 
+ 	struct mutex lock;
++
++	/*
++	 * Rumble: up to two PWM motors, "strong" and "weak" in pwm-names.
++	 * ff_mag[] is written by the ff-memless callback (atomic context)
++	 * and applied by play_work.
++	 */
++	bool has_rumble;
++	bool rumble_enabled;
++	unsigned int rumble_strength;	/* 0..100, scales the duty */
++	unsigned int rumble_min_duty;	/* 0..100, duty of the weakest effect */
++	bool rumble_testing;
++	u16 ff_mag[2];
++	struct pwm_device *rumble_pwm[2];
++	struct mutex rumble_lock;
++	struct work_struct play_work;
++	struct delayed_work test_work;
+ };
+ 
+ #define ARCHR_CAL_COUNT(j)	((j)->chan_count)
+ #include "archr-joypad-cal.h"
+ 
+ /*----------------------------------------------------------------------------*/
++/*
++ * Rumble (FF_RUMBLE through ff-memless).
++ *
++ * DT, on the joypad node:
++ *   pwms = <&pwm_a 0 period 0>, <&pwm_b 0 period 0>;
++ *   pwm-names = "strong", "weak";	(either may be left out)
++ *   rumble-min-duty-percent = <n>;	(optional, default 0)
++ *
++ * The strong magnitude of an effect drives the "strong" motor and the weak
++ * magnitude the "weak" one. A motor whose magnitude is not zero runs at
++ *   min_duty + (100 - min_duty) * magnitude * strength / 100
++ * percent, so the weakest effect still spins a small ERM motor.
++ *
++ * sysfs, on the joypad platform device:
++ *   rumble_enable    0/1, games' effects are ignored at 0
++ *   rumble_strength  0..100, scales every effect (0 = off)
++ *   rumble_min_duty  0..100, see above
++ *   rumble_test      write N: both motors for N ms (1..5000) at the
++ *                    current strength, even with rumble_enable at 0
++ */
++#define RUMBLE_STRONG		0
++#define RUMBLE_WEAK		1
++#define RUMBLE_TEST_MAX_MS	5000
++
++static const char * const rumble_pwm_names[2] = { "strong", "weak" };
++
++static void rumble_motor_set(struct joypad *joypad, int m, u32 mag)
++{
++	struct pwm_device *pwm = joypad->rumble_pwm[m];
++	struct pwm_state state;
++	u32 level = 0;
++	int err;
++
++	if (!pwm)
++		return;
++
++	if (mag && joypad->rumble_strength) {
++		u32 min = joypad->rumble_min_duty * 0xffff / 100;
++
++		level = mag * joypad->rumble_strength / 100;
++		level = min + (0xffff - min) * level / 0xffff;
++		if (!level)
++			level = 1;
++	}
++
++	pwm_get_state(pwm, &state);
++	if (level) {
++		pwm_set_relative_duty_cycle(&state, level, 0xffff);
++		state.enabled = true;
++	} else {
++		state.duty_cycle = 0;
++		state.enabled = false;
++	}
++	err = pwm_apply_might_sleep(pwm, &state);
++	if (err)
++		dev_err(joypad->dev, "rumble %s: pwm apply failed (%d)\n",
++			rumble_pwm_names[m], err);
++}
++
++static void rumble_apply(struct joypad *joypad)
++{
++	int m;
++
++	mutex_lock(&joypad->rumble_lock);
++	for (m = 0; m < 2; m++) {
++		u32 mag = 0;
++
++		if (joypad->rumble_testing)
++			mag = 0xffff;
++		else if (joypad->rumble_enabled)
++			mag = READ_ONCE(joypad->ff_mag[m]);
++		rumble_motor_set(joypad, m, mag);
++	}
++	mutex_unlock(&joypad->rumble_lock);
++}
++
++static void rumble_play_work(struct work_struct *work)
++{
++	rumble_apply(container_of(work, struct joypad, play_work));
++}
++
++static void rumble_test_work(struct work_struct *work)
++{
++	struct joypad *joypad = container_of(to_delayed_work(work),
++					     struct joypad, test_work);
++
++	mutex_lock(&joypad->rumble_lock);
++	joypad->rumble_testing = false;
++	mutex_unlock(&joypad->rumble_lock);
++	rumble_apply(joypad);
++}
++
++/* ff-memless callback, atomic context. */
++static int rumble_play_effect(struct input_dev *dev, void *data,
++			      struct ff_effect *effect)
++{
++	struct joypad *joypad = data;
++
++	if (effect->type != FF_RUMBLE)
++		return 0;
++
++	WRITE_ONCE(joypad->ff_mag[RUMBLE_STRONG],
++		   effect->u.rumble.strong_magnitude);
++	WRITE_ONCE(joypad->ff_mag[RUMBLE_WEAK],
++		   effect->u.rumble.weak_magnitude);
++	schedule_work(&joypad->play_work);
++	return 0;
++}
++
++static void rumble_stop(struct joypad *joypad)
++{
++	WRITE_ONCE(joypad->ff_mag[RUMBLE_STRONG], 0);
++	WRITE_ONCE(joypad->ff_mag[RUMBLE_WEAK], 0);
++	schedule_work(&joypad->play_work);
++}
++
++static ssize_t rumble_enable_show(struct device *dev,
++				  struct device_attribute *attr, char *buf)
++{
++	struct joypad *joypad = dev_get_drvdata(dev);
++
++	return sysfs_emit(buf, "%d\n", joypad->rumble_enabled ? 1 : 0);
++}
++
++static ssize_t rumble_enable_store(struct device *dev,
++				   struct device_attribute *attr,
++				   const char *buf, size_t count)
++{
++	struct joypad *joypad = dev_get_drvdata(dev);
++	bool enable;
++	int err;
++
++	err = kstrtobool(buf, &enable);
++	if (err)
++		return err;
++
++	mutex_lock(&joypad->rumble_lock);
++	joypad->rumble_enabled = enable;
++	mutex_unlock(&joypad->rumble_lock);
++	rumble_apply(joypad);
++	return count;
++}
++static DEVICE_ATTR_RW(rumble_enable);
++
++static ssize_t rumble_strength_show(struct device *dev,
++				    struct device_attribute *attr, char *buf)
++{
++	struct joypad *joypad = dev_get_drvdata(dev);
++
++	return sysfs_emit(buf, "%u\n", joypad->rumble_strength);
++}
++
++static ssize_t rumble_strength_store(struct device *dev,
++				     struct device_attribute *attr,
++				     const char *buf, size_t count)
++{
++	struct joypad *joypad = dev_get_drvdata(dev);
++	unsigned int val;
++	int err;
++
++	err = kstrtouint(buf, 10, &val);
++	if (err)
++		return err;
++	if (val > 100)
++		return -EINVAL;
++
++	mutex_lock(&joypad->rumble_lock);
++	joypad->rumble_strength = val;
++	mutex_unlock(&joypad->rumble_lock);
++	rumble_apply(joypad);
++	return count;
++}
++static DEVICE_ATTR_RW(rumble_strength);
++
++static ssize_t rumble_min_duty_show(struct device *dev,
++				    struct device_attribute *attr, char *buf)
++{
++	struct joypad *joypad = dev_get_drvdata(dev);
++
++	return sysfs_emit(buf, "%u\n", joypad->rumble_min_duty);
++}
++
++static ssize_t rumble_min_duty_store(struct device *dev,
++				     struct device_attribute *attr,
++				     const char *buf, size_t count)
++{
++	struct joypad *joypad = dev_get_drvdata(dev);
++	unsigned int val;
++	int err;
++
++	err = kstrtouint(buf, 10, &val);
++	if (err)
++		return err;
++	if (val > 100)
++		return -EINVAL;
++
++	mutex_lock(&joypad->rumble_lock);
++	joypad->rumble_min_duty = val;
++	mutex_unlock(&joypad->rumble_lock);
++	rumble_apply(joypad);
++	return count;
++}
++static DEVICE_ATTR_RW(rumble_min_duty);
++
++static ssize_t rumble_test_store(struct device *dev,
++				 struct device_attribute *attr,
++				 const char *buf, size_t count)
++{
++	struct joypad *joypad = dev_get_drvdata(dev);
++	unsigned int ms;
++	int err;
++
++	err = kstrtouint(buf, 10, &ms);
++	if (err)
++		return err;
++	if (!ms || ms > RUMBLE_TEST_MAX_MS)
++		return -EINVAL;
++
++	mutex_lock(&joypad->rumble_lock);
++	joypad->rumble_testing = true;
++	mutex_unlock(&joypad->rumble_lock);
++	rumble_apply(joypad);
++	mod_delayed_work(system_wq, &joypad->test_work, msecs_to_jiffies(ms));
++	return count;
++}
++static DEVICE_ATTR_WO(rumble_test);
++
++static struct attribute *rumble_attrs[] = {
++	&dev_attr_rumble_enable.attr,
++	&dev_attr_rumble_strength.attr,
++	&dev_attr_rumble_min_duty.attr,
++	&dev_attr_rumble_test.attr,
++	NULL,
++};
++
++static const struct attribute_group rumble_attr_group = {
++	.attrs = rumble_attrs,
++};
++
++/* devm action: runs after the input device and the sysfs group are gone. */
++static void rumble_teardown(void *data)
++{
++	struct joypad *joypad = data;
++	int m;
++
++	cancel_delayed_work_sync(&joypad->test_work);
++	cancel_work_sync(&joypad->play_work);
++	for (m = 0; m < 2; m++)
++		if (joypad->rumble_pwm[m])
++			pwm_disable(joypad->rumble_pwm[m]);
++}
++
++static int joypad_rumble_setup(struct device *dev, struct joypad *joypad)
++{
++	int m, error, found = 0;
++
++	if (!device_property_present(dev, "pwm-names"))
++		return 0;
++
++	for (m = 0; m < 2; m++) {
++		struct pwm_device *pwm;
++		struct pwm_state state;
++
++		pwm = devm_pwm_get(dev, rumble_pwm_names[m]);
++		if (IS_ERR(pwm)) {
++			if (PTR_ERR(pwm) == -EPROBE_DEFER)
++				return -EPROBE_DEFER;
++			continue;
++		}
++		pwm_init_state(pwm, &state);
++		state.duty_cycle = 0;
++		state.enabled = false;
++		error = pwm_apply_might_sleep(pwm, &state);
++		if (error) {
++			dev_err(dev, "rumble %s: pwm init failed (%d)\n",
++				rumble_pwm_names[m], error);
++			return error;
++		}
++		joypad->rumble_pwm[m] = pwm;
++		found++;
++		dev_info(dev, "rumble %s: period %llu ns\n",
++			 rumble_pwm_names[m], state.period);
++	}
++	if (!found) {
++		dev_warn(dev, "pwm-names present but no rumble pwm found\n");
++		return 0;
++	}
++
++	joypad->rumble_enabled = true;
++	joypad->rumble_strength = 100;
++	device_property_read_u32(dev, "rumble-min-duty-percent",
++				 &joypad->rumble_min_duty);
++	if (joypad->rumble_min_duty > 100)
++		joypad->rumble_min_duty = 100;
++	mutex_init(&joypad->rumble_lock);
++	INIT_WORK(&joypad->play_work, rumble_play_work);
++	INIT_DELAYED_WORK(&joypad->test_work, rumble_test_work);
++
++	error = devm_add_action_or_reset(dev, rumble_teardown, joypad);
++	if (error)
++		return error;
++
++	error = devm_device_add_group(dev, &rumble_attr_group);
++	if (error)
++		return error;
++
++	joypad->has_rumble = true;
++	return 0;
++}
++
++/*----------------------------------------------------------------------------*/
+ static int joypad_adc_read(struct joypad *joypad, struct bt_adc *adc)
+ {
+ 	int value;
+@@ -349,6 +678,9 @@
+ 	joypad->enable = false;
+ 	mutex_unlock(&joypad->lock);
+ 
++	if (joypad->has_rumble)
++		rumble_stop(joypad);
++
+ 	dev_info(joypad->dev, "%s : closed\n", __func__);
+ }
+ 
+@@ -680,6 +1012,17 @@
+ 	if (joypad->auto_repeat)
+ 		__set_bit(EV_REP, input->evbit);
+ 
++	if (joypad->has_rumble) {
++		input_set_capability(input, EV_FF, FF_RUMBLE);
++		error = input_ff_create_memless(input, joypad,
++						rumble_play_effect);
++		if (error) {
++			dev_err(dev, "unable to register rumble, err=%d\n",
++				error);
++			return error;
++		}
++	}
++
+ 	joypad->dev = dev;
+ 
+ 	error = input_register_polled_device(poll_dev);
+@@ -782,6 +1125,14 @@
+ 	if (error)
+ 		dev_warn(dev, "calibration sysfs failed (%d)\n", error);
+ 
++	/* rumble before the input device: its devm teardown runs after it */
++	joypad->dev = dev;
++	error = joypad_rumble_setup(dev, joypad);
++	if (error) {
++		dev_err(dev, "rumble setup failed!(err = %d)\n", error);
++		return error;
++	}
++
+ 	/* poll input device setup */
+ 	error = joypad_input_setup(dev, joypad);
+ 	if (error) {

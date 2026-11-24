@@ -4,6 +4,12 @@
 
 . /etc/profile.d/001-functions
 
+# AISLPC RG43V PRO / RG52 MINI: enable and strength (archr-rumble).
+if [ -x /usr/bin/archr-rumble ] && /usr/bin/archr-rumble supported; then
+  /usr/bin/archr-rumble apply
+  exit 0
+fi
+
 RUMBLE_PATH=$(find /sys/devices/platform -type f -name rumble_enable)
 if [ -f "${RUMBLE_PATH}" ]; then
   RUMBLE_ENABLED=$(get_setting rumble.enabled)

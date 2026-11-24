@@ -1,0 +1,68 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ArchR (https://github.com/archr-linux/Arch-R)
+#
+# archr-rumble: rumble strength of the AISLPC RG43V PRO and RG52 MINI
+# (archr-joypad with PWM motors). Everywhere else every command exits 1
+# and touches nothing.
+#
+#   archr-rumble supported   exit 0 only on those boards with the driver loaded
+#   archr-rumble apply       rumble.enabled (0/1, default 1) and
+#                            rumble.strength (0..100, default 100) to the driver
+#   archr-rumble test [ms]   both motors for ms (1..5000, default 400) at the
+#                            current strength; returns at once
+
+. /etc/profile.d/001-functions
+
+board_ok() {
+  [ -r /proc/device-tree/compatible ] &&
+    tr '\0' '\n' </proc/device-tree/compatible |
+    grep -qxE 'aislpc,(rg43v-pro|rg43v-pro-1024x600|rg52-mini)'
+}
+
+# The joypad platform device that has the strength control.
+rumble_dir() {
+  local f
+  for f in /sys/devices/platform/*/rumble_strength; do
+    [ -f "${f}" ] && { echo "${f%/*}"; return 0; }
+  done
+  return 1
+}
+
+supported() { board_ok && rumble_dir >/dev/null; }
+
+is_uint() { [[ "${1}" =~ ^[0-9]+$ ]]; }
+
+apply() {
+  local dir enabled strength
+  dir=$(rumble_dir) || return 1
+  enabled=$(get_setting rumble.enabled)
+  [ "${enabled}" = 0 ] || enabled=1
+  strength=$(get_setting rumble.strength)
+  if ! is_uint "${strength}" || [ "${strength}" -gt 100 ]; then
+    strength=100
+  fi
+  strength=$((10#${strength}))
+  echo "${strength}" >"${dir}/rumble_strength" &&
+    echo "${enabled}" >"${dir}/rumble_enable"
+}
+
+run_test() {
+  local dir ms=${1:-400}
+  dir=$(rumble_dir) || return 1
+  if ! is_uint "${ms}" || [ "$((10#${ms}))" -lt 1 ] || [ "$((10#${ms}))" -gt 5000 ]; then
+    echo "usage: archr-rumble test [1..5000]" >&2
+    return 2
+  fi
+  echo "$((10#${ms}))" >"${dir}/rumble_test"
+}
+
+case "${1}" in
+  supported) supported ;;
+  apply) supported || exit 1; apply ;;
+  test) supported || exit 1; run_test "${2}" ;;
+  *)
+    echo "usage: archr-rumble supported|apply|test [ms]" >&2
+    exit 2
+    ;;
+esac

@@ -140,6 +140,15 @@
 		joypad-product = <0x1188>;
 		joypad-revision = <0x0188>;
 
+		/*
+		 * Rumble (archr-joypad FF_RUMBLE): 5 ms period (200 Hz), slow
+		 * enough for the software PWM and smooth for small ERM motors.
+		 */
+		pwms = <&rumble_pwm_l 0 5000000 0>, <&rumble_pwm_r 0 5000000 0>;
+		pwm-names = "strong", "weak";
+		/* weakest effect at 25 % duty, below that the motors stall [I] */
+		rumble-min-duty-percent = <25>;
+
 		io-channels = <&saradc0 2>, <&saradc0 3>,
 			      <&saradc0 5>, <&saradc0 6>;
 		io-channel-names = "joy_left_x", "joy_left_y",
@@ -288,17 +297,24 @@
 		};
 	};
 
-	/* Two on/off rumble motors (moto-gpio, moto-r-gpio, fab l.1067-1068). */
-	vibrator-left {
-		compatible = "gpio-vibrator";
-		enable-gpios = <&gpio3 RK_PA7 GPIO_ACTIVE_HIGH>;
+	/*
+	 * Two rumble motors on plain GPIOs (moto-gpio GPIO3_A7, moto-r-gpio
+	 * GPIO3_B0, active high, fab l.1067-1068), modulated in software so
+	 * the joypad can set their strength. The joypad drives moto-gpio
+	 * with the strong magnitude and moto-r-gpio with the weak one.
+	 */
+	rumble_pwm_l: pwm-rumble-left {
+		compatible = "pwm-gpio";
+		#pwm-cells = <3>;
+		gpios = <&gpio3 RK_PA7 GPIO_ACTIVE_HIGH>;
 		pinctrl-names = "default";
 		pinctrl-0 = <&vibrator_l_en>;
 	};
 
-	vibrator-right {
-		compatible = "gpio-vibrator";
-		enable-gpios = <&gpio3 RK_PB0 GPIO_ACTIVE_HIGH>;
+	rumble_pwm_r: pwm-rumble-right {
+		compatible = "pwm-gpio";
+		#pwm-cells = <3>;
+		gpios = <&gpio3 RK_PB0 GPIO_ACTIVE_HIGH>;
 		pinctrl-names = "default";
 		pinctrl-0 = <&vibrator_r_en>;
 	};
@@ -823,11 +839,11 @@
 		};
 
 		vibrator_l_en: vibrator-l-en {
-			rockchip,pins = <3 RK_PA7 RK_FUNC_GPIO &pcfg_pull_up>;
+			rockchip,pins = <3 RK_PA7 RK_FUNC_GPIO &pcfg_pull_down>;
 		};
 
 		vibrator_r_en: vibrator-r-en {
-			rockchip,pins = <3 RK_PB0 RK_FUNC_GPIO &pcfg_pull_up>;
+			rockchip,pins = <3 RK_PB0 RK_FUNC_GPIO &pcfg_pull_down>;
 		};
 	};
 
