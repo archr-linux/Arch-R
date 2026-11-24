@@ -15,7 +15,10 @@ PKG_DEPENDS_TARGET="toolchain"
 PKG_DEPENDS_UNPACK="spirv-headers"
 PKG_LONGDESC="The SPIR-V Tools project provides an API and commands for processing SPIR-V modules."
 
-PKG_CMAKE_OPTS_HOST="-DSPIRV_SKIP_TESTS=ON"
+# No -Werror: GCC 16 (the build container's host compiler) warns
+# maybe-uninitialized in source/opt/decoration_manager.cpp.
+PKG_CMAKE_OPTS_HOST="-DSPIRV_SKIP_TESTS=ON -DSPIRV_WERROR=OFF"
+PKG_CMAKE_OPTS_TARGET="-DSPIRV_WERROR=OFF"
 
 pre_configure_host() {
   export CXXFLAGS="${CXXFLAGS//-std=gnu17/-std=gnu++17}"
