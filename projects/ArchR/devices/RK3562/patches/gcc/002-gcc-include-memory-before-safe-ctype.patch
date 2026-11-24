@@ -1,0 +1,27 @@
+gcc: include <memory>, <mutex> and <sstream> before safe-ctype.h
+
+With libstdc++ 16 (the build container's host compiler) <memory> includes
+<ios> and the locale facets, which clash with the ctype macros that
+safe-ctype.h poisons. Include those headers with the other C++ standard
+headers, before safe-ctype.h; the later includes become no-ops.
+
+--- a/gcc/system.h
++++ b/gcc/system.h
+@@ -227,6 +227,17 @@
+ # include <new>
+ # include <utility>
+ # include <type_traits>
++/* libstdc++ 16 pulls <ios> and the locale facets into <memory>, so these
++   have to come before "safe-ctype.h" as well.  */
++#ifdef INCLUDE_MEMORY
++# include <memory>
++#endif
++#ifdef INCLUDE_MUTEX
++# include <mutex>
++#endif
++#ifdef INCLUDE_SSTREAM
++# include <sstream>
++#endif
+ #endif
+ 
+ /* There are an extraordinary number of issues with <ctype.h>.

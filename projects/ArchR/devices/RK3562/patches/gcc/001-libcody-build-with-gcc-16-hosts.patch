@@ -1,0 +1,17 @@
+libcody: keep u8 literals as char with C++20 host compilers
+
+GCC 16 defaults to C++20, where u8"" literals are char8_t and libcody
+(GCC 14.2) no longer compiles. Build it with -fno-char8_t, which keeps
+the C++17 meaning on any host compiler.
+
+--- a/libcody/Makefile.in
++++ b/libcody/Makefile.in
+@@ -21,7 +21,7 @@
+ # C++ compiler options
+ CXXFLAGS := @CXXFLAGS@
+ CXXINC := $(filter -I%,@CXX@)
+-CXXOPTS := $(CXXFLAGS) @PICFLAG@
++CXXOPTS := $(CXXFLAGS) @PICFLAG@ -fno-char8_t
+ 
+ ifneq (@EXCEPTIONS@,yes)
+ CXXOPTS += -fno-exceptions -fno-rtti
