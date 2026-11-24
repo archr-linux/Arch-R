@@ -1,12 +1,18 @@
-Keep the extra GPU clocks on and give the OPP core a terminated list
+Scale the SCMI GPU clock, keep the other GPU clocks on, and give the
+OPP core a terminated list
 
-The RK3562 GPU node lists three clocks: clk_gpu, clk_gpu_brg and
-aclk_gpu. kbase took the first two as frequency-scaled clocks, so
-devfreq would set the 200/100 MHz bridge clock to the GPU rate, and it
-never enabled aclk_gpu, which clk_disable_unused then gates. Scale only
-the clocks that have a regulator (at least one) and keep the rest
-prepared and enabled while the driver is bound, as the panfrost patch
-013 does for the same node.
+The RK3562 GPU node lists the SCMI clock "clk_mali" and the CRU clocks
+clk_gpu, clk_gpu_brg and aclk_gpu. On the RK3562 the GPU rate is set by
+the firmware through SCMI (it owns the GPU PLL); the CRU clk_gpu is only
+a gate of clk_gpu_pre, a gpll/cpll divider that tops out at 594 MHz, so
+scaling it left the GPU at 594 MHz whatever devfreq asked for.
+
+Scale one clock per regulator (at least one): the one named "clk_mali"
+when the node has it, the first ones otherwise. Keep every other listed
+clock prepared and enabled while the driver is bound, as the panfrost
+patch 013 does for the same node; before this kbase also took the
+bridge clock as a scaled clock and never enabled aclk_gpu, which
+clk_disable_unused then gated.
 
 dev_pm_opp_set_regulators() expects a NULL-terminated list; kbase passed
 its two-entry name table, read past its end and asked for a
@@ -14,10 +20,10 @@ its two-entry name table, read past its end and asked for a
 that were found.
 
 diff --git a/product/kernel/drivers/gpu/arm/midgard/mali_kbase_core_linux.c b/product/kernel/drivers/gpu/arm/midgard/mali_kbase_core_linux.c
-index def8580..9eef7e2 100644
+index def8580..7a9d3e1 100644
 --- a/product/kernel/drivers/gpu/arm/midgard/mali_kbase_core_linux.c
 +++ b/product/kernel/drivers/gpu/arm/midgard/mali_kbase_core_linux.c
-@@ -4560,6 +4560,55 @@ void kbase_device_backend_term(struct kbase_device *kbdev)
+@@ -4560,6 +4560,63 @@ void kbase_device_backend_term(struct kbase_device *kbdev)
  	kbase_arbiter_pm_early_term(kbdev);
  }
  
@@ -34,18 +40,26 @@ index def8580..9eef7e2 100644
 +
 +#ifdef CONFIG_OF
 +/* The device tree can list more clocks than kbase scales: on the RK3562
-+ * the GPU node has the core clock plus the bridge and AXI clocks. Those
-+ * are not frequency-scaled; keep them prepared and enabled while the
-+ * driver is bound, or clk_disable_unused gates the GPU bus.
++ * the GPU node has the SCMI "clk_mali" clock, whose rate the firmware
++ * sets (it owns the GPU PLL), plus the CRU core, bridge and AXI gates.
++ * Those gates are not frequency-scaled; keep them prepared and enabled
++ * while the driver is bound, or clk_disable_unused gates the GPU bus.
++ * Clocks @first..@first + @count - 1 are the scaled ones and skipped.
 + */
-+static int kbase_extra_clocks_init(struct kbase_device *kbdev, unsigned int first)
++static int kbase_extra_clocks_init(struct kbase_device *kbdev, unsigned int first,
++				   unsigned int count)
 +{
 +	unsigned int i;
 +	int err;
 +
 +	kbdev->nr_extra_clocks = 0;
-+	for (i = first; kbdev->nr_extra_clocks < ARRAY_SIZE(kbdev->extra_clocks); i++) {
-+		struct clk *clk = of_clk_get(kbdev->dev->of_node, (int)i);
++	for (i = 0; kbdev->nr_extra_clocks < ARRAY_SIZE(kbdev->extra_clocks); i++) {
++		struct clk *clk;
++
++		if (i >= first && i < first + count)
++			continue;
++
++		clk = of_clk_get(kbdev->dev->of_node, (int)i);
 +
 +		if (IS_ERR(clk)) {
 +			err = PTR_ERR(clk);
@@ -73,23 +87,43 @@ index def8580..9eef7e2 100644
  int power_control_init(struct kbase_device *kbdev)
  {
  #ifndef CONFIG_OF
-@@ -4621,7 +4670,10 @@ int power_control_init(struct kbase_device *kbdev)
+@@ -4575,6 +4632,9 @@ int power_control_init(struct kbase_device *kbdev)
+ 	struct platform_device *pdev;
+ 	int err = 0;
+ 	unsigned int i;
++	unsigned int first_clock = 0;
++	unsigned int nr_scaled;
++	int mali_clock;
+ #if defined(CONFIG_REGULATOR)
+ 	static const char *const regulator_names[] = { "mali", "shadercores" };
+ 	BUILD_BUG_ON(ARRAY_SIZE(regulator_names) < BASE_MAX_NR_CLOCKS_REGULATORS);
+@@ -4621,8 +4681,19 @@ int power_control_init(struct kbase_device *kbdev)
  	 * Any other error is ignored and the driver will continue
  	 * operating with a partial initialization of clocks.
  	 */
 -	for (i = 0; i < BASE_MAX_NR_CLOCKS_REGULATORS; i++) {
+-		kbdev->clocks[i] = of_clk_get(kbdev->dev->of_node, (int)i);
 +	/* Only clocks paired with a regulator are scaled (at least one);
-+	 * the rest are bus clocks, see kbase_extra_clocks_init().
++	 * the rest are bus clocks, see kbase_extra_clocks_init(). A clock
++	 * named "clk_mali" (Rockchip: the SCMI GPU clock) is the one that
++	 * sets the GPU rate, wherever it sits in the list.
 +	 */
-+	for (i = 0; i < max_t(unsigned int, 1, kbdev->nr_regulators); i++) {
- 		kbdev->clocks[i] = of_clk_get(kbdev->dev->of_node, (int)i);
++	nr_scaled = max_t(unsigned int, 1, kbdev->nr_regulators);
++	mali_clock = of_property_match_string(kbdev->dev->of_node, "clock-names", "clk_mali");
++	if (mali_clock >= 0) {
++		first_clock = (unsigned int)mali_clock;
++		nr_scaled = 1;
++	}
++	for (i = 0; i < nr_scaled; i++) {
++		kbdev->clocks[i] = of_clk_get(kbdev->dev->of_node, (int)(first_clock + i));
  		if (IS_ERR(kbdev->clocks[i])) {
  			err = PTR_ERR(kbdev->clocks[i]);
-@@ -4647,6 +4699,16 @@ int power_control_init(struct kbase_device *kbdev)
+ 			kbdev->clocks[i] = NULL;
+@@ -4647,6 +4718,16 @@ int power_control_init(struct kbase_device *kbdev)
  	kbdev->nr_clocks = i;
  	dev_dbg(&pdev->dev, "Clocks probed: %u\n", kbdev->nr_clocks);
  
-+	if (kbase_extra_clocks_init(kbdev, kbdev->nr_clocks) == -EPROBE_DEFER) {
++	if (kbase_extra_clocks_init(kbdev, first_clock, kbdev->nr_clocks) == -EPROBE_DEFER) {
 +		while (i > 0) {
 +			clk_disable_unprepare(kbdev->clocks[--i]);
 +			clk_put(kbdev->clocks[i]);
@@ -102,7 +136,7 @@ index def8580..9eef7e2 100644
  	/* Any error in parsing the OPP table from the device file
  	 * shall be ignored. The fact that the table may be absent or wrong
  	 * on the device tree of the platform shouldn't prevent the driver
-@@ -4656,7 +4718,14 @@ int power_control_init(struct kbase_device *kbdev)
+@@ -4656,7 +4737,14 @@ int power_control_init(struct kbase_device *kbdev)
  #if defined(CONFIG_REGULATOR)
  #if (KERNEL_VERSION(6, 0, 0) <= LINUX_VERSION_CODE)
  	if (kbdev->nr_regulators > 0) {
@@ -118,7 +152,7 @@ index def8580..9eef7e2 100644
  
  		if (kbdev->token < 0) {
  			err = kbdev->token;
-@@ -4683,6 +4752,7 @@ int power_control_init(struct kbase_device *kbdev)
+@@ -4683,6 +4771,7 @@ int power_control_init(struct kbase_device *kbdev)
  #if defined(CONFIG_PM_OPP) && \
  	((KERNEL_VERSION(4, 10, 0) <= LINUX_VERSION_CODE) && defined(CONFIG_REGULATOR))
  regulators_probe_defer:
@@ -126,7 +160,7 @@ index def8580..9eef7e2 100644
  	for (i = 0; i < BASE_MAX_NR_CLOCKS_REGULATORS; i++) {
  		if (kbdev->clocks[i]) {
  			if (__clk_is_enabled(kbdev->clocks[i]))
-@@ -4720,6 +4790,8 @@ void power_control_term(struct kbase_device *kbdev)
+@@ -4720,6 +4809,8 @@ void power_control_term(struct kbase_device *kbdev)
  #endif /* CONFIG_REGULATOR */
  #endif /* CONFIG_PM_OPP */
  

@@ -1,0 +1,61 @@
+devfreq: take the simple_ondemand thresholds from the device tree
+
+kbase registers simple_ondemand without data, so the governor uses its
+90/5 defaults: it raises the frequency only when the GPU was more than
+90% busy in the last 100 ms window and otherwise scales by load/87.5%.
+A job manager GPU idles between the job chains of a frame even in a GPU
+bound game, so on the RK3562 the load stayed under 90% and devfreq sat
+at 300/400 MHz.
+
+Read "upthreshold" and "downdifferential" from the GPU node, as the
+vendor kbase does (the RK3562 factory tree sets 40/10), and pass them to
+the governor. Without the properties nothing changes.
+
+diff --git a/product/kernel/drivers/gpu/arm/midgard/backend/gpu/mali_kbase_devfreq.c b/product/kernel/drivers/gpu/arm/midgard/backend/gpu/mali_kbase_devfreq.c
+index c476a7b..9a30d0a 100644
+--- a/product/kernel/drivers/gpu/arm/midgard/backend/gpu/mali_kbase_devfreq.c
++++ b/product/kernel/drivers/gpu/arm/midgard/backend/gpu/mali_kbase_devfreq.c
+@@ -679,7 +679,29 @@ int kbase_devfreq_init(struct kbase_device *kbdev)
+ 	if (err)
+ 		goto init_core_mask_table_failed;
+ 
+-	kbdev->devfreq = devfreq_add_device(kbdev->dev, dp, "simple_ondemand", NULL);
++	/* simple_ondemand defaults to 90/5: it only leaves a frequency when
++	 * the GPU is more than 90% busy there. A job manager GPU idles
++	 * between the job chains of a frame even when the game is GPU bound,
++	 * so it seldom reaches 90% and stays at the lowest OPPs. Take the
++	 * thresholds the vendor tree sets on the GPU node ("upthreshold",
++	 * "downdifferential"); without them, zero keeps the governor default.
++	 */
++	of_property_read_u32(kbdev->dev->of_node, "upthreshold",
++			     &kbdev->devfreq_ondemand_data.upthreshold);
++	of_property_read_u32(kbdev->dev->of_node, "downdifferential",
++			     &kbdev->devfreq_ondemand_data.downdifferential);
++	if (kbdev->devfreq_ondemand_data.upthreshold > 100 ||
++	    kbdev->devfreq_ondemand_data.downdifferential >=
++		    (kbdev->devfreq_ondemand_data.upthreshold ?: 90)) {
++		dev_warn(kbdev->dev, "Ignoring devfreq thresholds %u/%u\n",
++			 kbdev->devfreq_ondemand_data.upthreshold,
++			 kbdev->devfreq_ondemand_data.downdifferential);
++		kbdev->devfreq_ondemand_data.upthreshold = 0;
++		kbdev->devfreq_ondemand_data.downdifferential = 0;
++	}
++
++	kbdev->devfreq = devfreq_add_device(kbdev->dev, dp, "simple_ondemand",
++					    &kbdev->devfreq_ondemand_data);
+ 	if (IS_ERR(kbdev->devfreq)) {
+ 		err = PTR_ERR(kbdev->devfreq);
+ 		kbdev->devfreq = NULL;
+diff --git a/product/kernel/drivers/gpu/arm/midgard/mali_kbase_defs.h b/product/kernel/drivers/gpu/arm/midgard/mali_kbase_defs.h
+index f70674f..d2d7c52 100644
+--- a/product/kernel/drivers/gpu/arm/midgard/mali_kbase_defs.h
++++ b/product/kernel/drivers/gpu/arm/midgard/mali_kbase_defs.h
+@@ -1216,6 +1216,8 @@ struct kbase_device {
+ #ifdef CONFIG_MALI_DEVFREQ
+ 	struct devfreq_dev_profile devfreq_profile;
+ 	struct devfreq *devfreq;
++	/* simple_ondemand thresholds, from the GPU node (0: governor default) */
++	struct devfreq_simple_ondemand_data devfreq_ondemand_data;
+ 	unsigned long current_freqs[BASE_MAX_NR_CLOCKS_REGULATORS];
+ 	unsigned long current_nominal_freq;
+ 	unsigned long current_voltages[BASE_MAX_NR_CLOCKS_REGULATORS];
