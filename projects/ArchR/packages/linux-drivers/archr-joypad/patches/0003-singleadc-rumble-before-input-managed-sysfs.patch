@@ -1,0 +1,98 @@
+From: Douglas Teles <dga.teles@gmail.com>
+Subject: [PATCH] singleadc: set rumble up first, with a managed sysfs file
+
+On R36S Soysauce consoles the rumble PWM was not always ready at probe:
+devm_pwm_get() failed, the error became -EINVAL and the probe failed
+after it had registered the input device and created rumble_enable.
+The file stayed on a joypad that was freed, and 020-rumble writing it
+oopsed in mutex_lock (NULL joypad); several Soysauce reports show this
+next to slab corruption.
+
+Set rumble up before the input device, keep the PWM error (a deferral
+retries the probe), create the file managed after the input device, and
+answer -ENODEV on a joypad that is not there.
+
+---
+--- a/archr-singleadc-joypad.c	2026-11-24 12:37:38.855722932 -0300
++++ b/archr-singleadc-joypad.c	2026-11-24 12:38:11.245608875 -0300
+@@ -354,6 +354,8 @@
+ 	struct joypad *joypad = platform_get_drvdata(pdev);
+ 	bool enable = simple_strtoul(buf, NULL, 10);
+ 
++	if (!joypad)
++		return -ENODEV;
+ 	mutex_lock(&joypad->lock);
+ 	if (enable && !joypad->rumble_enabled) {
+ 		joypad->rumble_enabled = true;
+@@ -374,6 +376,9 @@
+ {
+ 	struct platform_device *pdev  = to_platform_device(dev);
+ 	struct joypad *joypad = platform_get_drvdata(pdev);
++
++	if (!joypad)
++		return -ENODEV;
+ 	return sprintf(buf, "%d\n", joypad->rumble_enabled ? 1 : 0);
+ }
+ 
+@@ -854,10 +859,9 @@
+ 	struct pwm_state state;
+ 
+ 	joypad->pwm = devm_pwm_get(dev, "enable");
+-	if (IS_ERR(joypad->pwm)) {
+-		dev_err(dev, "rumble get error\n");
+-		return -EINVAL;
+-	}
++	if (IS_ERR(joypad->pwm))
++		return dev_err_probe(dev, PTR_ERR(joypad->pwm),
++				     "rumble get error\n");
+ 
+ 	INIT_WORK(&joypad->play_work, pwm_vibrator_play_work);
+ 
+@@ -1434,6 +1438,20 @@
+ 	if (error)
+ 		dev_warn(dev, "calibration sysfs failed (%d)\n", error);
+ 
++	/*
++	 * Rumble first: its PWM may not be ready yet, and a deferral must not
++	 * leave an input device registered and removed again, or a
++	 * rumble_enable file behind on a joypad that is gone (its writer,
++	 * 020-rumble, then hit a NULL joypad). The file is managed, so it
++	 * goes with a failed probe.
++	 */
++	if (joypad->has_rumble) {
++		error = joypad_rumble_setup(dev, joypad);
++		if (error)
++			return dev_err_probe(dev, error, "rumble setup failed\n");
++		joypad->rumble_enabled = true;
++	}
++
+ 	/* poll input device setup */
+ 	error = joypad_input_setup(dev, joypad);
+ 	if (error) {
+@@ -1441,22 +1459,10 @@
+ 		return error;
+ 	}
+ 
+-        if (joypad->has_rumble) {
+-		/* rumble setup */
+-		error = sysfs_create_group(&pdev->dev.kobj, &joypad_rumble_attr_group);
+-		if (error) {
+-			dev_err(dev, "create sysfs group fail, error: %d\n",
+-				error);
+-			return error;
+-		}
+-
+-		error = joypad_rumble_setup(dev, joypad);
+-		if (error) {
+-			 dev_err(dev, "rumble setup failed!(err = %d)\n", error);
+-			 return error;
+-		}
+-
+-		joypad->rumble_enabled = true;
++	if (joypad->has_rumble) {
++		error = devm_device_add_group(dev, &joypad_rumble_attr_group);
++		if (error)
++			dev_warn(dev, "rumble sysfs failed (%d)\n", error);
+ 	}
+ 
+ 	if (joypad->use_miyoo_serial) {
