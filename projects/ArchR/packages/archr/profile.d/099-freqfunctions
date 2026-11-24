@@ -68,6 +68,9 @@ set_cpu_gov() {
 # floor is pinned.
 set_cpu_boost() {
   [ -e /sys/devices/system/cpu/cpufreq/boost ] || return
+  # No boost OPP (RK3562: every frequency is a normal one): nothing to
+  # switch, and cpufreq-dt refuses with "Cannot disable BOOST" in the log.
+  grep -qs '[0-9]' /sys/devices/system/cpu/cpufreq/policy*/scaling_boost_frequencies || return
   case ${1} in
     on|1)  echo 1 >/sys/devices/system/cpu/cpufreq/boost 2>/dev/null ;;
     off|0) echo 0 >/sys/devices/system/cpu/cpufreq/boost 2>/dev/null ;;
