@@ -93,9 +93,13 @@ fi
   #God of War at 100% speed (30 fps shown), losing its glow.
 	case "${ASKIP}" in 0|1) ;; *) ASKIP="" ;; esac
 	case "${FSKIP}" in [0-8]) ;; *) FSKIP="" ;; esac
+	#The RK3562 (Mali-G52 at 900 MHz) draws every frame: God of War at
+	#60/60, 100% with buffer effects skipped and no frame skip.
+	SKIP_FIXED=2
+	grep -qs 'rockchip,rk3562' /proc/device-tree/compatible && SKIP_FIXED=0
 	if [ "${SKIPB}" = "1" ]; then
 		[ -z "${ASKIP}" ] && ASKIP=0
-		[ "${ASKIP}" = "0" ] && [ -z "${FSKIP}" ] && FSKIP=2
+		[ "${ASKIP}" = "0" ] && [ -z "${FSKIP}" ] && FSKIP=${SKIP_FIXED}
 	fi
 	[ "${ASKIP}" = "0" ] && [ -z "${FSKIP}" ] && FSKIP=0
 	[ "${ASKIP}" = "1" ] && [ "${FSKIP}" = "0" ] && FSKIP=2
