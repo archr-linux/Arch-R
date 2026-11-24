@@ -15,6 +15,15 @@ case ${DEVICE} in
   PKG_URL="https://developer.arm.com/-/media/Files/downloads/mali-drivers/kernel/mali-valhall-gpu/VX504X08X-SW-99002-${PKG_VERSION}.tar"
   PKG_PATCH_DIRS+=" 6.12-LTS"
   ;;
+  RK3562)
+  # Mali-G52 (Bifrost, job manager) takes the same Arm release as the
+  # RK3326: its UK API pairs with the libmali g24p0 user blob. The 6.12
+  # fixes still apply; 7.3 adds the API changes since and the RK3562
+  # clock handling.
+  PKG_VERSION="r52p0-00eac0"
+  PKG_URL="https://developer.arm.com/-/media/Files/downloads/mali-drivers/kernel/mali-valhall-gpu/VX504X08X-SW-99002-${PKG_VERSION}.tar"
+  PKG_PATCH_DIRS+=" 6.12-LTS 7.3"
+  ;;
   *)
   PKG_VERSION="422e192b7e3aa3140f34de34765b798817c1f749"
   PKG_URL="https://github.com/archr-linux/mali_kbase/archive/${PKG_VERSION}.tar.gz"
