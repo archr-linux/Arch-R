@@ -1,0 +1,30 @@
+From: Douglas Teles <dga.teles@gmail.com>
+Subject: [PATCH] mfd: rk8xx: reboot through PSCI before the PMIC reset
+
+On the AISLPC RK3562 consoles "reboot" powered the board off: the RK817
+restart handler (DEV_RST) runs before PSCI and resets the whole PMIC,
+which on battery is a power-off. Register it below the firmware's PSCI
+reset, so PSCI resets the SoC with the PMIC kept on, as the vendor
+kernel does; the PMIC reset stays as the fallback.
+
+---
+diff --color -ru a/drivers/mfd/rk8xx-core.c b/drivers/mfd/rk8xx-core.c
+--- a/drivers/mfd/rk8xx-core.c	2026-11-24 12:06:48.998201903 -0300
++++ b/drivers/mfd/rk8xx-core.c	2026-11-24 12:06:49.011775636 -0300
+@@ -884,8 +884,15 @@
+ 		switch (rk808->variant) {
+ 		case RK809_ID:
+ 		case RK817_ID:
++			/*
++			 * Below the firmware's PSCI reset: the PMIC reset only
++			 * restarts the board when PSCI cannot. On the RK3562
++			 * consoles (RK817, factory U-Boot) a PMIC reset powers
++			 * the board off instead of rebooting it; PSCI resets the
++			 * SoC and keeps the PMIC on, as the vendor kernel does.
++			 */
+ 			ret = devm_register_sys_off_handler(dev,
+-							    SYS_OFF_MODE_RESTART, SYS_OFF_PRIO_HIGH,
++							    SYS_OFF_MODE_RESTART, SYS_OFF_PRIO_LOW,
+ 							    &rk808_restart, rk808);
+ 			if (ret)
+ 				dev_warn(dev, "failed to register rst handler, %d\n", ret);
