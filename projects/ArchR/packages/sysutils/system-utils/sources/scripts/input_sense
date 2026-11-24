@@ -24,7 +24,8 @@ set -o pipefail
 #   hotkey.mangohud=BTN_WEST            modifier + button: mangohud_set toggle
 #   hotkey.mangohud.enabled=1
 #   hotkey.exit=BTN_SELECT+BTN_START    modifier + both buttons: kill the
-#   hotkey.exit.enabled=1               running emulator (/tmp/.process-kill-data);
+#   hotkey.exit.enabled=1               running emulator (/tmp/.process-kill-data;
+#                                       "@port" closes a port, archr-port-stop);
 #                                       unset, the pair comes from the older
 #                                       key.hotkey.b / key.hotkey.c
 #
@@ -412,6 +413,12 @@ report_key() {
 execute_kill() {
   if [ -e "/tmp/.process-kill-data" ]; then
     TO_KILL="$(cat /tmp/.process-kill-data)"
+    if [ "${TO_KILL}" = "@port" ]; then
+      # A port: its script and what it started (runemu.sh marks the run).
+      ${DEBUG} && log $0 "Execute: archr-port-stop"
+      archr-port-stop >/dev/null 2>&1 &
+      return
+    fi
     ${DEBUG} && log $0 "Execute: killall ${TO_KILL}"
     killall ${TO_KILL} 2>/dev/null
   fi

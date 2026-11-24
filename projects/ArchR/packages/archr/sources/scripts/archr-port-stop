@@ -1,0 +1,92 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ArchR (https://github.com/archr-linux/Arch-R)
+#
+# Closes the port that is running (PortMaster's and Windows' .sh games).
+# A port has no emulator name for the exit shortcut to kill: runemu.sh runs
+# its script under its own shell and marks the run "@port" in the kill data
+# (/tmp/.process-kill-data). This finds that script among runemu.sh's
+# children (the one whose arguments hold the ROM path) and signals it and
+# everything it started, gptokeyb included; runemu.sh itself goes on and
+# brings the launcher back.
+#
+#   archr-port-stop    TERM to all of them at once, then KILL to whatever
+#                      is left after STOP_WAIT. One call does both: once the
+#                      script is gone, its children belong to init and can
+#                      no longer be found from it.
+#
+# Exit 0 when a port was signalled, 1 when no port runs.
+
+: "${CURRENT_GAME:=/run/archr/current-game}"
+: "${PROC:=/proc}"
+# Tenths of a second between TERM and KILL.
+: "${STOP_WAIT:=30}"
+: "${TICK:=0.1}"
+
+ROM="" RUNNER=""
+if [ -r "${CURRENT_GAME}" ]; then
+  { IFS= read -r ROM; IFS= read -r RUNNER; } <"${CURRENT_GAME}"
+fi
+[ -n "${ROM}" ] && [[ "${RUNNER}" =~ ^[0-9]+$ ]] || exit 1
+
+# "pid ppid" for every process. The command name in stat may hold spaces
+# and parentheses, so the fields are read after the last ") ".
+parents() {
+  local stat line pid
+  for stat in "${PROC}"/[0-9]*/stat; do
+    read -r line 2>/dev/null <"${stat}" || continue
+    pid="${stat%/stat}"
+    pid="${pid##*/}"
+    line="${line##*) }"
+    # state ppid ...
+    read -r _ line _ <<<"${line}"
+    printf '%s %s\n' "${pid}" "${line}"
+  done
+}
+
+# The port's script: a child of the runner with the ROM as an argument.
+script_pid() {
+  local pid arg
+  for pid in $(awk -v p="${RUNNER}" '$2 == p {print $1}' <<<"${TREE}"); do
+    while IFS= read -r -d '' arg; do
+      [ "${arg}" = "${ROM}" ] && { echo "${pid}"; return 0; }
+    done 2>/dev/null <"${PROC}/${pid}/cmdline"
+  done
+  return 1
+}
+
+# PID and all its descendants.
+family() {
+  awk -v root="$1" '
+    { parent[$1] = $2 }
+    END {
+      keep[root] = 1; grew = 1
+      while (grew) {
+        grew = 0
+        for (p in parent) if (!(p in keep) && (parent[p] in keep)) { keep[p] = 1; grew = 1 }
+      }
+      for (p in keep) print p
+    }' <<<"${TREE}"
+}
+
+TREE=$(parents)
+PORT=$(script_pid) || exit 1
+PIDS=$(family "${PORT}")
+
+# shellcheck disable=SC2086 # one pid per word
+kill -TERM ${PIDS} 2>/dev/null
+n=0
+left="${PIDS}"
+while [ "${n}" -lt "${STOP_WAIT}" ]; do
+  left=""
+  for pid in ${PIDS}; do
+    [ -d "${PROC}/${pid}" ] && left="${left} ${pid}"
+  done
+  [ -n "${left}" ] || exit 0
+  sleep "${TICK}"
+  n=$((n + 1))
+done
+echo "archr-port-stop: ${ROM##*/} did not close, killing it" >&2
+# shellcheck disable=SC2086
+kill -KILL ${left} 2>/dev/null
+exit 0
