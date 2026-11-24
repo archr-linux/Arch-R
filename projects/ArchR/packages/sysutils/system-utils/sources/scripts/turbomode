@@ -33,7 +33,10 @@ case $1 in
 esac
 
 # The setting is persisted only after the boost flag and the max_freq pin
-# both took; a missing boost control or a rejected write exits non-zero.
-[ -e "${BOOST_FILE}" ] && echo ${VALUE} > "${BOOST_FILE}" 2>/dev/null || exit 1
+# both took; a missing boost control, no boost OPP to switch (RK3562) or a
+# rejected write exits non-zero.
+[ -e "${BOOST_FILE}" ] || exit 1
+grep -qs '[0-9]' /sys/devices/system/cpu/cpufreq/policy*/scaling_boost_frequencies || exit 1
+echo ${VALUE} > "${BOOST_FILE}" 2>/dev/null || exit 1
 set_cpu_max_freq highest || exit 1
 set_setting enable.turbo-mode ${VALUE}

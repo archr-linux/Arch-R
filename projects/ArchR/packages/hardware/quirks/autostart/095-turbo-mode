@@ -12,5 +12,7 @@ if [ ! -n "${TURBO_MODE_STATE}" ]; then
   set_setting "enable.turbo-mode" "0"
 fi
 
-# Set turbo-mode at boot
-echo ${TURBO_MODE_STATE} > /sys/devices/system/cpu/cpufreq/boost
+# Set turbo-mode at boot (set_cpu_boost leaves a SoC with no boost OPP,
+# such as the RK3562, alone).
+. /etc/profile.d/099-freqfunctions
+set_cpu_boost "${TURBO_MODE_STATE}"
