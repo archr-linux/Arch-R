@@ -1,0 +1,36 @@
+From: Douglas Teles <dga.teles@gmail.com>
+Subject: [PATCH] ASoC: rockchip: sai: offer only the channels the lanes can play
+
+The SAI advertises up to 512 channels; outside TDM, hw_params then
+rejects anything over two per wired lane. On the RK3562 consoles (one
+TX lane) WirePlumber probes 8 channels at every start and fills the log
+with "not enough lanes (1) for requested number of playback channels
+(8)" and ASoC -22 errors. Constrain the channels at startup instead.
+
+---
+--- a/sound/soc/rockchip/rockchip_sai.c	2026-11-24 13:33:42.337972388 -0300
++++ b/sound/soc/rockchip/rockchip_sai.c	2026-11-24 13:33:42.351886264 -0300
+@@ -897,6 +897,23 @@
+ 	if (sai->wait_time[stream])
+ 		substream->wait_time = sai->wait_time[stream];
+ 
++	/*
++	 * Outside TDM each lane carries two channels: offer only what the
++	 * wired lanes can play, so a sound server does not probe more and
++	 * fail in hw_params ("not enough lanes").
++	 */
++	if (!sai->is_tdm) {
++		unsigned int lanes = stream == SNDRV_PCM_STREAM_PLAYBACK ?
++				     sai->tx_lanes : sai->rx_lanes;
++		int ret;
++
++		ret = snd_pcm_hw_constraint_minmax(substream->runtime,
++						   SNDRV_PCM_HW_PARAM_CHANNELS,
++						   1, 2 * lanes);
++		if (ret < 0)
++			return ret;
++	}
++
+ 	sai->substreams[stream] = substream;
+ 
+ 	return 0;
