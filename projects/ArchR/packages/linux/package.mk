@@ -41,6 +41,16 @@ case ${DEVICE} in
         PKG_VERSION="6.18.13"
         PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
         ;;
+      RK3562)
+        # Mainline 7.3 plus the RK3562 series (Armbian rockchip64-7.3) and
+        # the Arch R rk817/joypad/panel patches, all in devices/RK3562.
+        # The project-wide mainline/ and 6.12-LTS/ patch sets target 6.12
+        # and are left out on purpose.
+        PKG_VERSION="7.3.6"
+        PKG_SHA256="8183d475a76a0faffa92d6cd500af421f589dfd0300a0f1060bb875e11d45723"
+        PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
+        PKG_PATCH_DIRS="${LINUX} ${DEVICE} default"
+        ;;
       *)
         PKG_VERSION="6.12.114"
         PKG_SHA256="7a8589912bd7a8adb07fed074283652cf482a35facef8954554654f0154b4af3"
@@ -102,7 +112,7 @@ post_patch() {
   if [ -d "${DTS_SOURCE_DIR}" ]; then
     rsync -av "${DTS_SOURCE_DIR}/" ${PKG_BUILD}/arch/arm64/boot/dts/
     # Register custom DTS files in kernel Makefile so they get compiled
-    for dts_file in "${DTS_SOURCE_DIR}"/rockchip/rk3326-*.dts; do
+    for dts_file in "${DTS_SOURCE_DIR}"/rockchip/${DEVICE,,}-*.dts; do
       [ -f "${dts_file}" ] || continue
       dtb_name="$(basename "${dts_file}" .dts).dtb"
       makefile="${PKG_BUILD}/arch/arm64/boot/dts/rockchip/Makefile"
@@ -386,7 +396,7 @@ makeinstall_target() {
     cp -p arch/${TARGET_KERNEL_ARCH}/boot/${KERNEL_TARGET} ${INSTALL}/usr/share/bootloader/
     for dtb in arch/${TARGET_KERNEL_ARCH}/boot/dts/**/*.dtb; do
       if [ -f ${dtb} ]; then
-        if [ "${DEVICE}" = "H700" -o "${DEVICE}" = "RK3326" -o "${DEVICE}" = "RK3399" -o "${DEVICE}" = "RK3566" -o "${DEVICE}" = "RK3588" ]; then
+        if [ "${DEVICE}" = "H700" -o "${DEVICE}" = "RK3326" -o "${DEVICE}" = "RK3399" -o "${DEVICE}" = "RK3562" -o "${DEVICE}" = "RK3566" -o "${DEVICE}" = "RK3588" ]; then
           mkdir -p ${INSTALL}/usr/share/bootloader/device_trees
           cp -v ${dtb} ${INSTALL}/usr/share/bootloader/device_trees
         else

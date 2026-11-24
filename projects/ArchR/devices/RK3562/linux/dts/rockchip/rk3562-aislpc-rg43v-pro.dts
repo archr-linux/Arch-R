@@ -1,0 +1,260 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * AISLPC RG43V PRO, 4.3" 1024x768 MIPI-DSI panel (Arch R).
+ *
+ * Factory sources: .work/aislpc/rg43vpro/dts/rk3562-ro520c-lp3x-v14-linux.dts
+ * (panel, "fab .dts") and the resolved/extract files named in the dtsi.
+ * The v10 and v14 factory DTBs carry the same panel, buttons and battery.
+ */
+
+/dts-v1/;
+
+#include "rk3562-aislpc-ro520c.dtsi"
+
+/ {
+	model = "AISLPC RG43V PRO";
+	compatible = "aislpc,rg43v-pro", "rockchip,rk3562";
+
+	/*
+	 * Factory battery node (rk817,battery / rk817,charger, extrato-v14
+	 * l.583-636): design 2906 mAh, Rbat 102 mOhm, power off 3500 mV, charge
+	 * 1500 mA to 4280 mV, end of charge 300 mA. The product page says
+	 * 4000 mAh; the DTB value is kept until it is measured. The mainline
+	 * RK817 charger programs the voltage in 50 mV steps from 4.10 V, so
+	 * 4280 mV would be rounded down to 4.25 V anyway; it is written as such.
+	 */
+	battery: battery {
+		compatible = "simple-battery";
+		charge-full-design-microamp-hours = <2906000>;
+		charge-term-current-microamp = <300000>;
+		constant-charge-current-max-microamp = <1500000>;
+		constant-charge-voltage-max-microvolt = <4250000>;
+		factory-internal-resistance-micro-ohms = <102000>;
+		voltage-max-design-microvolt = <4175000>;
+		voltage-min-design-microvolt = <3500000>;
+		ocv-capacity-celsius = <20>;
+		ocv-capacity-table-0 = <4175000 100>, <4090000 95>, <4054000 90>, <4041000 85>,
+				       <4036000 80>, <4027000 75>, <3999000 70>, <3957000 65>,
+				       <3926000 60>, <3903000 55>, <3871000 50>, <3847000 45>,
+				       <3823000 40>, <3789000 35>, <3738000 30>, <3687000 25>,
+				       <3644000 20>, <3605000 15>, <3570000 10>, <3529000 5>,
+				       <3500000 0>;
+	};
+};
+
+/*
+ * Vertical case: the left stick module is mounted like the right one, so
+ * both read low voltage as right/down. AveyondFly's rk3562-rg43v.dts drops
+ * the BSP "left-stick-invert" of the RG43H for this reason. [I] check with
+ * evtest on the bench.
+ */
+&axis_lx {
+	abs-range = <881 142>;
+};
+
+&axis_ly {
+	abs-range = <881 142>;
+};
+
+&button_d4 {
+	label = "FN";
+	linux,code = <KEY_FN>;
+};
+
+&panel {
+	/* LCD enable GPIO0_B0 active high (fab .dts panel@0 enable-gpios). */
+	enable-gpios = <&gpio0 RK_PB0 GPIO_ACTIVE_HIGH>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&lcd_rst>, <&lcd_en>;
+
+	/*
+	 * Converted from the factory simple-panel-dsi node (fab .dts l.3821-3870,
+	 * by kernel/tools/initseq2pdesc.py): 4 lanes, RGB888, dsi,flags 0xa03
+	 * (VIDEO | BURST | NO_EOT | LPM), delays prepare/reset/init/enable/ready
+	 * 20/20/20/120/20 ms. Timing0: 61.0 MHz, 1024+90+80+80 x 768+16+8+8,
+	 * 59.85 Hz. Physical size from the 4.3" 4:3 diagonal (the factory
+	 * 68x121 mm is the 5.5" value). 160 commands, all DCS short; the
+	 * sequence is byte for byte the one of the AISLPC Pocket AIS mainline
+	 * DT, which lights its panel on 7.2.
+	 */
+	panel_description =
+		"G size=87,65 delays=20,20,20,120,20 format=rgb888 lanes=4 flags=0xa03",
+		"M clock=61000 horizontal=1024,90,80,80 vertical=768,16,8,8 default=1",
+			"I seq=ee01",
+			"I seq=ea07",
+			"I seq=eb12",
+			"I seq=0a5e",
+			"I seq=1314",
+			"I seq=1735",
+			"I seq=1d33",
+			"I seq=2101",
+			"I seq=2828",
+			"I seq=2918",
+			"I seq=2a63",
+			"I seq=2ff3",
+			"I seq=ee02",
+			"I seq=39a9",
+			"I seq=0000",
+			"I seq=010d",
+			"I seq=0212",
+			"I seq=0308",
+			"I seq=040e",
+			"I seq=0530",
+			"I seq=060b",
+			"I seq=070e",
+			"I seq=080f",
+			"I seq=090e",
+			"I seq=0a11",
+			"I seq=0b4e",
+			"I seq=0c14",
+			"I seq=0d1a",
+			"I seq=0e2f",
+			"I seq=0f36",
+			"I seq=103f",
+			"I seq=2000",
+			"I seq=210d",
+			"I seq=2212",
+			"I seq=2308",
+			"I seq=240e",
+			"I seq=2530",
+			"I seq=260b",
+			"I seq=270e",
+			"I seq=280f",
+			"I seq=290e",
+			"I seq=2a11",
+			"I seq=2b4e",
+			"I seq=2c14",
+			"I seq=2d1a",
+			"I seq=2e2f",
+			"I seq=2f36",
+			"I seq=303f",
+			"I seq=ee04",
+			"I seq=0005",
+			"I seq=0101",
+			"I seq=0280",
+			"I seq=0304",
+			"I seq=0400",
+			"I seq=0606",
+			"I seq=0705",
+			"I seq=081a",
+			"I seq=0920",
+			"I seq=0a0e",
+			"I seq=0b00",
+			"I seq=2040",
+			"I seq=2408",
+			"I seq=ee05",
+			"I seq=0001",
+			"I seq=0109",
+			"I seq=0205",
+			"I seq=0305",
+			"I seq=0705",
+			"I seq=080d",
+			"I seq=0900",
+			"I seq=0a12",
+			"I seq=0b14",
+			"I seq=0c66",
+			"I seq=1003",
+			"I seq=1107",
+			"I seq=1205",
+			"I seq=1305",
+			"I seq=1912",
+			"I seq=1af6",
+			"I seq=4055",
+			"I seq=4100",
+			"I seq=4303",
+			"I seq=4401",
+			"I seq=4581",
+			"I seq=4606",
+			"I seq=4700",
+			"I seq=ee06",
+			"I seq=0045",
+			"I seq=0201",
+			"I seq=0488",
+			"I seq=06cd",
+			"I seq=08ef",
+			"I seq=09cd",
+			"I seq=0aab",
+			"I seq=0b89",
+			"I seq=0c67",
+			"I seq=0d45",
+			"I seq=0e23",
+			"I seq=0f01",
+			"I seq=ee07",
+			"I seq=003c",
+			"I seq=013c",
+			"I seq=023c",
+			"I seq=033c",
+			"I seq=040d",
+			"I seq=053c",
+			"I seq=063c",
+			"I seq=073c",
+			"I seq=0808",
+			"I seq=0910",
+			"I seq=0a12",
+			"I seq=0b14",
+			"I seq=0c16",
+			"I seq=0d18",
+			"I seq=0e1a",
+			"I seq=0f1c",
+			"I seq=101e",
+			"I seq=1104",
+			"I seq=1200",
+			"I seq=133c",
+			"I seq=140c",
+			"I seq=153c",
+			"I seq=203c",
+			"I seq=213c",
+			"I seq=223c",
+			"I seq=233c",
+			"I seq=240d",
+			"I seq=253c",
+			"I seq=263c",
+			"I seq=273c",
+			"I seq=2808",
+			"I seq=2911",
+			"I seq=2a13",
+			"I seq=2b15",
+			"I seq=2c17",
+			"I seq=2d19",
+			"I seq=2e1b",
+			"I seq=2f1d",
+			"I seq=301f",
+			"I seq=3105",
+			"I seq=3201",
+			"I seq=333c",
+			"I seq=340c",
+			"I seq=353c",
+			"I seq=ee08",
+			"I seq=1000",
+			"I seq=12dc",
+			"I seq=131c",
+			"I seq=1723",
+			"I seq=1820",
+			"I seq=2080",
+			"I seq=ee0f",
+			"I seq=0001",
+			"I seq=0100",
+			"I seq=ee00",
+			"I seq=ea00",
+			"I seq=eb00",
+			"I seq=3600",
+			"I seq=11 wait=200",
+			"I seq=29 wait=20";
+};
+
+&pinctrl {
+	lcd {
+		lcd_en: lcd-en {
+			rockchip,pins = <0 RK_PB0 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+	};
+};
+
+&rk817_charger {
+	monitored-battery = <&battery>;
+};
+
+/* 61.0 MHz pixel clock = VPLL 1464 MHz / 24 (as on the Pocket AIS). */
+&vop {
+	assigned-clock-rates = <1464000000>, <0>;
+};

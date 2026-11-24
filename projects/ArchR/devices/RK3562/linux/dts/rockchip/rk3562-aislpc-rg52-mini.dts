@@ -1,0 +1,267 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * AISLPC RG52 MINI, 5.5" 720x1280 (portrait) MIPI-DSI panel (Arch R).
+ *
+ * Factory sources: .work/aislpc/rg52mini/dts/rk3562-ro520c-lp3x-v14-linux.dts
+ * ("fab52 .dts") and rg52mini/dts/extrato-v14.dts ("fab52 extr").
+ */
+
+/dts-v1/;
+
+#include "rk3562-aislpc-ro520c.dtsi"
+
+/ {
+	model = "AISLPC RG52 MINI";
+	compatible = "aislpc,rg52-mini", "rockchip,rk3562";
+
+	/*
+	 * Factory v14 battery node (fab52 extr l.609-645): design 4642 mAh,
+	 * Rbat 69 mOhm, power off 3400 mV, charge 2000 mA to 4280 mV, end of
+	 * charge 150 mA. (v10: 80 mOhm, 2800 mV, 4300 mV, 300 mA.) 4280 mV is
+	 * written as the 4.25 V step the mainline RK817 charger can program.
+	 */
+	battery: battery {
+		compatible = "simple-battery";
+		charge-full-design-microamp-hours = <4642000>;
+		charge-term-current-microamp = <150000>;
+		constant-charge-current-max-microamp = <2000000>;
+		constant-charge-voltage-max-microvolt = <4250000>;
+		factory-internal-resistance-micro-ohms = <69000>;
+		voltage-max-design-microvolt = <4184000>;
+		voltage-min-design-microvolt = <3400000>;
+		ocv-capacity-celsius = <20>;
+		ocv-capacity-table-0 = <4184000 100>, <4121000 95>, <4096000 90>, <4077000 85>,
+				       <4048000 80>, <4022000 75>, <3997000 70>, <3959000 65>,
+				       <3921000 60>, <3888000 55>, <3856000 50>, <3816000 45>,
+				       <3777000 40>, <3735000 35>, <3693000 30>, <3659000 25>,
+				       <3631000 20>, <3605000 15>, <3573000 10>, <3536000 5>,
+				       <3500000 0>;
+	};
+
+	/*
+	 * Optional fan kit (v14 DT only, fab52 extr l.1132-1144): PWM4 on
+	 * GPIO1_D1 (pwm4m1), 20 kHz, power GPIO0_C3, tachometer GPIO2_A1.
+	 * [I] On a v10 RG52 the factory muxes GPIO1_D1 as UART1 RX of the stick
+	 * LED MCU; see LEIAME.md (v10/v14) before keeping this on such a unit.
+	 */
+	fan: pwm-fan {
+		compatible = "pwm-fan";
+		#cooling-cells = <2>;
+		cooling-levels = <0 50 100 150 200 255>;
+		fan-supply = <&vcc_fan>;
+		interrupt-parent = <&gpio2>;
+		interrupts = <RK_PA1 IRQ_TYPE_EDGE_FALLING>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&fan_tach>;
+		pwms = <&pwm4 0 50000 0>;
+	};
+
+	gpio-keys {
+		/* KEY_FN on GPIO2_A0, RG52 only (key-gpios-map, fab52 extr l.1075). */
+		button-fn {
+			gpios = <&gpio2 RK_PA0 GPIO_ACTIVE_LOW>;
+			label = "FN";
+			linux,code = <KEY_FN>;
+		};
+	};
+
+	/* Panel power: GPIO0_B0 active low (fab52 vcc3v3-lcd0-n). */
+	vcc3v3_lcd: regulator-vcc3v3-lcd {
+		compatible = "regulator-fixed";
+		gpio = <&gpio0 RK_PB0 GPIO_ACTIVE_LOW>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&lcd_pwren>;
+		regulator-boot-on;
+		regulator-max-microvolt = <3300000>;
+		regulator-min-microvolt = <3300000>;
+		regulator-name = "vcc3v3_lcd_n";
+		vin-supply = <&vcc_3v3>;
+	};
+
+	vcc_fan: regulator-vcc-fan {
+		compatible = "regulator-fixed";
+		enable-active-high;
+		gpio = <&gpio0 RK_PC3 GPIO_ACTIVE_HIGH>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&fan_en>;
+		regulator-name = "vcc_fan";
+		vin-supply = <&vcc_sys>;
+	};
+};
+
+/* GPIO1_D4 is KEY_HOME on the RG52 (key-gpios-map 0x66). */
+&button_d4 {
+	label = "HOME";
+	linux,code = <KEY_HOME>;
+};
+
+/* ADC buttons press at 80 mV on the RG52 (600 mV on the RG43V). */
+&key_down {
+	press-threshold-microvolt = <80000>;
+};
+
+&key_left {
+	press-threshold-microvolt = <80000>;
+};
+
+&key_north {
+	press-threshold-microvolt = <80000>;
+};
+
+&key_right {
+	press-threshold-microvolt = <80000>;
+};
+
+&key_south {
+	press-threshold-microvolt = <80000>;
+};
+
+&key_west {
+	press-threshold-microvolt = <80000>;
+};
+
+&hp_det {
+	/* No pull on the RG52 (pull-up on the RG43V). */
+	rockchip,pins = <0 RK_PA7 RK_FUNC_GPIO &pcfg_pull_none>;
+};
+
+&panel {
+	vdd-supply = <&vcc3v3_lcd>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&lcd_rst>;
+
+	/*
+	 * Converted from the factory simple-panel-dsi node (fab52 .dts
+	 * l.3821-3870) by kernel/tools/initseq2pdesc.py: 4 lanes, RGB888,
+	 * dsi,flags 0xa03, delays 20/20/20/120/20 ms. Timing0: 76.8 MHz,
+	 * 720+100+33+100 x 1280+20+2+30, 60.50 Hz. 26 commands; four of the
+	 * factory 0x15 (short write) packets carry two parameters
+	 * (e0 ab ba, e1 ba ab, c6 4c 4c, ca cb 43): the driver sends any
+	 * 3-byte "seq" as a DCS long write (0x39). [I] check on the panel.
+	 * Native portrait: rotation is left to userspace for now.
+	 */
+	panel_description =
+		"G size=68,121 delays=20,20,20,120,20 format=rgb888 lanes=4 flags=0xa03",
+		"M clock=76800 horizontal=720,100,33,100 vertical=1280,20,2,30 default=1",
+			"I seq=e0abba",
+			"I seq=e1baab",
+			"I seq=b1100147ff",
+			"I seq=b20a0904505014",
+			"I seq=b3565200",
+			"I seq=b4336004",
+			"I seq=b6b0000010001000",
+			"I seq=b80512294948",
+			"I seq=b97c70655b5b4e543d5653526e5a604f4b3a29067c6f655b5b4e543d5653526e5a604f4b3a2906",
+			"I seq=c05432234544444444400440040f0000c1",
+			"I seq=c133940287800492045400",
+			"I seq=c2730908890811222044bb1800",
+			"I seq=c3824a0823000406010c0e101202020202020202020202",
+			"I seq=c4020b0923000507010d0f111302020202020202020202",
+			"I seq=c583940f",
+			"I seq=c64c4c",
+			"I seq=c8110031423416",
+			"I seq=cacb43",
+			"I seq=cd0e646420146b06b3",
+			"I seq=d2e32b3808",
+			"I seq=d40001000e04440810000000",
+			"I seq=e68001ffffffffffff",
+			"I seq=f012032000ff",
+			"I seq=f300",
+			"I seq=11 wait=120",
+			"I seq=29 wait=30";
+};
+
+&pinctrl {
+	fan {
+		fan_en: fan-en {
+			rockchip,pins = <0 RK_PC3 RK_FUNC_GPIO &pcfg_pull_up>;
+		};
+
+		fan_tach: fan-tach {
+			rockchip,pins = <2 RK_PA1 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+	};
+
+	lcd {
+		lcd_pwren: lcd-pwren {
+			rockchip,pins = <0 RK_PB0 RK_FUNC_GPIO &pcfg_pull_up>;
+		};
+	};
+};
+
+&pwm4 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&pwm4m1_pins>;
+	status = "okay";
+};
+
+&rk817_charger {
+	monitored-battery = <&battery>;
+};
+
+/* Fan steps of the factory rockchip,temp-trips: 50/55/60/65/70 C. */
+&soc_thermal {
+	trips {
+		fan_trip0: fan-trip-0 {
+			temperature = <50000>;
+			hysteresis = <2000>;
+			type = "active";
+		};
+
+		fan_trip1: fan-trip-1 {
+			temperature = <55000>;
+			hysteresis = <2000>;
+			type = "active";
+		};
+
+		fan_trip2: fan-trip-2 {
+			temperature = <60000>;
+			hysteresis = <2000>;
+			type = "active";
+		};
+
+		fan_trip3: fan-trip-3 {
+			temperature = <65000>;
+			hysteresis = <2000>;
+			type = "active";
+		};
+
+		fan_trip4: fan-trip-4 {
+			temperature = <70000>;
+			hysteresis = <2000>;
+			type = "active";
+		};
+	};
+
+	cooling-maps {
+		map-fan0 {
+			trip = <&fan_trip0>;
+			cooling-device = <&fan 1 1>;
+		};
+
+		map-fan1 {
+			trip = <&fan_trip1>;
+			cooling-device = <&fan 2 2>;
+		};
+
+		map-fan2 {
+			trip = <&fan_trip2>;
+			cooling-device = <&fan 3 3>;
+		};
+
+		map-fan3 {
+			trip = <&fan_trip3>;
+			cooling-device = <&fan 4 4>;
+		};
+
+		map-fan4 {
+			trip = <&fan_trip4>;
+			cooling-device = <&fan 5 5>;
+		};
+	};
+};
+
+/* 76.8 MHz pixel clock = VPLL 1536 MHz / 20. */
+&vop {
+	assigned-clock-rates = <1536000000>, <0>;
+};

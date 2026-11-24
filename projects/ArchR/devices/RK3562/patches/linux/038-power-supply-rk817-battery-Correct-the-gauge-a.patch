@@ -1,0 +1,180 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jacob Cook <jacobmcook1984@gmail.com>
+Date: Mon, 23 Nov 2026 23:57:31 -0300
+Subject: [PATCH] [PATCH] power: supply: rk817-battery: Correct the gauge
+ across
+
+Refreshed onto vanilla 7.3.6 with patch -F3 (context from other Armbian patches missing). Source: 042-power-supply-rk817-charger-correct-gauge-across-sleep.patch
+---
+Arch R RK3562 bring-up -- provenance:
+Source: Arch R distribution d52dc93223f0 projects/ArchR/devices/RK3326/patches/linux/042-power-supply-rk817-charger-correct-gauge-across-sleep.patch
+Refreshed for 7.3 (fuzz 2). Same origin as ROCKNIX mainline-rockchip/005.
+
+ drivers/power/supply/rk817_charger.c | 109 +++++++++++++++++++++++++--
+ 1 file changed, 104 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/power/supply/rk817_charger.c b/drivers/power/supply/rk817_charger.c
+index 735a3e3e4..3b26ed1a8 100644
+--- a/drivers/power/supply/rk817_charger.c
++++ b/drivers/power/supply/rk817_charger.c
+@@ -10,6 +10,7 @@
+ 
+ #include <linux/unaligned.h>
+ #include <linux/devm-helpers.h>
++#include <linux/math64.h>
+ #include <linux/mfd/rk808.h>
+ #include <linux/irq.h>
+ #include <linux/of.h>
+@@ -104,6 +105,12 @@ struct rk817_charger {
+ 	/* Retained for the ocv-capacity table the recalibration needs. */
+ 	struct power_supply_battery_info *bat_info;
+ 
++	/* Stamped at system suspend to correct the gauge across sleep. */
++	time64_t slp_boottime;
++	int slp_charge_uah;
++	int slp_cur_ua;
++	bool slp_charging;
++
+ 	/* Values updated periodically by driver for display. */
+ 	int charge_now_uah;
+ 	int volt_avg_uv;
+@@ -355,14 +362,20 @@ static int rk817_bat_voltage_uv(struct rk817_charger *charger, unsigned int reg)
+ /*
+  * Voltage the gauge latched while the battery was resting. Relax mode only
+  * samples below RELAX_THRE_CUR, so this is a true open circuit voltage with
+- * no resistance term. Returns 0 unless the battery is resting now and the
+- * latched pair is inside the pack's design range.
++ * no resistance term. The update flags are cleared at init and at suspend,
++ * so a pair with them set postdates the last of those; live_only also
++ * requires the battery to be resting now. Returns 0 if there is no usable
++ * pair inside the pack's design range.
+  */
+-static int rk817_bat_relax_voltage_uv(struct rk817_charger *charger)
++static int rk817_bat_relax_voltage_uv(struct rk817_charger *charger,
++				      bool live_only)
+ {
+-	unsigned int need = RK817_RELAX_STS | RK817_RELAX_VOL_UPD;
++	unsigned int need = RK817_RELAX_VOL_UPD;
+ 	int ret, sts, vol;
+ 
++	if (live_only)
++		need |= RK817_RELAX_STS;
++
+ 	ret = regmap_read(charger->rk808->regmap, RK817_GAS_GAUGE_GG_STS, &sts);
+ 	if (ret < 0 || (sts & need) != need)
+ 		return 0;
+@@ -472,7 +485,7 @@ static void rk817_read_props(struct rk817_charger *charger)
+ 		charger->charger_input_volt_avg_uv = 0;
+ 	}
+ 
+-	charger->relax_voltage_uv = rk817_bat_relax_voltage_uv(charger);
++	charger->relax_voltage_uv = rk817_bat_relax_voltage_uv(charger, true);
+ 
+ 	/* Calibrate battery capacity and soc. */
+ 	rk817_bat_calib_cap(charger);
+@@ -1300,12 +1313,96 @@ static int rk817_charger_probe(struct platform_device *pdev)
+ 	return 0;
+ }
+ 
++/*
++ * The columb counter is erratic while the system sleeps, and the signals
++ * that could correct it (a live relax status, a finished charge) are gone
++ * before the monitor runs again. Correct from what persists instead, as
++ * the BSP driver does.
++ */
++static void rk817_bat_sleep_adjust(struct rk817_charger *charger)
++{
++	struct rk808 *rk808 = charger->rk808;
++	time64_t elapsed = ktime_get_boottime_seconds() - charger->slp_boottime;
++	int expected_uah, moved_uah, charge_uah, credit_uah, tmp;
++	unsigned int sts;
++	u8 bulk_reg[4];
++
++	if (!charger->battery_present || elapsed <= 0)
++		return;
++
++	regmap_read(rk808->regmap, RK817_SYS_STS, &sts);
++	charger->plugged_in = (sts & RK817_PLUG_IN_STS);
++
++	/* Start from what the counter did during sleep, not the pre-sleep soc. */
++	regmap_bulk_read(rk808->regmap, RK817_GAS_GAUGE_Q_PRES_H3,
++			 bulk_reg, 4);
++	tmp = get_unaligned_be32(bulk_reg);
++	charge_uah = tmp > 0 ? ADC_TO_CHARGE_UAH(tmp, charger->res_div) : 0;
++	if (charge_uah > charger->fcc_mah * 1000)
++		charge_uah = charger->fcc_mah * 1000;
++	charger->soc = div_s64((s64)charge_uah * 100, charger->fcc_mah);
++
++	/* Flags were cleared at suspend: any pair now is from this sleep. */
++	charger->relax_voltage_uv = rk817_bat_relax_voltage_uv(charger, false);
++	dev_info(charger->dev,
++		 "resume after %llds: counter %d uAh (%d at suspend), battery %d uV, relax %d uV\n",
++		 (long long)elapsed, charge_uah, charger->slp_charge_uah,
++		 rk817_bat_voltage_uv(charger, RK817_GAS_GAUGE_BAT_VOL_H),
++		 charger->relax_voltage_uv);
++	if (charger->relax_voltage_uv) {
++		rk817_bat_ocv_recalibrate(charger);
++		return;
++	}
++
++	if (!charger->slp_charging || !charger->plugged_in)
++		return;
++
++	moved_uah = charge_uah - charger->slp_charge_uah;
++	expected_uah = div_s64((s64)charger->slp_cur_ua * elapsed, 3600);
++	credit_uah = expected_uah - moved_uah;
++
++	dev_info(charger->dev,
++		 "slept charging for %llds: counter moved %d of expected %d uAh\n",
++		 (long long)elapsed, moved_uah, expected_uah);
++
++	if (credit_uah <= 0)
++		return;
++
++	/*
++	 * Credit the shortfall, saturating at full - covers a charge that
++	 * terminated during sleep. A constant-current estimate reads high
++	 * across a taper; the cap bounds it, the next rested pair corrects
++	 * the rest.
++	 */
++	charge_uah += credit_uah;
++	if (charge_uah > charger->fcc_mah * 1000)
++		charge_uah = charger->fcc_mah * 1000;
++
++	charger->soc = div_s64((s64)charge_uah * 100, charger->fcc_mah);
++	tmp = CHARGE_TO_ADC(charge_uah / 1000, charger->res_div);
++	put_unaligned_be32(tmp, bulk_reg);
++	regmap_bulk_write(rk808->regmap, RK817_GAS_GAUGE_Q_INIT_H3,
++			  bulk_reg, 4);
++	rk817_record_battery_nvram_values(charger);
++}
++
+ static int __maybe_unused rk817_suspend(struct device *dev)
+ {
+ 	struct rk817_charger *charger = dev_get_drvdata(dev);
+ 
+ 	cancel_delayed_work_sync(&charger->work);
+ 
++	charger->slp_boottime = ktime_get_boottime_seconds();
++	charger->slp_charge_uah = charger->charge_now_uah;
++	charger->slp_cur_ua = abs(charger->cur_avg_ua);
++	charger->slp_charging = charger->plugged_in &&
++				(charger->charge_status == CC_OR_CV_CHRG ||
++				 charger->charge_status == TRICKLE_CHRG);
++
++	/* Any relax pair found at resume will postdate this suspend. */
++	regmap_write_bits(charger->rk808->regmap, RK817_GAS_GAUGE_GG_STS,
++			  RK817_RELAX_VOL_UPD, 0);
++
+ 	return 0;
+ }
+ 
+@@ -1314,6 +1411,8 @@ static int __maybe_unused rk817_resume(struct device *dev)
+ 
+ 	struct rk817_charger *charger = dev_get_drvdata(dev);
+ 
++	rk817_bat_sleep_adjust(charger);
++
+ 	/* force an immediate update */
+ 	mod_delayed_work(system_percpu_wq, &charger->work, 0);
+ 

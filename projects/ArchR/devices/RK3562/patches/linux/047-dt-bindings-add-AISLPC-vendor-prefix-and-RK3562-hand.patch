@@ -1,0 +1,55 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ArchR <https://github.com/archr-linux/Arch-R>
+Date: Tue, 24 Nov 2026 00:08:36 -0300
+Subject: [PATCH] dt-bindings: add AISLPC vendor prefix and RK3562 handheld
+ boards
+
+Vendor prefix aislpc (AISLPC, maker of the RG43V PRO, RG52 MINI and Pocket AIS) and the board compatibles used by the Arch R device trees.
+---
+Arch R RK3562 bring-up -- provenance:
+New (Arch R). Vendor prefix "aislpc" plus the three board compatibles.
+
+ .../devicetree/bindings/arm/rockchip.yaml        | 16 ++++++++++++++++
+ .../devicetree/bindings/vendor-prefixes.yaml     |  2 ++
+ 2 files changed, 18 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/arm/rockchip.yaml b/Documentation/devicetree/bindings/arm/rockchip.yaml
+index a799bb843..d52a6fd56 100644
+--- a/Documentation/devicetree/bindings/arm/rockchip.yaml
++++ b/Documentation/devicetree/bindings/arm/rockchip.yaml
+@@ -36,6 +36,22 @@ properties:
+               - 9tripod,x3568-v4
+           - const: rockchip,rk3568
+ 
++      - description: AISLPC RG43V PRO (1024x768 panel)
++        items:
++          - const: aislpc,rg43v-pro
++          - const: rockchip,rk3562
++
++      - description: AISLPC RG43V PRO, 1024x600 panel variant
++        items:
++          - const: aislpc,rg43v-pro-1024x600
++          - const: aislpc,rg43v-pro
++          - const: rockchip,rk3562
++
++      - description: AISLPC RG52 MINI
++        items:
++          - const: aislpc,rg52-mini
++          - const: rockchip,rk3562
++
+       - description: Amarula Vyasa RK3288
+         items:
+           - const: amarula,vyasa-rk3288
+diff --git a/Documentation/devicetree/bindings/vendor-prefixes.yaml b/Documentation/devicetree/bindings/vendor-prefixes.yaml
+index 9bee5cec0..4c40ec3a1 100644
+--- a/Documentation/devicetree/bindings/vendor-prefixes.yaml
++++ b/Documentation/devicetree/bindings/vendor-prefixes.yaml
+@@ -78,6 +78,8 @@ patternProperties:
+     description: AESOP Embedded Forum
+   "^airoha,.*":
+     description: Airoha
++  "^aislpc,.*":
++    description: AISLPC
+   "^al,.*":
+     description: Annapurna Labs
+   "^alcatel,.*":

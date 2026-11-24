@@ -1,0 +1,27 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ArchR <https://github.com/archr-linux/Arch-R>
+Date: Mon, 23 Nov 2026 23:59:14 -0300
+Subject: [PATCH] power: supply: rk817: name the battery supply "battery"
+
+The only part of Arch R's RK3326 patch 010-rk817-battery-calibration.patch that is not upstream in 7.3: the rest (battery_present and voltage sanity checks in rk817_bat_calib_cap, writable CHARGE_FULL, suspend/resume) is already in mainline. Arch R userspace reads /sys/class/power_supply/battery, as on the R36S. The charger keeps the upstream name rk817-charger, as in Arch R's 6.12 tree.
+---
+Arch R RK3562 bring-up -- provenance:
+Source: Arch R distribution d52dc93223f0 projects/ArchR/devices/RK3326/patches/linux/010-rk817-battery-calibration.patch (rename hunk only)
+The rest of 010 is upstream in 7.3. Beebono 0025 renames the charger too ("charger"); Arch R keeps rk817-charger as on the R36S.
+
+ drivers/power/supply/rk817_charger.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/power/supply/rk817_charger.c b/drivers/power/supply/rk817_charger.c
+index 54f9c6e23..78e218951 100644
+--- a/drivers/power/supply/rk817_charger.c
++++ b/drivers/power/supply/rk817_charger.c
+@@ -748,7 +748,7 @@ static int rk817_bat_prop_writeable(struct power_supply *psy,
+ }
+ 
+ static const struct power_supply_desc rk817_bat_desc = {
+-	.name = "rk817-battery",
++	.name = "battery",
+ 	.type = POWER_SUPPLY_TYPE_BATTERY,
+ 	.properties = rk817_bat_props,
+ 	.property_is_writeable	= rk817_bat_prop_writeable,

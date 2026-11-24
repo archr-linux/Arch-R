@@ -1,0 +1,97 @@
+################################################################################
+# setup device defaults
+################################################################################
+
+# Rockchip RK3562: AISLPC RG43V PRO (1024x768, and a 1024x600 variant whose
+# panel is still unknown) and AISLPC RG52 MINI (720x1280 portrait). Both use
+# the same board (rk3562-ro520c, revisions v10 and v14). Bring-up stage: the
+# kernel builds, nothing has run on hardware yet.
+
+  # Device name for image filenames (overrides DEVICE in image name only)
+    DEVICE_NAME="RK3562"
+
+  # The TARGET_CPU variable controls which processor should be targeted for
+  # generated code.
+    case ${TARGET_ARCH} in
+      aarch64)
+        TARGET_KERNEL_ARCH="arm64"
+        TARGET_KERNEL_PATCH_ARCH="aarch64"
+        TARGET_CPU="cortex-a53"
+        TARGET_ARCH_FLAGS="+crc+crypto"
+        TARGET_FEATURES="64bit"
+        ;;
+      arm)
+        TARGET_KERNEL_ARCH="arm64"
+        TARGET_KERNEL_PATCH_ARCH="aarch64"
+        TARGET_FLOAT="hard"
+        TARGET_CPU="cortex-a53"
+        TARGET_ARCH_FLAGS="+crc"
+        TARGET_FPU="crypto-neon-fp-armv8"
+        TARGET_FEATURES="32bit"
+        ;;
+    esac
+
+    PARTITION_TABLE="msdos"
+    HW_CPU="Rockchip RK3562"
+
+  # Kernel target
+    KERNEL_TARGET="Image"
+
+  # Kernel extra targets to build (the DTBs listed in config.xml)
+    KERNEL_MAKE_EXTRACMD=" $(get_kernel_make_extracmd)"
+
+  # Kernel cmdline. The factory console is UART0 (ff210000) at 1500000.
+    EXTRA_CMDLINE="quiet console=ttyS0,1500000 console=tty0 loglevel=0 vt.global_cursor_default=0 consoleblank=0 net.ifnames=0 systemd.show_status=false mitigations=off audit=0 nowatchdog threadirqs zswap.enabled=0 loop.max_loop=16"
+
+  # Bootloader to use (syslinux / u-boot)
+  # First boot uses the factory U-Boot on the eMMC, which reads
+  # extlinux/extlinux.conf from the SD card: the u-boot package of this
+  # device only ships the extlinux files, no loader is written to the card.
+    BOOTLOADER="u-boot"
+
+  # Mali GPU family (Mali-G52 2EE). Panfrost is the default driver; libmali
+  # g52 can join the gpudriver selector later, as on the RK3326.
+    MALI_FAMILY="bifrost-g52"
+    GRAPHIC_DRIVERS="panfrost"
+
+  # For maximum cross compatbility
+    PREFER_GLES="yes"
+
+  # Vulkan (Mesa PanVK, panfrost only)
+    VULKAN="vulkan-loader"
+
+  # Displayserver to use (wl / no)
+    DISPLAYSERVER="wl"
+
+  # Windowmanager to use (weston / swaywm-env / no)
+    WINDOWMANAGER="swaywm-env"
+
+  # Additional drivers to install:
+  # The out-of-tree drivers still have to be built and tested against
+  # linux 7.3: rk915 (Wi-Fi of the v10 boards), an AIC8800 SDIO package
+  # (v14 boards; today AIC8800 is USB only) and the USB Wi-Fi dongles.
+    ADDITIONAL_DRIVERS=""
+
+  # Additional Firmware to use ( )
+    FIRMWARE=""
+
+  # Additional packages to install (no device-switch: it only exists for
+  # the RK3326; the generic-dsi panel driver is built into the kernel by
+  # patch 045)
+    ADDITIONAL_PACKAGES=""
+    ADDITIONAL_PACKAGES_32BIT=""
+
+  # Debug tty path
+    DEBUG_TTY="/dev/ttyS0"
+
+  # ZRAM Algorithm
+    ZRAM_COMPRESSION_ALGO="lzo-rle"
+
+  # ZRAM Size (RAM size of these units is still unknown)
+    ZRAM_SWAP_SIZE="512"
+
+  # Disk Swap
+    SWAP_FILE_SIZE="0"
+
+  # KSM: no emulator marks memory MADV_MERGEABLE, so ksmd only wakes the CPU
+    KSM_ENABLE="disable"

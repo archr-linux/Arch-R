@@ -1,0 +1,41 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * AISLPC RG43V PRO, 1024x600 panel variant (Arch R).
+ *
+ * *** NOT USABLE: PLACEHOLDER ***
+ *
+ * Neither factory firmware we have (RG43V_Pro_Cbro_e63cec_20260723,
+ * RG52MINI5SA_CBRO_0eea68_20260704) contains a 1024x600 panel: no second
+ * panel node, no second display-timings, no panel id read, nothing in
+ * U-Boot, initramfs or scripts that picks a panel (RELATORIO 3.1). The
+ * controller, init sequence and timings of this panel are unknown.
+ *
+ * This file only exists so the DTB name, the model string and the build
+ * are in place. The panel is disabled: the board boots headless (UART0
+ * console, USB gadget), everything else is the RG43V PRO description.
+ *
+ * TODO(1024x600): get /sys/firmware/fdt (SSH is on in the factory system)
+ * or the firmware image of a 1024x600 unit, then fill panel_description
+ * below (initseq2pdesc.py converts the factory node) and drop the
+ * status = "disabled".
+ */
+
+#include "rk3562-aislpc-rg43v-pro.dts"
+
+/ {
+	model = "AISLPC RG43V PRO 1024x600 (placeholder, panel unknown)";
+	compatible = "aislpc,rg43v-pro-1024x600", "aislpc,rg43v-pro",
+		     "rockchip,rk3562";
+};
+
+&panel {
+	/*
+	 * TODO(1024x600): values below are placeholders, NOT the panel data.
+	 * The mode line only keeps the driver's parser happy (1024x600 with
+	 * the 1024x768 panel's porches at 60 Hz); there is no init sequence.
+	 */
+	panel_description =
+		"G size=95,54 delays=20,20,20,120,20 format=rgb888 lanes=4 flags=0xa03",
+		"M clock=51000 horizontal=1024,90,80,80 vertical=600,16,8,8 default=1";
+	status = "disabled";
+};

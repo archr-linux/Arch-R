@@ -1,0 +1,170 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ArchR <https://github.com/archr-linux/Arch-R>
+Date: Mon, 23 Nov 2026 23:57:33 -0300
+Subject: [PATCH] ASoC: rk817: support external speaker amplifier
+ (use_ext_amplifier)
+
+Some RK3326 handhelds (e.g. the R35S / "Soysauce") do not wire the
+loudspeaker to the rk817 class-D SPKO output. Instead the speaker hangs
+off the analog headphone output (HPOL/HPOR) through an external amplifier
+that is enabled by a GPIO (spk-ctl-gpios). This mirrors the downstream
+vendor codec's "use_ext_amplifier" path.
+
+The mainline driver routes the "SPK" mux position to the class-D, so on
+those boards the speaker is silent (the class-D output goes nowhere) and,
+because the simple-card jack auto-switch selects "SPK" when no headphones
+are plugged, the headphone stage is powered down too.
+
+Add a "rockchip,use-ext-amplifier" property: when set, route the speaker
+mux position through the headphone DACs and toggle spk-ctl-gpios via a
+DAPM event in sync with the speaker (SPKO) endpoint. Behaviour is
+unchanged on boards without the property.
+
+Signed-off-by: ArchR
+---
+Arch R RK3562 bring-up -- provenance:
+Source: Arch R distribution d52dc93223f0 projects/ArchR/packages/linux/patches/6.12-LTS/0060-ASoC-rk817-support-external-speaker-amplifier.patch
+Ported to 7.3: snd_soc_component_get_dapm() -> snd_soc_component_to_dapm() (renamed in 7.x); otherwise unchanged. Used by the RG43V/RG52 codec node (amp enable GPIO3_C3).
+
+ sound/soc/codecs/rk817_codec.c | 86 +++++++++++++++++++++++++++++++++-
+ 1 file changed, 85 insertions(+), 1 deletion(-)
+
+diff --git a/sound/soc/codecs/rk817_codec.c b/sound/soc/codecs/rk817_codec.c
+index 3c9957b00..da5302d48 100644
+--- a/sound/soc/codecs/rk817_codec.c
++++ b/sound/soc/codecs/rk817_codec.c
+@@ -7,6 +7,7 @@
+ #include <linux/clk.h>
+ #include <linux/device.h>
+ #include <linux/delay.h>
++#include <linux/gpio/consumer.h>
+ #include <linux/mfd/rk808.h>
+ #include <linux/module.h>
+ #include <linux/of.h>
+@@ -23,6 +24,15 @@ struct rk817_codec_priv {
+ 	struct clk *mclk;
+ 	unsigned int stereo_sysclk;
+ 	bool mic_in_differential;
++	/*
++	 * On boards where the loudspeaker is not wired to the rk817 class-D
++	 * SPKO output but to an external amplifier fed from the analog
++	 * headphone output (HPOL/HPOR) and gated by a GPIO (the vendor
++	 * driver's "use_ext_amplifier" case), the speaker path has to use the
++	 * headphone DACs and toggle that GPIO instead of the class-D.
++	 */
++	bool use_ext_amplifier;
++	struct gpio_desc *spk_ctl_gpio;
+ };
+ 
+ /*
+@@ -109,6 +119,25 @@ static SOC_ENUM_SINGLE_VIRT_DECL(dac_enum, dac_mux_text);
+ static const struct snd_kcontrol_new dac_mux =
+ 	SOC_DAPM_ENUM("Playback Mux", dac_enum);
+ 
++/*
++ * Drives the external speaker amplifier enable GPIO (spk-ctl-gpios) in sync
++ * with the speaker output path. Only used on use_ext_amplifier boards; on
++ * others spk_ctl_gpio is NULL and this is a no-op.
++ */
++static int rk817_ext_amp_event(struct snd_soc_dapm_widget *w,
++			       struct snd_kcontrol *kcontrol, int event)
++{
++	struct snd_soc_component *component = snd_soc_dapm_to_component(w->dapm);
++	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(component);
++
++	if (!rk817->spk_ctl_gpio)
++		return 0;
++
++	gpiod_set_value_cansleep(rk817->spk_ctl_gpio,
++				 SND_SOC_DAPM_EVENT_ON(event) ? 1 : 0);
++	return 0;
++}
++
+ static const struct snd_soc_dapm_widget rk817_dapm_widgets[] = {
+ 
+ 	/* capture/playback common */
+@@ -160,6 +189,11 @@ static const struct snd_soc_dapm_widget rk817_dapm_widgets[] = {
+ 	SND_SOC_DAPM_SUPPLY("Class D OCPN 2", RK817_CODEC_ACLASSD_CFG2, 1, 0, NULL, 0),
+ 	SND_SOC_DAPM_SUPPLY("Class D OCPN 3", RK817_CODEC_ACLASSD_CFG2, 0, 0, NULL, 0),
+ 
++	/* external speaker amplifier enable (use_ext_amplifier boards only) */
++	SND_SOC_DAPM_SUPPLY("Ext Speaker Amp", SND_SOC_NOPM, 0, 0,
++			    rk817_ext_amp_event,
++			    SND_SOC_DAPM_POST_PMU | SND_SOC_DAPM_PRE_PMD),
++
+ 	/* playback path headphones */
+ 	SND_SOC_DAPM_SUPPLY("Headphone Charge Pump", RK817_CODEC_AHP_CP, 4, 0, NULL, 0),
+ 	SND_SOC_DAPM_SUPPLY("Headphone CP Discharge LDO", RK817_CODEC_AHP_CP, 3, 1, NULL, 0),
+@@ -279,7 +313,11 @@ static const struct snd_soc_dapm_route rk817_dapm_routes[] = {
+ 	/* mux path for output selection */
+ 	{"Playback Mux", "HP", "DAC L"},
+ 	{"Playback Mux", "HP", "DAC R"},
+-	{"Playback Mux", "SPK", "SPK DAC"},
++	/*
++	 * The "SPK" branch of the mux is added at probe time: the class-D
++	 * route ("SPK" -> "SPK DAC") for normal boards, or the headphone-DAC
++	 * route plus the external amp enable for use_ext_amplifier boards.
++	 */
+ 	{"SPKO", NULL, "Playback Mux"},
+ 	{"HPOL", NULL, "Playback Mux"},
+ 	{"HPOR", NULL, "Playback Mux"},
+@@ -423,6 +461,36 @@ static int rk817_probe(struct snd_soc_component *component)
+ 
+ 	rk817_init(component);
+ 
++	/*
++	 * Wire up the "SPK" branch of the playback mux. The widgets already
++	 * exist (added before this probe), the static routes are added after,
++	 * so adding routes here is safe and keeps them ahead of the rest.
++	 *
++	 * Normal boards: route the speaker mux position to the class-D DAC.
++	 * use_ext_amplifier boards: the loudspeaker hangs off the analog
++	 * headphone output through an external amp, so route the speaker mux
++	 * position to the headphone DACs instead and enable that amp via the
++	 * spk-ctl GPIO whenever the SPKO endpoint (the card's "Speaker") is on.
++	 */
++	if (rk817->use_ext_amplifier) {
++		static const struct snd_soc_dapm_route ext_amp_routes[] = {
++			{"Playback Mux", "SPK", "DAC L"},
++			{"Playback Mux", "SPK", "DAC R"},
++			{"SPKO", NULL, "Ext Speaker Amp"},
++		};
++
++		snd_soc_dapm_add_routes(snd_soc_component_to_dapm(component),
++					ext_amp_routes,
++					ARRAY_SIZE(ext_amp_routes));
++	} else {
++		static const struct snd_soc_dapm_route classd_route[] = {
++			{"Playback Mux", "SPK", "SPK DAC"},
++		};
++
++		snd_soc_dapm_add_routes(snd_soc_component_to_dapm(component),
++					classd_route, ARRAY_SIZE(classd_route));
++	}
++
+ 	/* setting initial pll values so that we can continue to leverage simple-audio-card.
+ 	 * The values aren't important since no parameters are used.
+ 	 */
+@@ -466,6 +534,22 @@ static void rk817_codec_parse_dt_property(struct device *dev,
+ 	rk817->mic_in_differential =
+ 			of_property_read_bool(node, "rockchip,mic-in-differential");
+ 
++	rk817->use_ext_amplifier =
++			of_property_read_bool(node, "rockchip,use-ext-amplifier");
++
++	/*
++	 * spk-ctl-gpios lives in the "codec" child node, not on the MFD cell's
++	 * own device node, so fetch it through that fwnode explicitly.
++	 */
++	rk817->spk_ctl_gpio = devm_fwnode_gpiod_get(dev, of_fwnode_handle(node),
++						    "spk-ctl", GPIOD_OUT_LOW,
++						    "spk-ctl");
++	if (IS_ERR(rk817->spk_ctl_gpio)) {
++		dev_dbg(dev, "no spk-ctl gpio: %ld\n",
++			PTR_ERR(rk817->spk_ctl_gpio));
++		rk817->spk_ctl_gpio = NULL;
++	}
++
+ 	of_node_put(node);
+ }
+ 

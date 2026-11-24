@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ArchR (https://github.com/archr-linux/Arch-R)
+
+# Boot partition of the RK3562 images, sourced by scripts/mkimage.
+# No loader goes into the raw sectors before the first partition: the
+# factory U-Boot on the eMMC boots the card through extlinux.conf.
+# Layout of /flash: KERNEL, dtbs/<board>.dtb (only the DTBs listed in
+# config.xml), extlinux/extlinux.conf{,.<board>}.
+
+. config/functions
+
+mkimage_dtb() {
+  local dtb_name dtb_file
+
+  echo "image: copying device trees..."
+  mmd ::dtbs 2>/dev/null || true
+  for dtb_name in $(xmlstarlet sel -t -v "//archr/${DEVICE}/${SUBDEVICE}/file" "${PROJECT_DIR}/${PROJECT}/config.xml" 2>/dev/null); do
+    dtb_file="${RELEASE_DIR}/3rdparty/bootloader/device_trees/${dtb_name}.dtb"
+    if [ -f "${dtb_file}" ]; then
+      mcopy "${dtb_file}" ::dtbs/
+    else
+      echo "ERROR: DTB not found: ${dtb_name}.dtb"
+      exit 1
+    fi
+  done
+}
+
+mkimage_extlinux() {
+  if [ ! -d "${RELEASE_DIR}/3rdparty/bootloader/extlinux" ]; then
+    echo "ERROR: no extlinux files in ${RELEASE_DIR}/3rdparty/bootloader"
+    exit 1
+  fi
+  echo "image: copying extlinux.conf..."
+  mcopy -s -o "${RELEASE_DIR}/3rdparty/bootloader/extlinux" ::
+}
+
+mkimage_all

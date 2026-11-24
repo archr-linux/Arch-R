@@ -20,4 +20,11 @@
       <file>rk3326-odroid-go2</file>
     </clone>
   </RK3326>
+  <RK3562 dtb_prefix="rockchip">
+    <aislpc mkimage_options="dtb,extlinux" fdt_type="fdt" fdt="/dtbs/rk3562-aislpc-rg43v-pro.dtb">
+      <file>rk3562-aislpc-rg43v-pro</file>
+      <file>rk3562-aislpc-rg43v-pro-1024x600</file>
+      <file>rk3562-aislpc-rg52-mini</file>
+    </aislpc>
+  </RK3562>
 </archr>

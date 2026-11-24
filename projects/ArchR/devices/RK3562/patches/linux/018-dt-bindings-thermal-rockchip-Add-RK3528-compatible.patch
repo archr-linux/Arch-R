@@ -1,0 +1,95 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ricardo Pardini <ricardo@pardini.net>
+Date: Tue, 15 Sep 2026 23:05:08 +0200
+Subject: [PATCH] dt-bindings: thermal: rockchip: Add RK3528 compatible
+
+The RK3528 TSADC has a single channel and needs the GRF to enable the
+sensor's analog part, like RK3568 does. Its calibration trim is stored
+in OTP and described per sensor, like RK3576.
+
+It also gates the sensor's analog part with a clock of its own, so
+describe a third clock for it.
+
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+Assisted-by: Claude:claude-opus-5
+---
+Arch R RK3562 bring-up -- provenance:
+Source: armbian/build ddbbfa20c2b2 patch/kernel/archive/rockchip64-7.3/rk3528-thermal.patch (1st of 3 mails)
+Applied unchanged: prerequisite of rk3562-0019.
+
+ .../bindings/thermal/rockchip-thermal.yaml    | 32 ++++++++++++++++---
+ 1 file changed, 28 insertions(+), 4 deletions(-)
+
+diff --git a/Documentation/devicetree/bindings/thermal/rockchip-thermal.yaml b/Documentation/devicetree/bindings/thermal/rockchip-thermal.yaml
+index f623f1fd8..704ac08f6 100644
+--- a/Documentation/devicetree/bindings/thermal/rockchip-thermal.yaml
++++ b/Documentation/devicetree/bindings/thermal/rockchip-thermal.yaml
+@@ -21,6 +21,7 @@ properties:
+       - rockchip,rk3328-tsadc
+       - rockchip,rk3368-tsadc
+       - rockchip,rk3399-tsadc
++      - rockchip,rk3528-tsadc
+       - rockchip,rk3568-tsadc
+       - rockchip,rk3576-tsadc
+       - rockchip,rk3588-tsadc
+@@ -34,12 +35,11 @@ properties:
+ 
+   clocks:
+     minItems: 2
+-    maxItems: 2
++    maxItems: 3
+ 
+   clock-names:
+-    items:
+-      - const: tsadc
+-      - const: apb_pclk
++    minItems: 2
++    maxItems: 3
+ 
+   nvmem-cells:
+     items:
+@@ -120,6 +120,28 @@ required:
+   - resets
+ 
+ allOf:
++  - if:
++      properties:
++        compatible:
++          contains:
++            const: rockchip,rk3528-tsadc
++    then:
++      properties:
++        clocks:
++          minItems: 3
++        clock-names:
++          items:
++            - const: tsadc
++            - const: tsadc_tsen
++            - const: apb_pclk
++    else:
++      properties:
++        clocks:
++          maxItems: 2
++        clock-names:
++          items:
++            - const: tsadc
++            - const: apb_pclk
+   - if:
+       properties:
+         compatible:
+@@ -128,6 +150,7 @@ allOf:
+               - rockchip,px30-tsadc
+               - rockchip,rk3366-tsadc
+               - rockchip,rk3399-tsadc
++              - rockchip,rk3528-tsadc
+               - rockchip,rk3568-tsadc
+     then:
+       required:
+@@ -151,6 +174,7 @@ allOf:
+           compatible:
+             contains:
+               enum:
++                - rockchip,rk3528-tsadc
+                 - rockchip,rk3568-tsadc
+                 - rockchip,rk3576-tsadc
+     then:
