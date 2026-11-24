@@ -29,6 +29,8 @@ LIBRETRO_CORES="81-lr a5200-lr arduous-lr atari800-lr b2-lr beetle-gba-lr beetle
                 vbam-lr vecx-lr vice-lr vircon32-lr virtualjaguar-lr xmil-lr wasm4-lr yabasanshiro-lr"
 
 ### Emulators or cores for specific devices
+# The RK3562 (AISLPC) takes the RK3326 choices everywhere: same joypad
+# (r36s_Gamepad) and the emulator set already proven on the R36S.
 case "${DEVICE}" in
   H700)
     [ "${ENABLE_32BIT}" == "true" ] && EMUS_32BIT="box86 desmume-lr gpsp-lr pcsx_rearmed-lr"
@@ -37,7 +39,7 @@ case "${DEVICE}" in
     LIBRETRO_CORES+=" flycast2021-lr geolith-lr uae4arm"
     PKG_RETROARCH+=" retropie-shaders"
     ;;
-  RK3326)
+  RK3326|RK3562)
     [ "${ENABLE_32BIT}" == "true" ] && EMUS_32BIT="box86 desmume-lr gpsp-lr pcsx_rearmed-lr"
     PKG_DEPENDS_TARGET+=" common-shaders glsl-shaders"
     PKG_EMUS+=" box64 drastic-arch mednafen melonds-sa portmaster scummvmsa yabasanshiro-arch duckstation-sa"
@@ -173,7 +175,7 @@ EOF
 
   ### Commodore Amiga
   case ${DEVICE} in
-    H700|RK3326|RK3399|RK3566|RK3588|SDM845|SM8250|SM8550|SM8650)
+    H700|RK3326|RK3562|RK3399|RK3566|RK3588|SDM845|SM8250|SM8550|SM8650)
       add_emu_core amiga retroarch puae2021 true
       add_emu_core amiga retroarch puae false
       ;;
@@ -192,7 +194,7 @@ EOF
 
   ### Commodore Amiga CD32
   case ${DEVICE} in
-    H700|RK3326|RK3399|RK3566|RK3588|SDM845|SM8250|SM8550|SM8650)
+    H700|RK3326|RK3562|RK3399|RK3566|RK3588|SDM845|SM8250|SM8550|SM8650)
       add_emu_core amigacd32 retroarch puae2021 true
       add_emu_core amigacd32 retroarch puae false
       ;;
@@ -252,7 +254,7 @@ EOF
 
   ## Sammy Atomiswave
   case ${DEVICE} in
-    H700|RK3326|RK3399|RK3566|RK3588)
+    H700|RK3326|RK3562|RK3399|RK3566|RK3588)
       add_emu_core atomiswave retroarch flycast2021 true
       add_emu_core atomiswave retroarch flycast false
       add_emu_core atomiswave flycast flycast-sa false
@@ -346,7 +348,7 @@ EOF
 
   ### Sega Dreamcast
   case ${DEVICE} in
-    H700|RK3326|RK3399|RK3566|RK3588)
+    H700|RK3326|RK3562|RK3399|RK3566|RK3588)
       add_emu_core dreamcast retroarch flycast2021 true
       add_emu_core dreamcast retroarch flycast false
       add_emu_core dreamcast flycast flycast-sa false
@@ -382,7 +384,7 @@ EOF
   add_emu_core famicom retroarch quicknes false
   add_emu_core famicom retroarch mesen false
   case ${DEVICE} in
-    H700|RK3326|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
+    H700|RK3326|RK3562|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
       add_emu_core famicom mednafen nes false
       ;;
   esac
@@ -394,7 +396,7 @@ EOF
   add_emu_core fds retroarch quicknes false
   add_emu_core fds retroarch mesen false
   case ${DEVICE} in
-    H700|RK3326|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
+    H700|RK3326|RK3562|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
       add_emu_core fds mednafen nes false
       ;;
   esac
@@ -434,7 +436,7 @@ EOF
   add_emu_core gb retroarch DoubleCherryGB false
   add_emu_core gb retroarch skyemu false
   case ${DEVICE} in
-    H700|RK3326|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
+    H700|RK3326|RK3562|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
       add_emu_core gb mednafen gb false
       ;;
   esac
@@ -456,7 +458,7 @@ EOF
   add_emu_core gbh retroarch DoubleCherryGB false
   add_emu_core gbh retroarch skyemu false
   case ${DEVICE} in
-    H700|RK3326|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
+    H700|RK3326|RK3562|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
       add_emu_core gbh mednafen gb false
       ;;
   esac
@@ -472,7 +474,7 @@ EOF
   # lighter-weight gpsp as the performance default and keep mGBA as an
   # accuracy alternative.
   case ${DEVICE} in
-    RK3326)
+    RK3326|RK3562)
       add_emu_core gba retroarch gpsp true
       add_emu_core gba retroarch mgba false
       ;;
@@ -497,7 +499,7 @@ EOF
       ;;
   esac
   case ${DEVICE} in
-    H700|RK3326|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
+    H700|RK3326|RK3562|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
       add_emu_core gba mednafen gba false
       ;;
   esac
@@ -515,7 +517,7 @@ EOF
   add_emu_core gbah retroarch beetle_gba false
   add_emu_core gbah retroarch skyemu false
   case ${DEVICE} in
-    H700|RK3326|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
+    H700|RK3326|RK3562|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
       add_emu_core gbah retroarch gpsp false
       add_emu_core gbah mednafen gba false
       ;;
@@ -537,7 +539,7 @@ EOF
   add_emu_core gbav retroarch beetle_gba false
   add_emu_core gbav retroarch skyemu false
   case ${DEVICE} in
-    H700|RK3326|RK3399|RK3566|RK3588|SM8250|SM8550)
+    H700|RK3326|RK3562|RK3399|RK3566|RK3588|SM8250|SM8550)
       add_emu_core gbav retroarch gpsp false
       add_emu_core gbav mednafen gba false
       ;;
@@ -562,7 +564,7 @@ EOF
   add_emu_core gbc retroarch DoubleCherryGB false
   add_emu_core gbc retroarch skyemu false
   case ${DEVICE} in
-    H700|RK3326|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
+    H700|RK3326|RK3562|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
       add_emu_core gbc mednafen gb false
       ;;
   esac
@@ -583,7 +585,7 @@ EOF
   add_emu_core gbch retroarch DoubleCherryGB false
   add_emu_core gbch retroarch skyemu false
   case ${DEVICE} in
-    H700|RK3326|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
+    H700|RK3326|RK3562|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
       add_emu_core gbch mednafen gb false
       ;;
   esac
@@ -610,7 +612,7 @@ EOF
       add_emu_core gamecube retroarch dolphin false
       add_es_system gamecube
       ;;
-    H700|RK3326)
+    H700|RK3326|RK3562)
       ;;
     *)
       add_emu_core gamecube retroarch dolphin true
@@ -648,7 +650,7 @@ EOF
       add_es_system wii
       add_es_system wiiware
       ;;
-    H700|RK3326)
+    H700|RK3326|RK3562)
       ;;
     *)
       add_emu_core wii retroarch dolphin true
@@ -673,7 +675,7 @@ EOF
   add_emu_core gamegear retroarch picodrive false
   add_emu_core gamegear retroarch smsplus false
   case ${DEVICE} in
-    H700|RK3326|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
+    H700|RK3326|RK3562|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
       add_emu_core gamegear mednafen gg false
       ;;
   esac
@@ -685,7 +687,7 @@ EOF
   add_emu_core ggh retroarch picodrive false
   add_emu_core ggh retroarch smsplus false
   case ${DEVICE} in
-    H700|RK3326|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
+    H700|RK3326|RK3562|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
       add_emu_core ggh mednafen gg false
       ;;
   esac
@@ -713,7 +715,7 @@ EOF
   add_emu_core atarilynx retroarch handy true
   add_emu_core atarilynx retroarch beetle_lynx false
   case ${DEVICE} in
-    H700|RK3326|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
+    H700|RK3326|RK3562|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
       add_emu_core atarilynx mednafen lynx false
       ;;
   esac
@@ -738,7 +740,7 @@ EOF
   add_emu_core megadrive-japan retroarch genesis_plus_gx_wide false
   add_emu_core megadrive-japan retroarch picodrive
   case ${DEVICE} in
-    H700|RK3326|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
+    H700|RK3326|RK3562|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
       add_emu_core megadrive-japan mednafen md false
       ;;
   esac
@@ -761,7 +763,7 @@ EOF
   add_emu_core snesmsu1 retroarch snes9x true
   add_emu_core snesmsu1 retroarch beetle_supafaust false
   case ${DEVICE} in
-    H700|RK3326|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
+    H700|RK3326|RK3562|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
       add_emu_core snesmsu1 mednafen snes_faust false
       ;;
   esac
@@ -779,7 +781,7 @@ EOF
 
   ### Sega Naomi
   case ${DEVICE} in
-    H700|RK3326|RK3399|RK3566|RK3588)
+    H700|RK3326|RK3562|RK3399|RK3566|RK3588)
       add_emu_core naomi retroarch flycast2021 true
       add_emu_core naomi retroarch flycast false
       add_emu_core naomi flycast flycast-sa false
@@ -820,7 +822,7 @@ EOF
   add_emu_core ngp retroarch beetle_ngp true
   add_emu_core ngp retroarch race false
   case ${DEVICE} in
-    H700|RK3326|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
+    H700|RK3326|RK3562|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
       add_emu_core ngp mednafen ngp false
       ;;
   esac
@@ -830,7 +832,7 @@ EOF
   add_emu_core ngpc retroarch beetle_ngp true
   add_emu_core ngpc retroarch race false
   case ${DEVICE} in
-    H700|RK3326|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
+    H700|RK3326|RK3562|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
       add_emu_core ngpc mednafen ngp false
       ;;
   esac
@@ -843,7 +845,7 @@ EOF
   # for mupen64plus_next even unthrottled. GPU driver and CPU clock made no
   # difference to either, so the emulator choice is the whole gap.
   case ${DEVICE} in
-    RK3326)
+    RK3326|RK3562)
       add_emu_core n64 mupen64plus mupen64plus-arch true
       add_emu_core n64 retroarch mupen64plus_next false
       ;;
@@ -857,7 +859,7 @@ EOF
   fi
   add_emu_core n64 retroarch parallel_n64 false
   case ${DEVICE} in
-    RK3326) ;;
+    RK3326|RK3562) ;;
     *) add_emu_core n64 mupen64plus mupen64plus-arch false ;;
   esac
   case ${DEVICE} in
@@ -870,7 +872,7 @@ EOF
 
   ### Nintendo DS
   case ${DEVICE} in
-    H700|RK3326)
+    H700|RK3326|RK3562)
       add_emu_core nds drastic drastic-arch true
       add_emu_core nds melonds melonds-sa false
       add_emu_core nds retroarch melonds false
@@ -924,7 +926,7 @@ EOF
 
   ### Nintendo DSiWare
   case ${DEVICE} in
-    H700|RK3326)
+    H700|RK3326|RK3562)
       add_emu_core ndsiware retroarch melondsds true
       add_emu_core ndsiware melonds melonds-sa false
     ;;
@@ -941,7 +943,7 @@ EOF
   add_emu_core nes retroarch quicknes false
   add_emu_core nes retroarch mesen false
   case ${DEVICE} in
-    H700|RK3326|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
+    H700|RK3326|RK3562|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
       add_emu_core nes mednafen nes false
       ;;
   esac
@@ -953,7 +955,7 @@ EOF
   add_emu_core nesh retroarch quicknes false
   add_emu_core nesh retroarch mesen false
   case ${DEVICE} in
-    H700|RK3326|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
+    H700|RK3326|RK3562|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
       add_emu_core nesh mednafen nesh false
       ;;
   esac
@@ -980,7 +982,7 @@ EOF
   add_emu_core pcengine retroarch beetle_pce false
   add_emu_core pcengine retroarch beetle_supergrafx false
   case ${DEVICE} in
-    H700|RK3326|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
+    H700|RK3326|RK3562|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
       add_emu_core pcengine mednafen pce false
       add_emu_core pcengine mednafen pce_fast false
       ;;
@@ -992,7 +994,7 @@ EOF
   add_emu_core pcenginecd retroarch beetle_pce false
   add_emu_core pcenginecd retroarch beetle_supergrafx false
   case ${DEVICE} in
-    H700|RK3326|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
+    H700|RK3326|RK3562|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
       add_emu_core pcenginecd mednafen pce false
       add_emu_core pcenginecd mednafen pce_fast false
       ;;
@@ -1002,7 +1004,7 @@ EOF
   ### NEC PC-FX
   add_emu_core pcfx retroarch beetle_pcfx true
   case ${DEVICE} in
-    H700|RK3326|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
+    H700|RK3326|RK3562|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
       add_emu_core pcfx mednafen pcfx false
       ;;
   esac
@@ -1015,7 +1017,7 @@ EOF
 
   ### Sony Playstation
   case ${DEVICE} in
-    H700|RK3326)
+    H700|RK3326|RK3562)
       add_emu_core psx retroarch pcsx_rearmed32 true
       add_emu_core psx retroarch pcsx_rearmed false
       ;;
@@ -1111,7 +1113,7 @@ EOF
   add_emu_core genesis retroarch genesis_plus_gx_wide false
   add_emu_core genesis retroarch picodrive false
   case ${DEVICE} in
-    H700|RK3326|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
+    H700|RK3326|RK3562|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
       add_emu_core genesis mednafen md false
       ;;
   esac
@@ -1122,7 +1124,7 @@ EOF
   add_emu_core genh retroarch genesis_plus_gx_wide false
   add_emu_core genh retroarch picodrive false
   case ${DEVICE} in
-    H700|RK3326|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
+    H700|RK3326|RK3562|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
       add_emu_core genh mednafen md false
       ;;
   esac
@@ -1134,7 +1136,7 @@ EOF
   add_emu_core mastersystem retroarch picodrive false
   add_emu_core mastersystem retroarch smsplus false
   case ${DEVICE} in
-    H700|RK3326|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
+    H700|RK3326|RK3562|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
       add_emu_core mastersystem mednafen sms false
       ;;
   esac
@@ -1145,7 +1147,7 @@ EOF
   add_emu_core megadrive retroarch genesis_plus_gx_wide false
   add_emu_core megadrive retroarch picodrive false
   case ${DEVICE} in
-    H700|RK3326|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
+    H700|RK3326|RK3562|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
       add_emu_core megadrive mednafen md false
       ;;
   esac
@@ -1156,7 +1158,7 @@ EOF
   add_emu_core megadriveh retroarch genesis_plus_gx_wide false
   add_emu_core megadriveh retroarch picodrive false
   case ${DEVICE} in
-    H700|RK3326|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
+    H700|RK3326|RK3562|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
       add_emu_core megadriveh mednafen md false
       ;;
   esac
@@ -1231,7 +1233,7 @@ EOF
   add_emu_core supergrafx retroarch beetle_supergrafx
   add_emu_core supergrafx retroarch beetle_pce
   case ${DEVICE} in
-    H700|RK3326|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
+    H700|RK3326|RK3562|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
       add_emu_core supergrafx mednafen pce false
       add_emu_core supergrafx mednafen pce_fast false
       ;;
@@ -1254,7 +1256,7 @@ EOF
       ;;
   esac
   case ${DEVICE} in
-    H700|RK3326|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
+    H700|RK3326|RK3562|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
       add_emu_core snes mednafen snes_faust false
       ;;
   esac
@@ -1276,7 +1278,7 @@ EOF
       ;;
   esac
   case ${DEVICE} in
-    H700|RK3326|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
+    H700|RK3326|RK3562|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
       add_emu_core snesh mednafen snes_faust false
       ;;
   esac
@@ -1298,7 +1300,7 @@ EOF
       ;;
   esac
   case ${DEVICE} in
-    H700|RK3326|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
+    H700|RK3326|RK3562|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
       add_emu_core snes mednafen snes_faust false
       ;;
   esac
@@ -1332,7 +1334,7 @@ EOF
   add_emu_core tg16 retroarch beetle_pce false
   add_emu_core tg16 retroarch beetle_supergrafx false
   case ${DEVICE} in
-    H700|RK3326|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
+    H700|RK3326|RK3562|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
       add_emu_core tg16 mednafen pce false
       add_emu_core tg16 mednafen pce_fast false
       ;;
@@ -1344,7 +1346,7 @@ EOF
   add_emu_core tg16cd retroarch beetle_pce false
   add_emu_core tg16cd retroarch beetle_supergrafx false
   case ${DEVICE} in
-    H700|RK3326|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
+    H700|RK3326|RK3562|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
       add_emu_core tg16cd mednafen pce false
       add_emu_core tg16cd mednafen pce_fast false
       ;;
@@ -1370,7 +1372,7 @@ EOF
   ### Nintendo VirtualBoy
   add_emu_core virtualboy retroarch beetle_vb true
   case ${DEVICE} in
-    H700|RK3326|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
+    H700|RK3326|RK3562|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
       add_emu_core virtualboy mednafen vb false
       ;;
   esac
@@ -1379,7 +1381,7 @@ EOF
   ### Bandai Wonderswan
   add_emu_core wonderswan retroarch beetle_wswan true
   case ${DEVICE} in
-    H700|RK3326|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
+    H700|RK3326|RK3562|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
       add_emu_core wonderswan mednafen wswan false
       ;;
   esac
@@ -1388,7 +1390,7 @@ EOF
   ### Bandai Wonderswan Color
   add_emu_core wonderswancolor retroarch beetle_wswan true
   case ${DEVICE} in
-    H700|RK3326|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
+    H700|RK3326|RK3562|RK3399|RK3566|RK3588|SM8250|SM8550|SM8650)
       add_emu_core wonderswancolor mednafen wswan false
       ;;
   esac
