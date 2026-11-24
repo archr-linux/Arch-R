@@ -1,0 +1,20 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ArchR (https://github.com/archr-linux/Arch-R)
+
+# RK3562 on linux 7.3: kernel suspend not tried yet, so it starts as on
+# the RK3326, where it does not survive (px30 mainline: mem hangs on
+# entry, freeze never wakes; tested 2026-07-07 on the Soysauce). Default
+# the suspend mode to "off" so the power button takes the
+# archr-fake-suspend path (display off, audio muted, powersave governors,
+# input grabbed) instead of a hard lockup.
+#
+# Runs in two roles: at boot it seeds the default once (covers pacman
+# upgrades whose storage still carries the old mem-first sleep.conf),
+# and the suspendmode script calls it when the user picks "default" in
+# the ES SUSPEND MODE menu. Explicit user choices are never overridden.
+. /etc/profile
+
+if [ -z "$(get_setting system.suspendmode)" ]; then
+  /usr/bin/suspendmode off >/dev/null 2>&1
+fi

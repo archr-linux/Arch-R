@@ -1,0 +1,14 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ArchR (https://github.com/archr-linux/Arch-R)
+
+# AISLPC RG43V PRO and RG52 MINI (RK3562, rk3562-ro520c board). The
+# speaker is on the rk817 SPK output (Mux -> Ext Speaker Amp -> SPKO), so
+# the playback paths are the plain ones. No power LED: the stick RGB LEDs
+# are archr-stick-leds'. One thermal zone (soc-thermal, CPU and GPU).
+cat <<EOF2 >/storage/.config/profile.d/001-device_config
+# Device Features
+DEVICE_PLAYBACK_PATH_SPK="SPK"
+DEVICE_PLAYBACK_PATH_HP="HP"
+DEVICE_TEMP_SENSOR="/sys/devices/virtual/thermal/thermal_zone0/temp"
+EOF2
