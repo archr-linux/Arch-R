@@ -1,0 +1,18 @@
+Linux 7.x uapi errno.h defines EFSBADCRC and EFSCORRUPTED as aliases of
+EBADMSG and EUCLEAN; listed as names of their own they overwrite those
+entries in errno_names[] and -Werror=override-init stops the build.
+Drop them like the parisc aliases (upstream systemd does the same).
+
+--- a/src/basic/generate-errno-list.sh	2026-11-24 16:18:15.989188470 -0300
++++ b/src/basic/generate-errno-list.sh	2026-11-24 16:18:16.003187927 -0300
+@@ -5,7 +5,9 @@
+ 
+ # In kernel's arch/parisc/include/uapi/asm/errno.h, ECANCELLED and EREFUSED are defined as aliases of
+ # ECANCELED and ECONNREFUSED, respectively. Let's drop them.
++# Linux 7.x defines EFSBADCRC and EFSCORRUPTED as aliases of EBADMSG and
++# EUCLEAN in the generic uapi errno.h: drop them too.
+ 
+ ${1:?} -dM -include errno.h - </dev/null | \
+-       grep -Ev '^#define[[:space:]]+(ECANCELLED|EREFUSED)' | \
++       grep -Ev '^#define[[:space:]]+(ECANCELLED|EREFUSED|EFSBADCRC|EFSCORRUPTED)' | \
+        awk '/^#define[ \t]+E[^ _]+[ \t]+/ { print $2; }'
