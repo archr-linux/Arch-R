@@ -67,10 +67,10 @@
     WINDOWMANAGER="swaywm-env"
 
   # Additional drivers to install:
-  # The out-of-tree drivers still have to be built and tested against
-  # linux 7.3: rk915 (Wi-Fi of the v10 boards), an AIC8800 SDIO package
-  # (v14 boards; today AIC8800 is USB only) and the USB Wi-Fi dongles.
-    ADDITIONAL_DRIVERS=""
+  # rk915 is the internal Wi-Fi of the v10 boards; the AIC8800 SDIO of the
+  # v14 boards and the USB Wi-Fi dongles still have to be built and tested
+  # against linux 7.3.
+    ADDITIONAL_DRIVERS="rk915"
 
   # Additional Firmware to use ( )
     FIRMWARE=""

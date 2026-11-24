@@ -1,0 +1,265 @@
+rk915: port to the Linux 7.3 kernel API (RK3562 only)
+
+The RK3326 builds this driver against 6.12 and does not carry this patch;
+it lives under devices/RK3562/patches and goes on top of the package's
+own 001 (struct syscore, shared with the 6.12.114 build).
+
+- wake_lock.h: wakeup_source_add()/remove() are no longer exported; the
+  wakeup source is registered with wakeup_source_register() and kept as
+  a pointer.
+- del_timer()/del_timer_sync()/from_timer() were removed in 6.15/6.16:
+  use timer_delete(), timer_delete_sync() and timer_container_of().
+- mac80211 ops config, set_antenna and set_rts_threshold take a radio
+  index since 6.17.
+- strncpy() is gone from the kernel: strscpy_pad() for the driver name,
+  memcpy() where a fixed number of hex digits is copied without a NUL
+  (both copies were already exactly that long, so behaviour is unchanged).
+- MODULE_IMPORT_NS() takes a string since 6.13 and the VFS_internal
+  namespace has no users left: only import it before 6.13.
+
+diff --git a/inc/wake_lock.h b/inc/wake_lock.h
+index 7b4825b..1365ce6 100644
+--- a/inc/wake_lock.h
++++ b/inc/wake_lock.h
+@@ -18,6 +18,7 @@
+ 
+ #include <linux/ktime.h>
+ #include <linux/device.h>
++#include <linux/pm_wakeup.h>
+ 
+ /* A wake_lock prevents the system from entering suspend or other low power
+  * states when active. If the type is set to WAKE_LOCK_SUSPEND, the wake_lock
+@@ -29,48 +30,51 @@ enum {
+ 	WAKE_LOCK_TYPE_COUNT
+ };
+ 
++/*
++ * Linux 6.x dropped wakeup_source_add()/wakeup_source_remove() from the
++ * module API; the wakeup source is now allocated and registered by the
++ * PM core and only referenced from here.
++ */
+ struct wake_lock {
+-	struct wakeup_source ws;
++	struct wakeup_source *ws;
+ };
+ 
+ static inline void wake_lock_init(struct wake_lock *lock, int type,
+ 				  const char *name)
+ {
+-	struct wakeup_source *ws = &lock->ws;
+-
+-	if (ws) {
+-		memset(ws, 0, sizeof(*ws));
+-		ws->name = name;
+-	}
+-	wakeup_source_add(ws);
++	lock->ws = wakeup_source_register(NULL, name);
+ }
+ 
+ static inline void wake_lock_destroy(struct wake_lock *lock)
+ {
+-	struct wakeup_source *ws = &lock->ws;
+-
+-	wakeup_source_remove(ws);
+-	__pm_relax(ws);
++	if (lock->ws) {
++		__pm_relax(lock->ws);
++		wakeup_source_unregister(lock->ws);
++		lock->ws = NULL;
++	}
+ }
+ 
+ static inline void wake_lock(struct wake_lock *lock)
+ {
+-	__pm_stay_awake(&lock->ws);
++	if (lock->ws)
++		__pm_stay_awake(lock->ws);
+ }
+ 
+ static inline void wake_lock_timeout(struct wake_lock *lock, long timeout)
+ {
+-	__pm_wakeup_event(&lock->ws, jiffies_to_msecs(timeout));
++	if (lock->ws)
++		__pm_wakeup_event(lock->ws, jiffies_to_msecs(timeout));
+ }
+ 
+ static inline void wake_unlock(struct wake_lock *lock)
+ {
+-	__pm_relax(&lock->ws);
++	if (lock->ws)
++		__pm_relax(lock->ws);
+ }
+ 
+ static inline int wake_lock_active(struct wake_lock *lock)
+ {
+-	return lock->ws.active;
++	return lock->ws ? lock->ws->active : 0;
+ }
+ 
+ #endif
+diff --git a/src/beacon.c b/src/beacon.c
+index 65e2459..cb11f13 100755
+--- a/src/beacon.c
++++ b/src/beacon.c
+@@ -31,7 +31,7 @@ void modify_beacon_params (struct umac_vif *uvif,
+ 			  uvif->vif->addr,
+ 			  bcn_int);
+ 	} else {
+-		del_timer(&uvif->bcn_timer);
++		timer_delete(&uvif->bcn_timer);
+ 	}
+ prog_rpu_fail:
+ 	return;
+@@ -42,7 +42,7 @@ prog_rpu_fail:
+ #if (LINUX_VERSION_CODE > KERNEL_VERSION(4, 6, 0))
+ static void vif_bcn_timer_expiry(struct timer_list *t)
+ {
+-	struct umac_vif *uvif = from_timer(uvif, t, bcn_timer);
++	struct umac_vif *uvif = timer_container_of(uvif, t, bcn_timer);
+ #else
+ static void vif_bcn_timer_expiry(unsigned long data)
+ {
+@@ -146,6 +146,6 @@ void init_beacon (struct umac_vif *uvif)
+ 
+ void deinit_beacon (struct umac_vif *uvif)
+ {
+-	del_timer(&uvif->bcn_timer);
++	timer_delete(&uvif->bcn_timer);
+ 
+ }
+diff --git a/src/init.c b/src/init.c
+index 242c801..3f40117 100755
+--- a/src/init.c
++++ b/src/init.c
+@@ -294,6 +294,6 @@ module_param_named(jtag, m0_jtag_enable, bool, 0644);
+ MODULE_AUTHOR("Rockchips");
+ MODULE_DESCRIPTION("Driver for Rockchips RK915 SDIO WiFi Devices");
+ MODULE_LICENSE("GPL");
+-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0) && LINUX_VERSION_CODE < KERNEL_VERSION(6, 13, 0)
+ MODULE_IMPORT_NS(VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver);
+ #endif
+diff --git a/src/p2p.c b/src/p2p.c
+index 55aa41e..4a9960a 100755
+--- a/src/p2p.c
++++ b/src/p2p.c
+@@ -42,7 +42,7 @@ void start_roc_timeout_timer(struct img_priv *priv, int timeout)
+ void deinit_roc_timeout_timer (struct img_priv *priv)
+ {
+ 	RPU_DEBUG_ROC("%s: %p\n", __func__, priv);
+-	del_timer(&priv->roc_timer);
++	timer_delete(&priv->roc_timer);
+ }
+ 
+ void rpu_roc_complete_work(struct work_struct *work)
+diff --git a/src/procfs.c b/src/procfs.c
+index b492c6c..7344649 100755
+--- a/src/procfs.c
++++ b/src/procfs.c
+@@ -9,6 +9,7 @@
+ 
+ #include <linux/proc_fs.h>
+ #include <linux/moduleparam.h>
++#include <linux/string.h>
+ 
+ #include "core.h"
+ #include "utils.h"
+@@ -1877,7 +1878,7 @@ static void set_default_phy_thresh(unsigned char *rf_params, int len)
+ 	sprintf(def, "%02x", default_phy_threshold);
+ 
+ 	for (i = 0; i < 14; i++) {
+-		strncpy(&rf_params[(len - i)*2 - 2], def, 2);
++		memcpy(&rf_params[(len - i)*2 - 2], def, 2);
+ 	}
+ }
+ 
+@@ -1910,7 +1911,7 @@ int proc_init(struct proc_dir_entry ***main_dir_entry)
+ 	//	(94 * 2));
+ 	//strncpy(rf_params,"00204000240210020403040404050406040704080409040A040B040C040CF80b0C04FEF8ECEC0000000000000000000000000000000000000000000000000000000008080808080808080808080808088C8C8C8C8C8C8C8C8C8C8C8C8C8C",
+ 	//	(94 * 2));
+-        strncpy(rf_params,"00204000240210020403040404050406040704080409040A040B040C040CF80B0C04FFFAF2EC0000000000000000000000000000000000000000000000000000000008080808080808080808080808088C8C8C8C8C8C8C8C8C8C8C8C8C8C",
++        memcpy(rf_params,"00204000240210020403040404050406040704080409040A040B040C040CF80B0C04FFFAF2EC0000000000000000000000000000000000000000000000000000000008080808080808080808080808088C8C8C8C8C8C8C8C8C8C8C8C8C8C",
+                 (94 * 2)); 
+ 	set_default_phy_thresh(rf_params, 94);
+ 
+diff --git a/src/rx.c b/src/rx.c
+index 2b7df94..da8e4db 100755
+--- a/src/rx.c
++++ b/src/rx.c
+@@ -63,7 +63,7 @@ void dapt_stop_timer(struct img_priv *priv)
+ 	RPU_DEBUG_DAPT("%s\n", __func__);
+ 
+ 	if (!dapt->dapt_disable) {
+-		del_timer_sync(&dapt->dapt_timer);
++		timer_delete_sync(&dapt->dapt_timer);
+ 		dapt->timer_start = 0;
+ 	}
+ }
+diff --git a/src/umac_if.c b/src/umac_if.c
+index 00fb5cb..729cd3d 100755
+--- a/src/umac_if.c
++++ b/src/umac_if.c
+@@ -13,6 +13,7 @@
+ #include <linux/interrupt.h>
+ #include <linux/ip.h>
+ #include <linux/kernel.h>
++#include <linux/string.h>
+ #include <linux/moduleparam.h>
+ #include <linux/udp.h>
+ #include <linux/version.h>
+@@ -695,7 +696,7 @@ static void start_keep_alive_timer(struct img_priv *priv, int index)
+ static void deinit_keep_alive_timer (struct img_priv *priv)
+ {
+ 	RPU_DEBUG_UMACIF("%s: %p\n", __func__, priv);
+-	del_timer(&priv->keep_alive_timer);
++	timer_delete(&priv->keep_alive_timer);
+ }
+ #endif
+ 
+@@ -1013,8 +1014,8 @@ static int change_interface(struct ieee80211_hw *dev,
+ 	return ret;
+ }
+ 
+-static int config(struct ieee80211_hw *hw,
+-		unsigned int changed)
++static int config(struct ieee80211_hw *hw, int radio_idx,
++		u32 changed)
+ {
+ 	struct img_priv *priv = hw->priv;
+ 	struct ieee80211_conf *conf = &hw->conf;
+@@ -1882,7 +1883,7 @@ static int ampdu_action(struct ieee80211_hw *hw,
+ }
+ 
+ 
+-static int set_antenna(struct ieee80211_hw *hw, u32 tx_ant, u32 rx_ant)
++static int set_antenna(struct ieee80211_hw *hw, int radio_idx, u32 tx_ant, u32 rx_ant)
+ {
+ 	struct img_priv *priv = (struct img_priv *)hw->priv;
+ 
+@@ -1943,7 +1944,7 @@ static void start_scan_timeout_timer(struct img_priv *priv, int p2p)
+ static void deinit_scan_timeout_timer (struct img_priv *priv)
+ {
+ 	RPU_DEBUG_UMACIF("%s: %p\n", __func__, priv);
+-	del_timer(&priv->scan_timer);
++	timer_delete(&priv->scan_timer);
+ }
+ #endif
+ 
+@@ -2232,7 +2233,7 @@ void cancel_hw_scan(struct ieee80211_hw *hw, struct ieee80211_vif *vif)
+ }
+ 
+ 
+-int set_rts_threshold(struct ieee80211_hw *hw,
++int set_rts_threshold(struct ieee80211_hw *hw, int radio_idx,
+ 		      u32 value)
+ {
+ 	struct img_priv *priv = NULL;
+@@ -2483,7 +2484,7 @@ int rpu_init(void)
+ 	priv->txpower = DEFAULT_TX_POWER;
+ 	priv->tx_antenna = DEFAULT_TX_ANT_SELECT;
+ 	priv->rts_threshold = DEFAULT_RTS_THRESHOLD;
+-	strncpy(priv->name, RPU_DRIVER_NAME, 11);
++	strscpy_pad(priv->name, RPU_DRIVER_NAME, 12);
+ 	priv->name[11] = '\0';
+ 
+ 	for (i = 0; i < wifi->params.num_vifs; i++)
