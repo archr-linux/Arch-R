@@ -1,0 +1,1436 @@
+AIC8800-SDIO: the Radxa Debian patch series, SDIO driver part
+
+radxa-pkg/aic8800 keeps the AICSemi SDK pristine under src/ and carries
+its kernel compatibility fixes as a quilt series in debian/patches. This
+is the src/SDIO part of that series, applied in series order at commit
+5562c254b0231be34588dc608ec28c4f1d613285, as one patch (the USB and PCIe
+hunks are dropped; they are not built here).
+
+Patches folded in:
+  fix-sdio-firmware-path.patch
+  fix-sdio-fall-through.patch
+  fix-linux-6.1-build.patch
+  fix-linux-6.13-build.patch
+  fix-linux-6.14-build.patch
+  fix-linux-6.15-build.patch
+  fix-allwinner-dkms.patch
+  fix-linux-6.16-build.patch
+  fix-linux-6.17-build.patch
+  fix-Lower-the-debugging-log-level.patch
+  fix-linux-6.19-build.patch
+  fix-vmalloc-not-include.patch
+  fix-build-on-low-memory-devices.patch
+  fix-linux-7.1-build.patch
+  fix-linux-7.2-build.patch
+  fix-sdio-per-chip-firmware-path.patch
+  fix-linux-7.3-build.patch
+  fix-linux-7.4-build.patch
+
+Most relevant here: the Linux 6.13 to 7.4 API fixes and the firmware
+path, /lib/firmware/aic8800_fw/SDIO/<chip family>/.
+
+diff --git a/src/SDIO/driver_fw/driver/aic8800/Makefile b/src/SDIO/driver_fw/driver/aic8800/Makefile
+index 6f02ee9..c18dd83 100644
+--- a/src/SDIO/driver_fw/driver/aic8800/Makefile
++++ b/src/SDIO/driver_fw/driver/aic8800/Makefile
+@@ -6,8 +6,6 @@ obj-$(CONFIG_AIC8800_BTLPM_SUPPORT) += aic8800_btlpm/
+ obj-$(CONFIG_AIC8800_WLAN_SUPPORT) += aic8800_fdrv/
+ obj-$(CONFIG_AIC_WLAN_SUPPORT) += aic8800_bsp/
+ 
+-MAKEFLAGS +=-j$(shell nproc)
+-
+ ########## config option ##########
+ export CONFIG_USE_FW_REQUEST = n
+ export CONFIG_PREALLOC_RX_SKB = y
+diff --git a/src/SDIO/driver_fw/driver/aic8800/aic8800_bsp/Makefile b/src/SDIO/driver_fw/driver/aic8800/aic8800_bsp/Makefile
+index ccc4efe..2a0049a 100644
+--- a/src/SDIO/driver_fw/driver/aic8800/aic8800_bsp/Makefile
++++ b/src/SDIO/driver_fw/driver/aic8800/aic8800_bsp/Makefile
+@@ -1,7 +1,7 @@
+ CONFIG_SDIO_SUPPORT := y
+ CONFIG_SDIO_PWRCTRL := n
+-CONFIG_AIC_FW_PATH = "/vendor/etc/firmware"
+-#CONFIG_AIC_FW_PATH = "/lib/firmware/aic8800D80"
++#CONFIG_AIC_FW_PATH = "/vendor/etc/firmware"
++CONFIG_AIC_FW_PATH = "/lib/firmware/aic8800_fw/SDIO"
+ export CONFIG_AIC_FW_PATH
+ ccflags-y += -DCONFIG_AIC_FW_PATH=\"$(CONFIG_AIC_FW_PATH)\"
+ 
+@@ -140,6 +140,11 @@ KVER ?= $(shell uname -r)
+ MODDESTDIR ?= /lib/modules/$(KVER)/kernel/drivers/net/wireless/
+ ARCH ?= x86_64
+ CROSS_COMPILE ?=
++
++ifeq ($(CONFIG_AW_BSP), y)
++ccflags-y += -DCONFIG_PLATFORM_ALLWINNER
++endif
++
+ endif
+ ###########################################
+ 
+diff --git a/src/SDIO/driver_fw/driver/aic8800/aic8800_bsp/aic8800dc_compat.c b/src/SDIO/driver_fw/driver/aic8800/aic8800_bsp/aic8800dc_compat.c
+index 64fbb01..60b9b6f 100644
+--- a/src/SDIO/driver_fw/driver/aic8800/aic8800_bsp/aic8800dc_compat.c
++++ b/src/SDIO/driver_fw/driver/aic8800/aic8800_bsp/aic8800dc_compat.c
+@@ -5,6 +5,7 @@
+ u8 chip_sub_id = 0;
+ u8 chip_mcu_id = 0;
+ extern int testmode;
++extern void get_fw_path(char* fw_path);
+ 
+ u32 syscfg_tbl_8800dc[][2] = {
+     {0x40500010, 0x00000004},
+@@ -2482,6 +2483,7 @@ int aicwf_dpd_result_write_8800dc(void *buf, int buf_len)
+     int sum = 0, len = 0;
+     char *path = NULL;
+     struct file *fp = NULL;
++    char fw_dir[FW_PATH_MAX_LEN];
+     loff_t pos = 0;
+     mm_segment_t fs;
+ 
+@@ -2493,7 +2495,8 @@ int aicwf_dpd_result_write_8800dc(void *buf, int buf_len)
+         return -1;
+     }
+ 
+-    len = snprintf(path, FW_PATH_MAX_LEN, "%s/%s", AICBSP_FW_PATH, FW_DPDRESULT_NAME_8800DC);
++    get_fw_path(fw_dir);
++    len = snprintf(path, FW_PATH_MAX_LEN, "%s/%s", fw_dir, FW_DPDRESULT_NAME_8800DC);
+     printk("%s\n", path);
+ 
+     fp = filp_open(path, O_RDWR | O_CREAT, 0644);
+diff --git a/src/SDIO/driver_fw/driver/aic8800/aic8800_bsp/aic_bsp_driver.c b/src/SDIO/driver_fw/driver/aic8800/aic8800_bsp/aic_bsp_driver.c
+index f723a22..194c0c2 100644
+--- a/src/SDIO/driver_fw/driver/aic8800/aic8800_bsp/aic_bsp_driver.c
++++ b/src/SDIO/driver_fw/driver/aic8800/aic8800_bsp/aic_bsp_driver.c
+@@ -34,6 +34,7 @@
+ 
+ extern int adap_test;
+ extern char aic_fw_path[FW_PATH_MAX];
++extern void get_fw_path(char* fw_path);
+ extern struct aic_sdio_dev *aicbsp_sdiodev;
+ 
+ static void cmd_dump(const struct rwnx_cmd *cmd)
+@@ -476,8 +477,12 @@ void rwnx_rx_handle_msg(struct aic_sdio_dev *sdiodev, struct ipc_e2a_msg *msg)
+ }
+ 
+ #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 13, 0)
++MODULE_IMPORT_NS("VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver");
++#else
+ MODULE_IMPORT_NS(VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver);
+ #endif
++#endif
+ 
+ #define MD5(x) x[0],x[1],x[2],x[3],x[4],x[5],x[6],x[7],x[8],x[9],x[10],x[11],x[12],x[13],x[14],x[15]
+ #define MD5PINRT "file md5:%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x\r\n"
+@@ -533,6 +538,7 @@ int rwnx_load_firmware(u32 **fw_buf, const char *name, struct device *device)
+ 	void *buffer = NULL;
+ 	char *path = NULL;
+ 	struct file *fp = NULL;
++	char fw_dir[AICBSP_FW_PATH_MAX];
+ 	int size = 0, len = 0;// i = 0;
+ 	ssize_t rdlen = 0;
+ 	//u32 *src = NULL, *dst = NULL;
+@@ -557,11 +563,8 @@ int rwnx_load_firmware(u32 **fw_buf, const char *name, struct device *device)
+ 		return -1;
+ 	}
+ 
+-    if(strlen(aic_fw_path) > 0){
+-        len = snprintf(path, AICBSP_FW_PATH_MAX, "%s/%s", aic_fw_path, name);
+-    }else{
+-	    len = snprintf(path, AICBSP_FW_PATH_MAX, "%s/%s", AICBSP_FW_PATH, name);
+-    }
++	get_fw_path(fw_dir);
++	len = snprintf(path, AICBSP_FW_PATH_MAX, "%s/%s", fw_dir, name);
+ 	if (len >= AICBSP_FW_PATH_MAX) {
+ 		printk("%s: %s file's path too long\n", __func__, name);
+ 		*fw_buf = NULL;
+@@ -1089,6 +1092,7 @@ int is_file_exist(char* name)
+ {
+     char *path = NULL;
+     struct file *fp = NULL;
++    char fw_dir[FW_PATH_MAX_LEN];
+     int len;
+ 
+     path = __getname();
+@@ -1097,7 +1101,8 @@ int is_file_exist(char* name)
+         return -1;
+     }
+ 
+-    len = snprintf(path, FW_PATH_MAX_LEN, "%s/%s", AICBSP_FW_PATH, name);
++    get_fw_path(fw_dir);
++    len = snprintf(path, FW_PATH_MAX_LEN, "%s/%s", fw_dir, name);
+ 
+     fp = filp_open(path, O_RDONLY, 0);
+     if (IS_ERR(fp)) {
+@@ -2233,7 +2238,7 @@ int aicbsp_get_feature(struct aicbsp_feature_t *feature, char *fw_path)
+ 	feature->fwlog_en   = aicbsp_info.fwlog_en;
+ 	feature->irqf       = aicbsp_info.irqf;
+ 	if(fw_path != NULL){
+-		sprintf(fw_path,"%s", AICBSP_FW_PATH);
++		get_fw_path(fw_path);
+ 	}
+     
+     sdio_dbg("%s, set FEATURE_SDIO_CLOCK %d MHz\n", __func__, feature->sdio_clock/1000000);
+diff --git a/src/SDIO/driver_fw/driver/aic8800/aic8800_bsp/aic_bsp_main.c b/src/SDIO/driver_fw/driver/aic8800/aic8800_bsp/aic_bsp_main.c
+index 653a021..9a36d28 100644
+--- a/src/SDIO/driver_fw/driver/aic8800/aic8800_bsp/aic_bsp_main.c
++++ b/src/SDIO/driver_fw/driver/aic8800/aic8800_bsp/aic_bsp_main.c
+@@ -15,7 +15,7 @@
+ #define DRV_AUTHOR            "AICSemi"
+ #define DRV_VERS_MOD          "1.0"
+ 
+-int aicwf_dbg_level_bsp = LOGERROR|LOGINFO|LOGDEBUG|LOGTRACE;
++int aicwf_dbg_level_bsp = LOGERROR;
+ 
+ struct semaphore aicbsp_probe_semaphore;
+ 
+diff --git a/src/SDIO/driver_fw/driver/aic8800/aic8800_bsp/aicsdio.c b/src/SDIO/driver_fw/driver/aic8800/aic8800_bsp/aicsdio.c
+index 83f45cb..c873db9 100644
+--- a/src/SDIO/driver_fw/driver/aic8800/aic8800_bsp/aicsdio.c
++++ b/src/SDIO/driver_fw/driver/aic8800/aic8800_bsp/aicsdio.c
+@@ -1461,7 +1461,11 @@ int aicwf_sdio_busrx_thread(void *data)
+ #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 14, 0)
+ static void aicwf_sdio_bus_pwrctl(struct timer_list *t)
+ {
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 16, 0)
++	struct aic_sdio_dev *sdiodev = timer_container_of(sdiodev, t, timer);
++#else
+ 	struct aic_sdio_dev *sdiodev = from_timer(sdiodev, t, timer);
++#endif
+ #else
+ static void aicwf_sdio_bus_pwrctl(ulong data)
+ {
+@@ -1666,7 +1670,11 @@ void aicwf_sdio_pwrctl_timer(struct aic_sdio_dev *sdiodev, uint duration)
+ 	spin_lock_bh(&sdiodev->pwrctl_lock);
+ 	if (!duration) {
+ 		if (timer_pending(&sdiodev->timer))
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 15, 0)
++			timer_delete_sync(&sdiodev->timer);
++#else
+ 			del_timer_sync(&sdiodev->timer);
++#endif
+ 	} else {
+ 		sdiodev->active_duration = duration;
+ 		timeout = msecs_to_jiffies(sdiodev->active_duration);
+@@ -2058,11 +2066,34 @@ fail:
+ 	return NULL;
+ }
+ 
++static const char* aicbsp_chip_fw_subdir(void)
++{
++	if (aicbsp_sdiodev) {
++		switch (aicbsp_sdiodev->chipid) {
++		case PRODUCT_ID_AIC8801:
++			return "/aic8800";
++		case PRODUCT_ID_AIC8800DC:
++		case PRODUCT_ID_AIC8800DW:
++			return "/aic8800DC";
++		case PRODUCT_ID_AIC8800D80:
++			return "/aic8800D80";
++		case PRODUCT_ID_AIC8800D80N:
++		case PRODUCT_ID_AIC8800D80WN:
++			return "/aic8800D80N";
++		case PRODUCT_ID_AIC8800D80X2:
++			return "/aic8800D80X2";
++		default:
++			break;
++		}
++	}
++	return "";
++}
++
+ void get_fw_path(char* fw_path){
+ 	if (strlen(aic_fw_path) > 0) {
+ 		memcpy(fw_path, aic_fw_path, strlen(aic_fw_path));
+ 	}else{
+-		memcpy(fw_path, aic_default_fw_path, strlen(aic_default_fw_path));
++		snprintf(fw_path, FW_PATH_MAX, "%s%s", aic_default_fw_path, aicbsp_chip_fw_subdir());
+ 	}
+ }
+ 
+diff --git a/src/SDIO/driver_fw/driver/aic8800/aic8800_bsp/aicsdio.h b/src/SDIO/driver_fw/driver/aic8800/aic8800_bsp/aicsdio.h
+index 071f53d..6ef331f 100644
+--- a/src/SDIO/driver_fw/driver/aic8800/aic8800_bsp/aicsdio.h
++++ b/src/SDIO/driver_fw/driver/aic8800/aic8800_bsp/aicsdio.h
+@@ -14,6 +14,7 @@
+ #include <linux/if_ether.h>
+ #include <linux/ieee80211.h>
+ #include <linux/semaphore.h>
++#include <linux/vmalloc.h>
+ #include "aic_bsp_driver.h"
+ 
+ #define AICBSP_SDIO_NAME                "aicbsp_sdio"
+diff --git a/src/SDIO/driver_fw/driver/aic8800/aic8800_btlpm/rfkill.c b/src/SDIO/driver_fw/driver/aic8800/aic8800_btlpm/rfkill.c
+index 5caf3f8..bba9619 100644
+--- a/src/SDIO/driver_fw/driver/aic8800/aic8800_btlpm/rfkill.c
++++ b/src/SDIO/driver_fw/driver/aic8800/aic8800_btlpm/rfkill.c
+@@ -18,8 +18,11 @@
+ #include <linux/gpio.h>
+ #include <linux/ioport.h>
+ #include <linux/clk.h>
+-#include <linux/of_gpio.h>
+ #include <linux/version.h>
++/* of_gpio.h is gone in 7.1, and nothing here ever used it. */
++#if LINUX_VERSION_CODE < KERNEL_VERSION(7, 1, 0)
++#include <linux/of_gpio.h>
++#endif
+ #include "aic_bsp_export.h"
+ 
+ static struct rfkill *bt_rfk;
+diff --git a/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/Makefile b/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/Makefile
+index 033b8b4..c74d8f1 100644
+--- a/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/Makefile
++++ b/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/Makefile
+@@ -356,7 +356,6 @@ ccflags-$(CONFIG_APF) += -DCONFIG_APF
+ ccflags-$(CONFIG_AUTO_POWERSAVE) += -DCONFIG_AUTO_POWERSAVE
+ 
+ ccflags-y += -DAIC_TRACE_INCLUDE_PATH=$(src)
+-MAKEFLAGS +=-j$(shell nproc)
+ 
+ ########## Platform support list ##########
+ CONFIG_PLATFORM_ROCKCHIP ?= n
+@@ -411,6 +410,11 @@ KVER ?= $(shell uname -r)
+ MODDESTDIR ?= /lib/modules/$(KVER)/kernel/drivers/net/wireless/
+ ARCH ?= x86_64
+ CROSS_COMPILE ?=
++
++ifeq ($(CONFIG_AW_BSP), y)
++ccflags-y += -DCONFIG_PLATFORM_ALLWINNER
++endif
++
+ endif
+ ###########################################
+ 
+diff --git a/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/aicwf_sdio.c b/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/aicwf_sdio.c
+index bbd54a0..f1a337a 100644
+--- a/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/aicwf_sdio.c
++++ b/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/aicwf_sdio.c
+@@ -2803,8 +2803,12 @@ static void aicwf_sdio_bus_pwrctl(struct timer_list *t)
+ {
+ #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 14, 0)
+ 	struct aic_sdio_dev *sdiodev = (struct aic_sdio_dev *) data;
++#else
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 16, 0)
++	struct aic_sdio_dev *sdiodev = timer_container_of(sdiodev, t, timer);
+ #else
+ 	struct aic_sdio_dev *sdiodev = from_timer(sdiodev, t, timer);
++#endif
+ #endif
+ 
+ 	if (sdiodev->bus_if->state == BUS_DOWN_ST) {
+@@ -3001,7 +3005,11 @@ void aicwf_sdio_pwrctl_timer(struct aic_sdio_dev *sdiodev, uint duration)
+ 	spin_lock_bh(&sdiodev->pwrctl_lock);
+ 	if (!duration) {
+ 		if (timer_pending(&sdiodev->timer))
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 15, 0)
++			timer_delete_sync(&sdiodev->timer);
++#else
+ 			del_timer_sync(&sdiodev->timer);
++#endif
+ 	} else {
+ 		sdiodev->active_duration = duration;
+ 		timeout = msecs_to_jiffies(sdiodev->active_duration);
+diff --git a/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/aicwf_tcp_ack.c b/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/aicwf_tcp_ack.c
+index ca47b26..d74bd8d 100644
+--- a/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/aicwf_tcp_ack.c
++++ b/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/aicwf_tcp_ack.c
+@@ -106,7 +106,11 @@ void tcp_ack_deinit(struct rwnx_hw *priv)
+ 		drop_msg = NULL;
+ 
+ 		write_seqlock_bh(&ack_m->ack_info[i].seqlock);
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 15, 0)
++		timer_delete(&ack_m->ack_info[i].timer);
++#else
+ 		del_timer(&ack_m->ack_info[i].timer);
++#endif
+ 		drop_msg = ack_m->ack_info[i].msgbuf;
+ 		ack_m->ack_info[i].msgbuf = NULL;
+ 		write_sequnlock_bh(&ack_m->ack_info[i].seqlock);
+@@ -375,7 +379,11 @@ int tcp_ack_handle(struct msg_buf *new_msgbuf,
+ 				//printk("%lx \n",ack_info->msgbuf);
+ 				drop_msg = ack_info->msgbuf;
+ 				ack_info->msgbuf = NULL;
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 15, 0)
++				timer_delete(&ack_info->timer);
++#else
+ 				del_timer(&ack_info->timer);
++#endif
+ 			}else{
+ 				//printk("msgbuf is NULL \n");
+ 			}
+@@ -409,7 +417,11 @@ int tcp_ack_handle(struct msg_buf *new_msgbuf,
+ 				   atomic_read(&ack_m->max_drop_cnt)))) {
+ 			ack_info->drop_cnt = 0;
+ 			ack_info->in_send_msg = new_msgbuf;
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 15, 0)
++			timer_delete(&ack_info->timer);
++#else
+ 			del_timer(&ack_info->timer);
++#endif
+ 		} else {
+ 			ret = 1;
+ 			ack_info->msgbuf = new_msgbuf;
+@@ -472,7 +484,11 @@ int tcp_ack_handle_new(struct msg_buf *new_msgbuf,
+ 			ack_info->drop_cnt = 0;
+ 			//send_msg = new_msgbuf;
+ 			ack_info->in_send_msg = new_msgbuf;
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 15, 0)
++			timer_delete(&ack_info->timer);
++#else
+ 			del_timer(&ack_info->timer);
++#endif
+ 		}else{
+ 			ret = 1;
+ 			ack_info->msgbuf = new_msgbuf;
+diff --git a/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/rwnx_defs.h b/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/rwnx_defs.h
+index 7a5ca12..2f603d7 100644
+--- a/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/rwnx_defs.h
++++ b/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/rwnx_defs.h
+@@ -588,8 +588,26 @@ struct rwnx_roc_elem {
+ 	bool mgmt_roc;
+ 	/* Indicate if we have switch on the RoC channel */
+ 	bool on_chan;
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 3, 0)
++	/* Assigned by cfg80211; 0 for the RoC that mgmt_tx starts itself */
++	u64 cookie;
++#endif
+ };
+ 
++/*
++ * Cookie for cfg80211_ready_on_channel() and
++ * cfg80211_remain_on_channel_expired(). Up to 7.2 the driver chose it
++ * (roc_cookie_cnt). From 7.3 on cfg80211 assigns it before calling
++ * remain_on_channel, and the driver has to report that value back. It
++ * is kept in the RoC element, which is filled in before the RoC is sent
++ * to the firmware, so the events can never see a stale one.
++ */
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 3, 0)
++#define RWNX_ROC_COOKIE(rwnx_hw, roc_elem) ((roc_elem)->cookie)
++#else
++#define RWNX_ROC_COOKIE(rwnx_hw, roc_elem) ((u64)((rwnx_hw)->roc_cookie_cnt))
++#endif
++
+ /* Structure containing channel survey information received from MAC */
+ struct rwnx_survey_info {
+ 	// Filled
+diff --git a/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/rwnx_main.c b/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/rwnx_main.c
+index 1e2e73d..6db0c25 100644
+--- a/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/rwnx_main.c
++++ b/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/rwnx_main.c
+@@ -535,7 +535,7 @@ static const int rwnx_hwq2uapsd[NL80211_NUM_ACS] = {
+ 
+ 
+ extern uint8_t scanning;
+-int aicwf_dbg_level = LOGERROR|LOGINFO|LOGDEBUG|LOGTRACE|LOGFW;
++int aicwf_dbg_level = LOGERROR;
+ module_param(aicwf_dbg_level, int, 0660);
+ #ifdef CONFIG_DYNAMIC_PWR
+ int dynamic_pwr = 1;
+@@ -1659,6 +1659,7 @@ static struct rwnx_vif *rwnx_interface_add(struct rwnx_hw *rwnx_hw,
+ 		vif->ap.mesh_pm = NL80211_MESH_POWER_ACTIVE;
+ 		vif->ap.next_mesh_pm = NL80211_MESH_POWER_ACTIVE;
+ 		// no break
++		__attribute__((__fallthrough__));
+ 	case NL80211_IFTYPE_AP:
+ 		INIT_LIST_HEAD(&vif->ap.sta_list);
+ 		memset(&vif->ap.bcn, 0, sizeof(vif->ap.bcn));
+@@ -1766,7 +1767,11 @@ void aicwf_p2p_alive_timeout(struct timer_list *t)
+ 	rwnx_vif = (struct rwnx_vif *)data;
+ 	rwnx_hw = rwnx_vif->rwnx_hw;
+ 	#else
++	#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 16, 0)
++	rwnx_hw = timer_container_of(rwnx_hw, t, p2p_alive_timer);
++	#else
+ 	rwnx_hw = from_timer(rwnx_hw, t, p2p_alive_timer);
++	#endif
+ 	rwnx_vif = rwnx_hw->p2p_dev_vif;
+ 	#endif
+ 
+@@ -2079,6 +2084,7 @@ static int rwnx_cfg80211_change_iface(struct wiphy *wiphy,
+ 		vif->ap.create_path = false;
+ 		vif->ap.generation = 0;
+ 		// no break
++		__attribute__((__fallthrough__));
+ 	case NL80211_IFTYPE_AP:
+ 	case NL80211_IFTYPE_P2P_GO:
+ 		INIT_LIST_HEAD(&vif->ap.sta_list);
+@@ -2203,7 +2209,11 @@ static void rwnx_cfgp2p_stop_p2p_device(struct wiphy *wiphy, struct wireless_dev
+ 	if (rwnx_vif == rwnx_hw->p2p_dev_vif) {
+ 		rwnx_hw->is_p2p_alive = 0;
+ 		if (timer_pending(&rwnx_hw->p2p_alive_timer)) {
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 15, 0)
++			timer_delete_sync(&rwnx_hw->p2p_alive_timer);
++#else
+ 			del_timer_sync(&rwnx_hw->p2p_alive_timer);
++#endif
+ 		}
+ 
+ 		if (rwnx_vif->up) {
+@@ -2280,14 +2290,30 @@ bool key_flag = false;
+  * @add_key: add a key with the given parameters. @mac_addr will be %NULL
+  *	when adding a group key.
+  */
+-	static int rwnx_cfg80211_add_key(struct wiphy *wiphy, struct net_device *netdev,
++	static int rwnx_cfg80211_add_key(struct wiphy *wiphy,
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 1, 0)
++    struct wireless_dev *wdev,
++#else
++    struct net_device *netdev,
++#endif
+ #if (LINUX_VERSION_CODE >= HIGH_KERNEL_VERSION2)
+ 																	 int link_id,
+ #endif
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 4, 0)
++									 u8 key_index, enum nl80211_key_type key_type,
++									 const u8 *mac_addr,
++#else
+ 									 u8 key_index, bool pairwise, const u8 *mac_addr,
++#endif
+ 									 struct key_params *params)
+ 
+ {
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 4, 0)
++	bool pairwise = key_type == NL80211_KEYTYPE_PAIRWISE;
++#endif
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 1, 0)
++	struct net_device *netdev = wdev->netdev;
++#endif
+ 	struct rwnx_hw *rwnx_hw = wiphy_priv(wiphy);
+ 	struct rwnx_vif *vif = netdev_priv(netdev);
+ 	int i, error = 0;
+@@ -2395,11 +2421,21 @@ bool key_flag = false;
+  *	not possible to retrieve the key, -ENOENT if it doesn't exist.
+  *
+  */
+-static int rwnx_cfg80211_get_key(struct wiphy *wiphy, struct net_device *netdev,
++static int rwnx_cfg80211_get_key(struct wiphy *wiphy,
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 1, 0)
++    struct wireless_dev *wdev,
++#else
++    struct net_device *netdev,
++#endif
+ #if (LINUX_VERSION_CODE >= HIGH_KERNEL_VERSION2)
+                                                                  int link_id,
+ #endif
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 4, 0)
++								 u8 key_index, enum nl80211_key_type key_type,
++								 const u8 *mac_addr,
++#else
+ 								 u8 key_index, bool pairwise, const u8 *mac_addr,
++#endif
+ 								 void *cookie,
+ 								 void (*callback)(void *cookie, struct key_params*))
+ {
+@@ -2413,12 +2449,25 @@ static int rwnx_cfg80211_get_key(struct wiphy *wiphy, struct net_device *netdev,
+  * @del_key: remove a key given the @mac_addr (%NULL for a group key)
+  *	and @key_index, return -ENOENT if the key doesn't exist.
+  */
+-static int rwnx_cfg80211_del_key(struct wiphy *wiphy, struct net_device *netdev,
++static int rwnx_cfg80211_del_key(struct wiphy *wiphy,
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 1, 0)
++    struct wireless_dev *wdev,
++#else
++    struct net_device *netdev,
++#endif
+ #if (LINUX_VERSION_CODE >= HIGH_KERNEL_VERSION2)
+                                                                  int link_id,
+ #endif
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 4, 0)
++								 u8 key_index, enum nl80211_key_type key_type,
++								 const u8 *mac_addr)
++#else
+ 								 u8 key_index, bool pairwise, const u8 *mac_addr)
++#endif
+ {
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 1, 0)
++	struct net_device *netdev = wdev->netdev;
++#endif
+ 	struct rwnx_hw *rwnx_hw = wiphy_priv(wiphy);
+ 	struct rwnx_vif *vif = netdev_priv(netdev);
+ 	int error;
+@@ -2467,7 +2516,11 @@ static int rwnx_cfg80211_set_default_key(struct wiphy *wiphy,
+  * @set_default_mgmt_key: set the default management frame key on an interface
+  */
+ static int rwnx_cfg80211_set_default_mgmt_key(struct wiphy *wiphy,
+-											  struct net_device *netdev,
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 1, 0)
++    struct wireless_dev *wdev,
++#else
++    struct net_device *netdev,
++#endif
+ #if (LINUX_VERSION_CODE >= HIGH_KERNEL_VERSION2)
+                                                                                           int link_id,
+ #endif
+@@ -2554,11 +2607,20 @@ static int rwnx_cfg80211_connect(struct wiphy *wiphy, struct net_device *dev,
+ 		key_params.key_len = sme->key_len;
+ 		key_params.seq_len = 0;
+ 		key_params.cipher = sme->crypto.cipher_group;
+-		rwnx_cfg80211_add_key(wiphy, dev, 
++		rwnx_cfg80211_add_key(wiphy,
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 1, 0)
++		                      &rwnx_vif->wdev,
++#else
++		                      dev,
++#endif
+ #if (LINUX_VERSION_CODE >= HIGH_KERNEL_VERSION2)
+                                 0,
+ #endif
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 4, 0)
++				sme->key_idx, NL80211_KEYTYPE_GROUP, NULL, &key_params);
++#else
+ 				sme->key_idx, false, NULL, &key_params);
++#endif
+ 	}
+ #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 17, 0) || defined(CONFIG_WPA3_FOR_OLD_KERNEL)
+ 	else if ((sme->auth_type == NL80211_AUTHTYPE_SAE) &&
+@@ -2783,7 +2845,11 @@ static int rwnx_cfg80211_external_auth(struct wiphy *wiphy, struct net_device *d
+  * @add_station: Add a new station.
+  */
+ static int rwnx_cfg80211_add_station(struct wiphy *wiphy,
+-	struct net_device *dev,
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 1, 0)
++    struct wireless_dev *wdev,
++#else
++    struct net_device *dev,
++#endif
+ #if (LINUX_VERSION_CODE < KERNEL_VERSION(3, 16, 0))
+ 	u8 *mac,
+ #else
+@@ -2791,6 +2857,9 @@ static int rwnx_cfg80211_add_station(struct wiphy *wiphy,
+ #endif
+ 	struct station_parameters *params)
+ {
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 1, 0)
++	struct net_device *dev = wdev->netdev;
++#endif
+ 	struct rwnx_hw *rwnx_hw = wiphy_priv(wiphy);
+ 	struct rwnx_vif *rwnx_vif = netdev_priv(dev);
+ 	struct me_sta_add_cfm me_sta_add_cfm;
+@@ -2873,7 +2942,13 @@ static int rwnx_cfg80211_add_station(struct wiphy *wiphy,
+ 			#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 0, 0)
+ 			sinfo.filled |= STATION_INFO_ASSOC_REQ_IES;
+ 			#endif
+-			cfg80211_new_sta(rwnx_vif->ndev, sta->mac_addr, &sinfo, GFP_KERNEL);
++			cfg80211_new_sta(
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 1, 0)
++					&rwnx_vif->wdev,
++#else
++					rwnx_vif->ndev,
++#endif
++					sta->mac_addr, &sinfo, GFP_KERNEL);
+ 		}
+ 
+ #ifdef CONFIG_BAND_STEERING
+@@ -2923,7 +2998,11 @@ static int rwnx_cfg80211_add_station(struct wiphy *wiphy,
+  * @del_station: Remove a station
+  */
+ static int rwnx_cfg80211_del_station_compat(struct wiphy *wiphy,
+-	struct net_device *dev,
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 1, 0)
++    struct wireless_dev *wdev,
++#else
++    struct net_device *dev,
++#endif
+ #if (LINUX_VERSION_CODE < KERNEL_VERSION(3, 16, 0))
+ 	u8 *mac
+ #elif (LINUX_VERSION_CODE < KERNEL_VERSION(3, 19, 0))
+@@ -2934,6 +3013,9 @@ static int rwnx_cfg80211_del_station_compat(struct wiphy *wiphy,
+ 
+ )
+ {
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 1, 0)
++	struct net_device *dev = wdev->netdev;
++#endif
+     struct rwnx_hw *rwnx_hw = wiphy_priv(wiphy);
+     struct rwnx_vif *rwnx_vif = netdev_priv(dev);
+     struct rwnx_sta *cur, *tmp;
+@@ -2989,7 +3071,13 @@ static int rwnx_cfg80211_del_station_compat(struct wiphy *wiphy,
+ 				}
+ 			}
+ 			if (rwnx_vif->wdev.iftype == NL80211_IFTYPE_AP || rwnx_vif->wdev.iftype == NL80211_IFTYPE_P2P_GO) {
+-				cfg80211_del_sta(rwnx_vif->ndev, cur->mac_addr, GFP_KERNEL);
++				cfg80211_del_sta(
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 1, 0)
++						&rwnx_vif->wdev,
++#else
++						rwnx_vif->ndev,
++#endif
++						cur->mac_addr, GFP_KERNEL);
+ 			}
+ 
+ #ifdef AICWF_RX_REORDER
+@@ -3180,7 +3268,17 @@ void apm_probe_sta_work_process(struct work_struct *work)
+ 	   spin_unlock_bh(&rwnx_vif->rwnx_hw->cb_lock);
+ 
+        printk("sta %pM found = %d\n", mac, found);
+-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 17, 0)
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 3, 0)
++       /*
++        * 7.3 added a link_id between the cookie and the acked flag, naming
++        * the MLO link the probe went out on. There is no MLO here, so -1,
++        * which is what the other non-MLO drivers pass.
++        */
++       if(found)
++               cfg80211_probe_status(rwnx_vif->ndev, mac, (u64)rwnx_vif->sta_probe.probe_id, -1, 1, 0, false, GFP_ATOMIC);
++       else
++               cfg80211_probe_status(rwnx_vif->ndev, mac, (u64)rwnx_vif->sta_probe.probe_id, -1, 0, 0, false, GFP_ATOMIC);
++#elif LINUX_VERSION_CODE >= KERNEL_VERSION(4, 17, 0)
+        if(found)
+                cfg80211_probe_status(rwnx_vif->ndev, mac, (u64)rwnx_vif->sta_probe.probe_id, 1, 0, false, GFP_ATOMIC);
+        else
+@@ -3192,7 +3290,10 @@ void apm_probe_sta_work_process(struct work_struct *work)
+                 cfg80211_probe_status(rwnx_vif->ndev, mac, (u64)rwnx_vif->sta_probe.probe_id, 0, GFP_ATOMIC);
+ 
+ #endif
++#if LINUX_VERSION_CODE < KERNEL_VERSION(7, 3, 0)
++       /* From 7.3 on the cookie is cfg80211's, so there is nothing to count */
+        rwnx_vif->sta_probe.probe_id ++;
++#endif
+ }
+ /**
+  * @change_station: Modify a given station. Note that flags changes are not much
+@@ -3202,7 +3303,11 @@ void apm_probe_sta_work_process(struct work_struct *work)
+  *	cfg80211_check_station_change() to validate the information.
+  */
+ static int rwnx_cfg80211_change_station(struct wiphy *wiphy,
+-	struct net_device *dev,
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 1, 0)
++    struct wireless_dev *wdev,
++#else
++    struct net_device *dev,
++#endif
+ #if (LINUX_VERSION_CODE < KERNEL_VERSION(3, 16, 0))
+ 	u8 *mac,
+ #else
+@@ -3210,6 +3315,9 @@ static int rwnx_cfg80211_change_station(struct wiphy *wiphy,
+ #endif
+ 	struct station_parameters *params)
+ {
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 1, 0)
++	struct net_device *dev = wdev->netdev;
++#endif
+ 	struct rwnx_hw *rwnx_hw = wiphy_priv(wiphy);
+ 	struct rwnx_vif *vif = netdev_priv(dev);
+ 	struct rwnx_sta *sta;
+@@ -3552,7 +3660,13 @@ static int rwnx_cfg80211_stop_ap(struct wiphy *wiphy, struct net_device *dev)
+ 
+ 	/* delete any remaining STA*/
+ 	while (!list_empty(&rwnx_vif->ap.sta_list)) {
+-		rwnx_cfg80211_del_station_compat(wiphy, dev, NULL);
++		rwnx_cfg80211_del_station_compat(wiphy,
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 1, 0)
++		                                 &rwnx_vif->wdev,
++#else
++		                                 dev,
++#endif
++		                                 NULL);
+ 	}
+ 
+ #ifdef CONFIG_BAND_STEERING
+@@ -3599,6 +3713,9 @@ static int rwnx_cfg80211_stop_ap(struct wiphy *wiphy, struct net_device *dev)
+  * configured at firmware level.
+  */
+ static int rwnx_cfg80211_set_monitor_channel(struct wiphy *wiphy,
++#if (LINUX_VERSION_CODE >= KERNEL_VERSION (6, 13, 0)) || (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 101))
++											 struct net_device *dev,
++#endif
+ 											 struct cfg80211_chan_def *chandef)
+ {
+ 	struct rwnx_hw *rwnx_hw = wiphy_priv(wiphy);
+@@ -3653,7 +3770,11 @@ static int rwnx_cfg80211_set_monitor_channel(struct wiphy *wiphy,
+ 
+ int rwnx_cfg80211_set_monitor_channel_(struct wiphy *wiphy,
+                                              struct cfg80211_chan_def *chandef){
++#if (LINUX_VERSION_CODE >= KERNEL_VERSION (6, 13, 0)) || (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 101))
++    return rwnx_cfg80211_set_monitor_channel(wiphy, NULL, chandef);
++#else
+     return rwnx_cfg80211_set_monitor_channel(wiphy, chandef);
++#endif
+ }
+ 
+ 
+@@ -3662,7 +3783,11 @@ int rwnx_cfg80211_set_monitor_channel_(struct wiphy *wiphy,
+  *	later passes to cfg80211_probe_status().
+  */
+ int rwnx_cfg80211_probe_client(struct wiphy *wiphy, struct net_device *dev,
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 3, 0)
++			const u8 *peer, u64 cookie)
++#else
+ 			const u8 *peer, u64 *cookie)
++#endif
+ {
+ //       struct rwnx_hw *rwnx_hw = wiphy_priv(wiphy);
+        struct rwnx_vif *vif = netdev_priv(dev);
+@@ -3685,9 +3810,19 @@ int rwnx_cfg80211_probe_client(struct wiphy *wiphy, struct net_device *dev,
+ 
+ 
+        memcpy(vif->sta_probe.sta_mac_addr, peer, 6);
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 3, 0)
++       /*
++        * Store it before the work is queued, not after:
++        * apm_probe_sta_work_process() hands it to cfg80211_probe_status(),
++        * and it can run as soon as queue_work() returns.
++        */
++       vif->sta_probe.probe_id = cookie;
++#endif
+        queue_work(vif->sta_probe.apmprobesta_wq, &vif->sta_probe.apmprobestaWork);
+ 
++#if LINUX_VERSION_CODE < KERNEL_VERSION(7, 3, 0)
+        *cookie = vif->sta_probe.probe_id;
++#endif
+ 
+        return 0;
+ 
+@@ -3710,7 +3845,11 @@ void rwnx_cfg80211_mgmt_frame_register(struct wiphy *wiphy,
+  *	have changed. The actual parameter values are available in
+  *	struct wiphy. If returning an error, no value should be changed.
+  */
++#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 17, 0)
+ static int rwnx_cfg80211_set_wiphy_params(struct wiphy *wiphy, u32 changed)
++#else
++static int rwnx_cfg80211_set_wiphy_params(struct wiphy *wiphy, int radio_idx, u32 changed)
++#endif
+ {
+ 	return 0;
+ }
+@@ -3724,7 +3863,11 @@ static int rwnx_cfg80211_set_wiphy_params(struct wiphy *wiphy, u32 changed)
+  *	(as advertised by the nl80211 feature flag.)
+  */
+ static int rwnx_cfg80211_set_tx_power(struct wiphy *wiphy, struct wireless_dev *wdev,
++#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 17, 0)
+ 									  enum nl80211_tx_power_setting type, int mbm)
++#else
++									  int radio_idx, enum nl80211_tx_power_setting type, int mbm)
++#endif
+ {
+ 	struct rwnx_hw *rwnx_hw = wiphy_priv(wiphy);
+ 	struct rwnx_vif *vif;
+@@ -3754,6 +3897,13 @@ static int rwnx_cfg80211_set_tx_power(struct wiphy *wiphy, struct wireless_dev *
+ static int rwnx_cfg80211_get_tx_power(struct wiphy *wiphy,
+ #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 8, 0)
+  struct wireless_dev *wdev,
++#if LINUX_VERSION_CODE >= KERNEL_VERSION (6, 14, 0)
++#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 17, 0)
++ unsigned int link_id,
++#else
++ int radio_idx, unsigned int link_id,
++#endif
++#endif
+ #endif
+ 	int *mbm)
+ {
+@@ -3919,6 +4069,14 @@ rwnx_cfg80211_remain_on_channel_(struct wiphy *wiphy, struct wireless_dev *wdev,
+ 	roc_elem->duration = duration;
+ 	roc_elem->mgmt_roc = mgmt_roc_flag;
+ 	roc_elem->on_chan = false;
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 3, 0)
++	/*
++	 * From 7.3 *cookie is the one cfg80211 assigned, handed in by
++	 * rwnx_cfg80211_remain_on_channel(). mgmt_tx starts its own RoC,
++	 * which cfg80211 never sees, so there is nothing to keep for that one.
++	 */
++	roc_elem->cookie = mgmt_roc_flag ? 0 : *cookie;
++#endif
+ 
+ 	/* Initialize the OFFCHAN TX queue to allow off-channel transmissions */
+ 	rwnx_txq_offchan_init(rwnx_vif);
+@@ -3952,9 +4110,29 @@ rwnx_cfg80211_remain_on_channel_(struct wiphy *wiphy, struct wireless_dev *wdev,
+ static int
+ rwnx_cfg80211_remain_on_channel(struct wiphy *wiphy, struct wireless_dev *wdev,
+ 								struct ieee80211_channel *chan,
+-								unsigned int duration, u64 *cookie)
++								unsigned int duration,
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 3, 0)
++								/* 7.3: cfg80211 assigns the cookie, so it comes in by value */
++								u64 cookie
++#else
++								u64 *cookie
++#endif
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 2, 0)
++								/*
++								 * 7.2 added an optional receive address filter for the off-channel
++								 * period. cfg80211 refuses a non-NULL one unless the driver sets
++								 * NL80211_EXT_FEATURE_ROC_ADDR_FILTER, which this one does not, so it
++								 * is always NULL here. mac80211 ignores it in the same way.
++								 */
++								, const u8 *rx_addr
++#endif
++								)
+ {
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 3, 0)
++	return rwnx_cfg80211_remain_on_channel_(wiphy, wdev, chan, duration, &cookie, false);
++#else
+ 	return rwnx_cfg80211_remain_on_channel_(wiphy, wdev, chan, duration, cookie, false);
++#endif
+ }
+ 
+ /**
+@@ -4072,7 +4250,11 @@ static int rwnx_cfg80211_get_channel(struct wiphy *wiphy,
+ 
+ 	if (rwnx_vif->vif_index == rwnx_hw->monitor_vif) {
+ 		//retrieve channel from firmware
++#if (LINUX_VERSION_CODE >= KERNEL_VERSION (6, 13, 0)) || (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 101))
++		rwnx_cfg80211_set_monitor_channel(wiphy, NULL, NULL);
++#else
+ 		rwnx_cfg80211_set_monitor_channel(wiphy, NULL);
++#endif
+ 	}
+ 
+ 	//Check if channel context is valid
+@@ -4089,7 +4271,12 @@ static int rwnx_cfg80211_get_channel(struct wiphy *wiphy,
+ /**
+  * @mgmt_tx: Transmit a management frame.
+  */
+-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 14, 0))
++#if (LINUX_VERSION_CODE >= KERNEL_VERSION(7, 3, 0))
++/* 7.3: cfg80211 assigns the cookie, so it comes in by value */
++static int rwnx_cfg80211_mgmt_tx(struct wiphy *wiphy, struct wireless_dev *wdev,
++								 struct cfg80211_mgmt_tx_params *params,
++								 u64 cookie)
++#elif (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 14, 0))
+ static int rwnx_cfg80211_mgmt_tx(struct wiphy *wiphy, struct wireless_dev *wdev,
+ 								 struct cfg80211_mgmt_tx_params *params,
+ 								 u64 *cookie)
+@@ -4124,6 +4311,7 @@ static int rwnx_cfg80211_mgmt_tx(struct wiphy *wiphy, struct wireless_dev *wdev,
+ 	switch (RWNX_VIF_TYPE(rwnx_vif)) {
+ 	case NL80211_IFTYPE_AP_VLAN:
+ 		rwnx_vif = rwnx_vif->ap_vlan.master;
++		__attribute__((__fallthrough__));
+ 	case NL80211_IFTYPE_AP:
+ 	case NL80211_IFTYPE_P2P_GO:
+ 	case NL80211_IFTYPE_MESH_POINT:
+@@ -4202,7 +4390,15 @@ static int rwnx_cfg80211_mgmt_tx(struct wiphy *wiphy, struct wireless_dev *wdev,
+ 
+ send_frame:
+ 	#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 14, 0))
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 3, 0)
++	/*
++	 * rwnx_start_mgmt_xmit() reads it rather than writes it from 7.3
++	 * on: it has to reach the TX confirm, which reports it to cfg80211.
++	 */
++	return rwnx_start_mgmt_xmit(rwnx_vif, rwnx_sta, params, offchan, &cookie);
++#else
+ 	return rwnx_start_mgmt_xmit(rwnx_vif, rwnx_sta, params, offchan, cookie);
++#endif
+ 	#else
+ 	return rwnx_start_mgmt_xmit(rwnx_vif, rwnx_sta, channel, offchan, wait, buf, len, no_cck, dont_wait_for_ack, cookie);
+ 	#endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(3, 14, 0) */
+@@ -4785,6 +4981,7 @@ static int rwnx_fill_station_info(struct rwnx_sta *sta, struct rwnx_vif *vif,
+ #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 19, 0)
+ 	case FORMATMOD_HE_MU:
+ 		sinfo->rxrate.he_ru_alloc = rx_vect1->he.ru_size;
++		__attribute__((__fallthrough__));
+ 	case FORMATMOD_HE_SU:
+ 	case FORMATMOD_HE_ER:
+ 		sinfo->rxrate.flags = RATE_INFO_FLAGS_HE_MCS;
+@@ -4839,7 +5036,11 @@ static int rwnx_fill_station_info(struct rwnx_sta *sta, struct rwnx_vif *vif,
+  * @get_station: get station information for the station identified by @mac
+  */
+ static int rwnx_cfg80211_get_station(struct wiphy *wiphy,
+-	struct net_device *dev,
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 1, 0)
++    struct wireless_dev *wdev,
++#else
++    struct net_device *dev,
++#endif
+ #if (LINUX_VERSION_CODE < KERNEL_VERSION(3, 16, 0))
+ 	u8 *mac,
+ #else
+@@ -4847,6 +5048,9 @@ static int rwnx_cfg80211_get_station(struct wiphy *wiphy,
+ #endif
+ 	struct station_info *sinfo)
+ {
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 1, 0)
++	struct net_device *dev = wdev->netdev;
++#endif
+ 	struct rwnx_vif *vif = netdev_priv(dev);
+ 	struct rwnx_sta *sta = NULL;
+ 
+@@ -4878,9 +5082,17 @@ static int rwnx_cfg80211_get_station(struct wiphy *wiphy,
+ /**
+  * @dump_station: dump station callback -- resume dump at index @idx
+  */
+-static int rwnx_cfg80211_dump_station(struct wiphy *wiphy, struct net_device *dev,
++static int rwnx_cfg80211_dump_station(struct wiphy *wiphy,
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 1, 0)
++    struct wireless_dev *wdev,
++#else
++    struct net_device *dev,
++#endif
+ 									  int idx, u8 *mac, struct station_info *sinfo)
+ {
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 1, 0)
++	struct net_device *dev = wdev->netdev;
++#endif
+ 	struct rwnx_vif *rwnx_vif = netdev_priv(dev);
+ 	//struct rwnx_hw *rwnx_hw = wiphy_priv(wiphy);
+ 	struct rwnx_sta *sta_iter, *sta = NULL;
+@@ -5379,7 +5591,11 @@ static struct cfg80211_ops rwnx_cfg80211_ops = {
+ 	.change_beacon = rwnx_cfg80211_change_beacon,
+ 	.stop_ap = rwnx_cfg80211_stop_ap,
+ 	.set_monitor_channel = rwnx_cfg80211_set_monitor_channel,
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 3, 0)
++	.probe_peer = rwnx_cfg80211_probe_client,
++#else
+ 	.probe_client = rwnx_cfg80211_probe_client,
++#endif
+ //	.mgmt_frame_register = rwnx_cfg80211_mgmt_frame_register,
+ 	.set_wiphy_params = rwnx_cfg80211_set_wiphy_params,
+ 	.set_txq_params = rwnx_cfg80211_set_txq_params,
+@@ -6324,7 +6540,11 @@ void rwnx_cfg80211_deinit(struct rwnx_hw *rwnx_hw)
+ 		list_for_each_entry(defrag_ctrl, &rwnx_hw->defrag_list, list) {
+ 			list_del_init(&defrag_ctrl->list);
+ 			if (timer_pending(&defrag_ctrl->defrag_timer))
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 15, 0)
++				timer_delete_sync(&defrag_ctrl->defrag_timer);
++#else
+ 				del_timer_sync(&defrag_ctrl->defrag_timer);
++#endif
+ 			dev_kfree_skb(defrag_ctrl->skb);
+ 			kfree(defrag_ctrl);
+ 		}
+@@ -6456,8 +6676,12 @@ static void __exit rwnx_mod_exit(void)
+ 
+ 
+ #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 13, 0)
++MODULE_IMPORT_NS("VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver");
++#else
+ MODULE_IMPORT_NS(VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver);
+ #endif
++#endif
+ 
+ module_init(rwnx_mod_init);
+ module_exit(rwnx_mod_exit);
+diff --git a/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/rwnx_mod_params.c b/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/rwnx_mod_params.c
+index bc124be..4bc79ed 100644
+--- a/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/rwnx_mod_params.c
++++ b/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/rwnx_mod_params.c
+@@ -1594,7 +1594,10 @@ if (rwnx_hw->mod_params->custregd) {
+                "\n\n%s: CAUTION: USING PERMISSIVE CUSTOM REGULATORY RULES\n\n",
+                __func__);
+         wiphy->regulatory_flags |= REGULATORY_CUSTOM_REG;
++		/* From kernel 6.5.0, this bit is removed and will be reused later */
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 5, 0)) && (LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 39) || LINUX_VERSION_CODE > KERNEL_VERSION(6, 2, 0))
+         wiphy->regulatory_flags |= REGULATORY_IGNORE_STALE_KICKOFF;
++#endif /* LINUX_VERSION_CODE < KERNEL_VERSION(6, 5, 0) */
+         wiphy_apply_custom_regulatory(wiphy, regdomain);
+ #elif (LINUX_VERSION_CODE < KERNEL_VERSION(3, 14, 0))
+         memcpy(country_code, default_ccode, sizeof(default_ccode));
+@@ -1628,7 +1631,10 @@ if (rwnx_hw->mod_params->custregd) {
+ 			   "\n\n%s: CAUTION: USING PERMISSIVE CUSTOM REGULATORY RULES\n\n",
+ 			   __func__);
+ 		wiphy->regulatory_flags |= REGULATORY_CUSTOM_REG;
+-		wiphy->regulatory_flags |= REGULATORY_IGNORE_STALE_KICKOFF;
++		/* From kernel 6.5.0, this bit is removed and will be reused later */
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 5, 0)) && (LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 39) || LINUX_VERSION_CODE > KERNEL_VERSION(6, 2, 0))
++        wiphy->regulatory_flags |= REGULATORY_IGNORE_STALE_KICKOFF;
++#endif /* LINUX_VERSION_CODE < KERNEL_VERSION(6, 5, 0) */
+ 		wiphy_apply_custom_regulatory(wiphy, &rwnx_regdom);
+ #endif
+ 		// Check if custom channel set shall be enabled. In such case only monitor mode is
+@@ -1775,7 +1781,8 @@ void rwnx_custregd(struct rwnx_hw *rwnx_hw, struct wiphy *wiphy)
+ // For older kernel version, the custom regulatory is applied before the wiphy
+ // registration (in rwnx_set_wiphy_params()), so nothing has to be done here
+ 
+-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 0, 0)
++	/* From kernel 6.5.0, this bit is removed and will be reused later */
++#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 0, 0)) && (LINUX_VERSION_CODE < KERNEL_VERSION(6, 5, 0)) && (LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 39) || LINUX_VERSION_CODE > KERNEL_VERSION(6, 2, 0))
+ 	wiphy->regulatory_flags |= REGULATORY_IGNORE_STALE_KICKOFF;
+ #endif
+ 	if (!rwnx_hw->mod_params->custregd)
+diff --git a/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/rwnx_msg_rx.c b/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/rwnx_msg_rx.c
+index a9ba841..2a03bf4 100644
+--- a/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/rwnx_msg_rx.c
++++ b/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/rwnx_msg_rx.c
+@@ -121,7 +121,7 @@ static inline int rwnx_rx_chan_switch_ind(struct rwnx_hw *rwnx_hw,
+ 			/* If mgmt_roc is true, remain on channel has been started by ourself */
+ 			if (!roc_elem->mgmt_roc) {
+ 				/* Inform the host that we have switch on the indicated off-channel */
+-				cfg80211_ready_on_channel(roc_elem->wdev, (u64)(rwnx_hw->roc_cookie_cnt),
++				cfg80211_ready_on_channel(roc_elem->wdev, RWNX_ROC_COOKIE(rwnx_hw, roc_elem),
+ 									  roc_elem->chan, roc_elem->duration, GFP_ATOMIC);
+ 			}
+ 
+@@ -230,7 +230,7 @@ static inline int rwnx_rx_remain_on_channel_exp_ind(struct rwnx_hw *rwnx_hw,
+ 	/* If RoC has been cancelled before we switched on channel, do not call cfg80211 */
+ 	if (!roc_elem->mgmt_roc && roc_elem->on_chan) {
+ 		/* Inform the host that off-channel period has expired */
+-		cfg80211_remain_on_channel_expired(roc_elem->wdev, (u64)(rwnx_hw->roc_cookie_cnt),
++		cfg80211_remain_on_channel_expired(roc_elem->wdev, RWNX_ROC_COOKIE(rwnx_hw, roc_elem),
+ 										   roc_elem->chan, GFP_ATOMIC);
+ 	}
+ 
+diff --git a/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/rwnx_msg_tx.c b/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/rwnx_msg_tx.c
+index 7435c74..4902ced 100644
+--- a/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/rwnx_msg_tx.c
++++ b/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/rwnx_msg_tx.c
+@@ -308,7 +308,11 @@ static int rwnx_send_msg(struct rwnx_hw *rwnx_hw, const void *msg_params,
+ 
+ 	//RWNX_DBG(RWNX_FN_ENTRY_STR);
+     AICWFDBG(LOGTRACE, "%s (%d)%s reqcfm:%d in_irq:%d in_softirq:%d in_atomic:%d\r\n",
++#if (LINUX_VERSION_CODE <= KERNEL_VERSION(6, 18, 0))
+     __func__, reqid, RWNX_ID2STR(reqid), reqcfm, (int)in_irq(), (int)in_softirq(), (int)in_atomic());
++#else
++    __func__, reqid, RWNX_ID2STR(reqid), reqcfm, (int)in_hardirq(), (int)in_softirq(), (int)in_atomic());
++#endif
+ 
+ 
+ #ifdef AICWF_USB_SUPPORT
+@@ -416,7 +420,11 @@ static int rwnx_send_msg1(struct rwnx_hw *rwnx_hw, const void *msg_params,
+ 
+ //	RWNX_DBG(RWNX_FN_ENTRY_STR);
+     printk("%s (%d)%s reqcfm:%d in_irq:%d in_softirq:%d in_atomic:%d\r\n",
++#if (LINUX_VERSION_CODE <= KERNEL_VERSION(6, 18, 0))
+     __func__, reqid, RWNX_ID2STR(reqid), reqcfm, (int)in_irq(), (int)in_softirq(), (int)in_atomic());
++#else
++    __func__, reqid, RWNX_ID2STR(reqid), reqcfm, (int)in_hardirq(), (int)in_softirq(), (int)in_atomic());
++#endif
+ 
+ 	rwnx_wakeup_lock(rwnx_hw->ws_tx);
+ 	msg = container_of((void *)msg_params, struct lmac_msg, param);
+@@ -526,6 +534,7 @@ int rwnx_send_add_if (struct rwnx_hw *rwnx_hw, const unsigned char *mac,
+ 	case NL80211_IFTYPE_P2P_CLIENT:
+ 		add_if_req_param->p2p = true;
+ 		// no break
++		__attribute__((__fallthrough__));
+ 	#endif /* CONFIG_RWNX_FULLMAC */
+ 	case NL80211_IFTYPE_STATION:
+ 		add_if_req_param->type = MM_STA;
+@@ -539,6 +548,7 @@ int rwnx_send_add_if (struct rwnx_hw *rwnx_hw, const unsigned char *mac,
+ 	case NL80211_IFTYPE_P2P_GO:
+ 		add_if_req_param->p2p = true;
+ 		// no break
++		__attribute__((__fallthrough__));
+ 	#endif /* CONFIG_RWNX_FULLMAC */
+ 	case NL80211_IFTYPE_AP:
+ 		add_if_req_param->type = MM_AP;
+@@ -4604,7 +4614,13 @@ int rwnx_send_dbg_trigger_req(struct rwnx_hw *rwnx_hw, char *msg)
+ 		return -ENOMEM;
+ 
+ 	/* Set parameters for the MM_DBG_TRIGGER_REQ message */
+-	strncpy(req->error, msg, sizeof(req->error));
++	/*
++	 * strncpy() is gone in 7.2. req->error is a fixed 64-byte field of a
++	 * firmware message that is not NUL-terminated, and the message came
++	 * from kzalloc(), so copying at most the field size is all strncpy()
++	 * did here.
++	 */
++	memcpy(req->error, msg, strnlen(msg, sizeof(req->error)));
+ 
+ 	/* Send the MM_DBG_TRIGGER_REQ message to LMAC FW */
+ 	return rwnx_send_msg(rwnx_hw, req, 0, -1, NULL);
+diff --git a/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/rwnx_platform.c b/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/rwnx_platform.c
+index cc1b479..0bde1fa 100644
+--- a/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/rwnx_platform.c
++++ b/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/rwnx_platform.c
+@@ -548,8 +548,12 @@ static int rwnx_plat_tl4_fw_upload(struct rwnx_plat *rwnx_plat, u8 *fw_addr,
+ #endif
+ 
+ #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 13, 0)
++MODULE_IMPORT_NS("VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver");
++#else
+ MODULE_IMPORT_NS(VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver);
+ #endif
++#endif
+ 
+ #if 0
+ /**
+@@ -1228,7 +1232,12 @@ static int parse_key_val(const char *str, const char *key, char *val)
+ 		p--;
+ 
+ 	p++;
+-	strncpy(val, dst, p -dst);
++	/*
++	 * strncpy() is gone in 7.2. dst..p is a known-length run inside a
++	 * longer string, so strncpy() never reached its NUL and never padded;
++	 * the terminator is the line below. That is a plain memcpy().
++	 */
++	memcpy(val, dst, p - dst);
+ 	val[p - dst] = 0;
+ 	return 0;
+ }
+diff --git a/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/rwnx_rx.c b/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/rwnx_rx.c
+index 2348323..04964ff 100644
+--- a/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/rwnx_rx.c
++++ b/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/rwnx_rx.c
+@@ -1659,7 +1659,11 @@ int reord_flush_tid(struct aicwf_rx_priv *rx_priv, struct sk_buff *skb, u8 tid)
+ 	preorder_ctrl->enable = false;
+ 	spin_unlock_irqrestore(&preorder_ctrl->reord_list_lock, flags);
+ 	if (timer_pending(&preorder_ctrl->reord_timer))
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 15, 0)
++		ret = timer_delete_sync(&preorder_ctrl->reord_timer);
++#else
+ 		ret = del_timer_sync(&preorder_ctrl->reord_timer);
++#endif
+ 	cancel_work_sync(&preorder_ctrl->reord_timer_work);
+ 
+ 	return 0;
+@@ -1684,7 +1688,11 @@ void reord_deinit_sta(struct aicwf_rx_priv *rx_priv, struct reord_ctrl_info *reo
+ 		if(preorder_ctrl->enable){
+ 			preorder_ctrl->enable = false;
+ 			if (timer_pending(&preorder_ctrl->reord_timer)) {
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 15, 0)
++ 				ret = timer_delete_sync(&preorder_ctrl->reord_timer);
++#else
+ 				ret = del_timer_sync(&preorder_ctrl->reord_timer);
++#endif
+ 			}
+ 			cancel_work_sync(&preorder_ctrl->reord_timer_work);
+ 		}
+@@ -1894,9 +1902,13 @@ void reord_timeout_handler (struct timer_list *t)
+ {
+ #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 14, 0)
+ 	struct reord_ctrl *preorder_ctrl = (struct reord_ctrl *)data;
++#else
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 16, 0)
++	struct reord_ctrl *preorder_ctrl = timer_container_of(preorder_ctrl, t, reord_timer);
+ #else
+ 	struct reord_ctrl *preorder_ctrl = from_timer(preorder_ctrl, t, reord_timer);
+ #endif
++#endif
+ 
+ #if 0 //AIDEN
+ 	struct aicwf_rx_priv *rx_priv = preorder_ctrl->rx_priv;
+@@ -2044,7 +2056,11 @@ int reord_process_unit(struct aicwf_rx_priv *rx_priv, struct sk_buff *skb, u16 s
+ 		}
+ 	} else {
+ 	if (timer_pending(&preorder_ctrl->reord_timer)) {
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 15, 0)
++			ret = timer_delete(&preorder_ctrl->reord_timer);
++#else
+ 			ret = del_timer(&preorder_ctrl->reord_timer);
++#endif
+ 	}
+ 	}
+ 	
+@@ -2145,8 +2161,12 @@ void defrag_timeout_cb(struct timer_list *t)
+ 	struct defrag_ctrl_info *defrag_ctrl = NULL;
+ #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 15, 0)
+ 	defrag_ctrl = (struct defrag_ctrl_info *)data;
++#else
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 16, 0)
++	defrag_ctrl = timer_container_of(defrag_ctrl, t, defrag_timer);
+ #else
+ 	defrag_ctrl = from_timer(defrag_ctrl, t, defrag_timer);
++#endif
+ #endif
+ 
+ 	printk("%s:%p\r\n", __func__, defrag_ctrl);
+@@ -2376,7 +2396,11 @@ check_len_update:
+ #ifdef CONFIG_GKI
+ 			rwnx_cfg80211_rx_spurious_frame(rwnx_vif->ndev, hdr->addr2, GFP_ATOMIC);
+ #else
++#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 17, 0)
+             cfg80211_rx_spurious_frame(rwnx_vif->ndev, hdr->addr2, GFP_ATOMIC);
++#else
++            cfg80211_rx_spurious_frame(rwnx_vif->ndev, hdr->addr2, -1, GFP_ATOMIC);
++#endif
+ #endif
+ 		}
+ 		goto end;
+@@ -2695,7 +2719,11 @@ check_len_update:
+ 							skb_tmp = defrag_info->skb;
+ 							list_del_init(&defrag_info->list);
+ 							if (timer_pending(&defrag_info->defrag_timer)) {
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 15, 0)
++								ret = timer_delete(&defrag_info->defrag_timer);
++#else
+ 								ret = del_timer(&defrag_info->defrag_timer);
++#endif
+ 							}
+ 							kfree(defrag_info);
+ 							spin_unlock_bh(&rwnx_hw->defrag_lock);
+@@ -2752,7 +2780,11 @@ check_len_update:
+ 													   sta->mac_addr, GFP_ATOMIC);
+ #else
+                     cfg80211_rx_unexpected_4addr_frame(rwnx_vif->ndev,
++#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 17, 0)
+                                                        sta->mac_addr, GFP_ATOMIC);
++#else
++                                                       sta->mac_addr, -1, GFP_ATOMIC);
++#endif
+ #endif
+ 				}
+ 			}
+diff --git a/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/rwnx_tdls.c b/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/rwnx_tdls.c
+index 34196ed..5f7c745 100644
+--- a/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/rwnx_tdls.c
++++ b/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/rwnx_tdls.c
+@@ -115,12 +115,21 @@ rwnx_prep_tdls_direct(struct rwnx_hw *rwnx_hw, struct rwnx_vif *rwnx_vif,
+ 
+ 	switch (action_code) {
+ 	case WLAN_PUB_ACTION_TDLS_DISCOVER_RES:
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 1, 0)
++		skb_put(skb, 2 + sizeof(mgmt->u.action.tdls_discover_resp));
++		mgmt->u.action.category = WLAN_CATEGORY_PUBLIC;
++		mgmt->u.action.action_code = WLAN_PUB_ACTION_TDLS_DISCOVER_RES;
++		mgmt->u.action.tdls_discover_resp.dialog_token = dialog_token;
++		mgmt->u.action.tdls_discover_resp.capability =
++			cpu_to_le16(rwnx_get_tdls_sta_capab(rwnx_vif, status_code));
++#else
+ 		skb_put(skb, 1 + sizeof(mgmt->u.action.u.tdls_discover_resp));
+ 		mgmt->u.action.category = WLAN_CATEGORY_PUBLIC;
+ 		mgmt->u.action.u.tdls_discover_resp.action_code = WLAN_PUB_ACTION_TDLS_DISCOVER_RES;
+ 		mgmt->u.action.u.tdls_discover_resp.dialog_token = dialog_token;
+ 		mgmt->u.action.u.tdls_discover_resp.capability =
+ 			cpu_to_le16(rwnx_get_tdls_sta_capab(rwnx_vif, status_code));
++#endif
+ 		break;
+ 	default:
+ 		return -EINVAL;
+@@ -257,6 +266,7 @@ static u8 rwnx_ac_from_wmm(int ac)
+ 	switch (ac) {
+ 	default:
+ 		WARN_ON_ONCE(1);
++		__attribute__((__fallthrough__));
+ 	case 0:
+ 		return AC_BE;
+ 	case 1:
+@@ -749,7 +759,12 @@ rwnx_tdls_send_mgmt_packet_data(struct rwnx_hw *rwnx_hw, struct rwnx_vif *rwnx_v
+ 					  initiator, extra_ies, extra_ies_len, oper_class, chandef);
+ 
+ 	if (action_code == WLAN_PUB_ACTION_TDLS_DISCOVER_RES) {
+-		u64 cookie;
++		/*
++		 * Written by rwnx_start_mgmt_xmit() up to 7.2 and read by it from 7.3
++		 * on. cfg80211 has no pending transmission to match this frame against,
++		 * so 0, which also keeps its TX status from being reported.
++		 */
++		u64 cookie = 0;
+ 		#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 14, 0))
+ 		struct cfg80211_mgmt_tx_params params;
+ 
+diff --git a/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/rwnx_tx.c b/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/rwnx_tx.c
+index 89bbd3f..d8354ad 100644
+--- a/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/rwnx_tx.c
++++ b/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/rwnx_tx.c
+@@ -334,6 +334,7 @@ u16 rwnx_select_txq(struct rwnx_vif *rwnx_vif, struct sk_buff *skb)
+ 		/* AP_VLAN interface is not used for a 4A STA,
+ 		   fallback searching sta amongs all AP's clients */
+ 		rwnx_vif = rwnx_vif->ap_vlan.master;
++		__attribute__((__fallthrough__));
+ 	case NL80211_IFTYPE_AP:
+ 	case NL80211_IFTYPE_P2P_GO:
+ 	{
+@@ -1702,6 +1703,9 @@ void rwnx_probersp_work(struct work_struct *work)
+ 	sw_txhdr->rwnx_sta = sta;
+ 	sw_txhdr->rwnx_vif = rwnx_vif;
+ 	sw_txhdr->skb = skb;
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 3, 0)
++	sw_txhdr->mgmt_cookie = 0;  /* not from mgmt_tx; see rwnx_txdatacfm() */
++#endif
+ 	sw_txhdr->headroom = headroom;
+ 	sw_txhdr->map_len = skb->len - offsetof(struct rwnx_txhdr, hw_hdr);
+ #ifdef CONFIG_RWNX_AMSDUS_TX
+@@ -2056,6 +2060,9 @@ netdev_tx_t rwnx_start_monitor_if_xmit(struct sk_buff *skb, struct net_device *d
+     sw_txhdr->rwnx_sta = sta;
+     sw_txhdr->rwnx_vif = vif;
+     sw_txhdr->skb = skb_mgmt;
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 3, 0)
++    sw_txhdr->mgmt_cookie = 0;  /* not from mgmt_tx; see rwnx_txdatacfm() */
++#endif
+     sw_txhdr->headroom = headroom;
+     sw_txhdr->map_len = skb_mgmt->len - offsetof(struct rwnx_txhdr, hw_hdr);
+     sw_txhdr->raw_frame = 1;
+@@ -2187,7 +2194,9 @@ int rwnx_start_mgmt_xmit(struct rwnx_vif *vif, struct rwnx_sta *sta,
+ 		return -ENOMEM;
+ 	}
+ 
++#if LINUX_VERSION_CODE < KERNEL_VERSION(7, 3, 0)
+ 	*cookie = (unsigned long)skb;
++#endif
+ 
+ 	/*
+ 	 * Move skb->data pointer in order to reserve room for rwnx_txhdr
+@@ -2254,6 +2263,13 @@ int rwnx_start_mgmt_xmit(struct rwnx_vif *vif, struct rwnx_sta *sta,
+ 	sw_txhdr->rwnx_sta = sta;
+ 	sw_txhdr->rwnx_vif = vif;
+ 	sw_txhdr->skb = skb;
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 3, 0)
++	/*
++	 * 7.3 hands the cookie in instead of asking for one, so it has to
++	 * survive until rwnx_txdatacfm(), which reports it to cfg80211.
++	 */
++	sw_txhdr->mgmt_cookie = *cookie;
++#endif
+ 	sw_txhdr->headroom = headroom;
+ 	sw_txhdr->map_len = skb->len - offsetof(struct rwnx_txhdr, hw_hdr);
+ #ifdef CONFIG_RWNX_AMSDUS_TX
+@@ -2380,8 +2396,19 @@ int rwnx_txdatacfm(void *pthis, void *host_id)
+ 					   rwnx_txst.acknowledged);
+ #endif
+ 		/* Confirm transmission to CFG80211 */
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 3, 0)
++		/*
++		 * cfg80211 never assigns 0, so a zero cookie means the frame did not
++		 * come through mgmt_tx and there is no pending transmission to report.
++		 */
++		if (sw_txhdr->mgmt_cookie)
++#endif
+ 		cfg80211_mgmt_tx_status(&sw_txhdr->rwnx_vif->wdev,
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 3, 0)
++								sw_txhdr->mgmt_cookie,
++#else
+ 								(unsigned long)skb,
++#endif
+ 								(skb->data + sw_txhdr->headroom),
+ 								sw_txhdr->frame_len,
+ 								rwnx_txst.acknowledged,
+diff --git a/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/rwnx_tx.h b/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/rwnx_tx.h
+index 6028537..4a61a13 100644
+--- a/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/rwnx_tx.h
++++ b/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/rwnx_tx.h
+@@ -125,6 +125,9 @@ struct rwnx_sw_txhdr {
+ #endif
+ 	u32 need_cfm;
+ 	struct sk_buff *skb;
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 3, 0)
++	u64 mgmt_cookie;  /* cfg80211's mgmt_tx cookie, 0 if none; see rwnx_txdatacfm() */
++#endif
+ 
+ 	size_t map_len;
+ 	dma_addr_t dma_addr;
+diff --git a/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/rwnx_txq.c b/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/rwnx_txq.c
+index 5468c3a..9bdc072 100644
+--- a/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/rwnx_txq.c
++++ b/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/rwnx_txq.c
+@@ -640,6 +640,7 @@ static inline void rwnx_txq_vif_for_each_sta(struct rwnx_hw *rwnx_hw, struct rwn
+ 	}
+ 	case NL80211_IFTYPE_AP_VLAN:
+ 		rwnx_vif = rwnx_vif->ap_vlan.master;
++		__attribute__((__fallthrough__));
+ 	case NL80211_IFTYPE_AP:
+ 	case NL80211_IFTYPE_MESH_POINT:
+ 	case NL80211_IFTYPE_P2P_GO:
+diff --git a/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/rwnx_wakelock.c b/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/rwnx_wakelock.c
+index 1d15296..7c785e9 100644
+--- a/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/rwnx_wakelock.c
++++ b/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/rwnx_wakelock.c
+@@ -11,18 +11,24 @@
+ 
+ struct wakeup_source *rwnx_wakeup_init(const char *name)
+ {
++#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 16, 0)
+ 	struct wakeup_source *ws;
+ 	ws = wakeup_source_create(name);
+ 	wakeup_source_add(ws);
+ 	return ws;
++#else
++	return NULL;
++#endif
+ }
+ 
+ void rwnx_wakeup_deinit(struct wakeup_source *ws)
+ {
+ 	if (ws && ws->active)
+ 		__pm_relax(ws);
++#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 16, 0)
+ 	wakeup_source_remove(ws);
+ 	wakeup_source_destroy(ws);
++#endif
+ }
+ 
+ struct wakeup_source *rwnx_wakeup_register(struct device *dev, const char *name)
