@@ -326,6 +326,10 @@ make_target() {
 
       [[ "${DEVICE}" != "RK3588" && "${DEVICE}" != "SDM845" ]] && export BUILD_BPF_SKEL=0
 
+      # perf 7.x links libstdc++ for C++ symbol demangling, and libstdc++
+      # needs libgcc_s, which the sysroot does not carry: build without it.
+      [ "${DEVICE}" = "RK3562" ] && PERF_BUILD_ARGS+=" NO_DEMANGLE=1"
+
       WERROR=0 \
       NO_LIBPERL=1 \
       NO_LIBPYTHON=1 \
