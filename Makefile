@@ -48,6 +48,13 @@ RK3326:
 	OFFICIAL=$(if $(filter y yes Y YES 1,$(OFFICIAL)),yes,) PROJECT=ArchR DEVICE=RK3326 ARCH=arm ./scripts/build_distro
 	OFFICIAL=$(if $(filter y yes Y YES 1,$(OFFICIAL)),yes,) PROJECT=ArchR DEVICE=RK3326 ARCH=aarch64 ./scripts/build_distro
 
+# AISLPC RG43V PRO and RG52 MINI. The arm pass builds the 32-bit libraries
+# (lib32) the aarch64 image takes, as for the RK3326.
+RK3562:
+	unset DEVICE_ROOT
+	OFFICIAL=$(if $(filter y yes Y YES 1,$(OFFICIAL)),yes,) PROJECT=ArchR DEVICE=RK3562 ARCH=arm ./scripts/build_distro
+	OFFICIAL=$(if $(filter y yes Y YES 1,$(OFFICIAL)),yes,) PROJECT=ArchR DEVICE=RK3562 ARCH=aarch64 ./scripts/build_distro
+
 update:
 	PROJECT=ArchR DEVICE=RK3326 ARCH=aarch64 ./scripts/update_packages
 
