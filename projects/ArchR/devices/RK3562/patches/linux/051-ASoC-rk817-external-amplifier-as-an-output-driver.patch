@@ -1,0 +1,42 @@
+From: Douglas Teles <dga.teles@gmail.com>
+Subject: [PATCH] ASoC: rk817: the external amplifier is an output driver
+
+The RG43V PRO still popped each time the audio device closed. The
+external amplifier enable was a DAPM supply, and supplies go down last:
+the amplifier was still on when the headphone stage switched off. As an
+output driver on the speaker path it comes up after the codec and goes
+down before it.
+
+---
+--- a/sound/soc/codecs/rk817_codec.c	2026-11-24 12:56:45.698849719 -0300
++++ b/sound/soc/codecs/rk817_codec.c	2026-11-24 12:56:45.714896920 -0300
+@@ -200,10 +200,17 @@
+ 	SND_SOC_DAPM_SUPPLY("Class D OCPN 2", RK817_CODEC_ACLASSD_CFG2, 1, 0, NULL, 0),
+ 	SND_SOC_DAPM_SUPPLY("Class D OCPN 3", RK817_CODEC_ACLASSD_CFG2, 0, 0, NULL, 0),
+ 
+-	/* external speaker amplifier enable (use_ext_amplifier boards only) */
+-	SND_SOC_DAPM_SUPPLY("Ext Speaker Amp", SND_SOC_NOPM, 0, 0,
+-			    rk817_ext_amp_event,
+-			    SND_SOC_DAPM_POST_PMU | SND_SOC_DAPM_PRE_PMD),
++	/*
++	 * External speaker amplifier enable (use_ext_amplifier boards only).
++	 * An output driver on the speaker path, not a supply: DAPM powers
++	 * output drivers up after the codec's headphone stage and down before
++	 * it, while supplies come up first and go down last. As a supply the
++	 * amplifier was still on when the headphone stage switched off, and
++	 * the speaker popped every time the device closed.
++	 */
++	SND_SOC_DAPM_OUT_DRV_E("Ext Speaker Amp", SND_SOC_NOPM, 0, 0, NULL, 0,
++			       rk817_ext_amp_event,
++			       SND_SOC_DAPM_POST_PMU | SND_SOC_DAPM_PRE_PMD),
+ 
+ 	/* playback path headphones */
+ 	SND_SOC_DAPM_SUPPLY("Headphone Charge Pump", RK817_CODEC_AHP_CP, 4, 0, NULL, 0),
+@@ -487,6 +494,7 @@
+ 		static const struct snd_soc_dapm_route ext_amp_routes[] = {
+ 			{"Playback Mux", "SPK", "DAC L"},
+ 			{"Playback Mux", "SPK", "DAC R"},
++			{"Ext Speaker Amp", NULL, "Playback Mux"},
+ 			{"SPKO", NULL, "Ext Speaker Amp"},
+ 		};
+ 
