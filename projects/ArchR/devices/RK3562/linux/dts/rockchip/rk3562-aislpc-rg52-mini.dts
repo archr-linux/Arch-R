@@ -56,15 +56,6 @@
 		pwms = <&pwm4 0 50000 0>;
 	};
 
-	gpio-keys {
-		/* KEY_FN on GPIO2_A0, RG52 only (key-gpios-map, fab52 extr l.1075). */
-		button-fn {
-			gpios = <&gpio2 RK_PA0 GPIO_ACTIVE_LOW>;
-			label = "FN";
-			linux,code = <KEY_FN>;
-		};
-	};
-
 	/* Panel power: GPIO0_B0 active low (fab52 vcc3v3-lcd0-n). */
 	vcc3v3_lcd: regulator-vcc3v3-lcd {
 		compatible = "regulator-fixed";
@@ -89,13 +80,26 @@
 	};
 };
 
-/* GPIO1_D4 is KEY_HOME on the RG52 (key-gpios-map 0x66). */
+/*
+ * The RG52 has both HOME (GPIO1_D4, KEY_HOME at the factory) and FN
+ * (GPIO2_A0, KEY_FN). FN is BTN_MODE as on the R36S and the RG43V, so the
+ * input_sense hotkey is the key labelled FN on every model. HOME gets
+ * BTN_TRIGGER_HAPPY1: its code sorts after BTN_DPAD_RIGHT, so it adds
+ * button 17 without renumbering the R36S buttons 0-16.
+ */
 &button_d4 {
 	label = "HOME";
-	linux,code = <KEY_HOME>;
+	linux,code = <BTN_TRIGGER_HAPPY1>;
 };
 
-/* ADC buttons press at 80 mV on the RG52 (600 mV on the RG43V). */
+&joypad {
+	button-fn {
+		gpios = <&gpio2 RK_PA0 GPIO_ACTIVE_LOW>;
+		label = "FN";
+		linux,code = <BTN_MODE>;
+	};
+};
+
 &key_down {
 	press-threshold-microvolt = <80000>;
 };

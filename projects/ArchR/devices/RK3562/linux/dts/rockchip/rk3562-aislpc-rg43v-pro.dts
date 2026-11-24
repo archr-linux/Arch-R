@@ -46,19 +46,12 @@
  * Vertical case: the left stick module is mounted like the right one, so
  * both read low voltage as right/down. AveyondFly's rk3562-rg43v.dts drops
  * the BSP "left-stick-invert" of the RG43H for this reason. [I] check with
- * evtest on the bench.
+ * evtest on the bench. GPIO1_D4 is FN (BTN_MODE, from the dtsi) and the
+ * ADC buttons press at 600 mV (dtsi default) on this model.
  */
-&axis_lx {
-	abs-range = <881 142>;
-};
-
-&axis_ly {
-	abs-range = <881 142>;
-};
-
-&button_d4 {
-	label = "FN";
-	linux,code = <KEY_FN>;
+&joypad {
+	invert-absx = <1>;
+	invert-absy = <1>;
 };
 
 &panel {

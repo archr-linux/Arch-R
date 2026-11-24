@@ -38,72 +38,6 @@
 		stdout-path = "serial0:1500000n8";
 	};
 
-	/*
-	 * Sticks and analog triggers (factory play_joystick, fab
-	 * extrato-v14 l.1050-1121). SARADC is 10 bit on a 1.8 V reference.
-	 * Factory calibration: sticks 250..1550 mV (raw 142..881), centre
-	 * dead zone 790..1010 mV; triggers 50..800 mV (raw 28..455), released
-	 * = high. The right stick reads low voltage as right/down (BSP driver
-	 * rk3562-joystick.c, bmdhacks/kernel_rk3562 557e5c28), hence its
-	 * reversed ranges. The left stick polarity is per model and set in
-	 * the .dts files.
-	 */
-	adc_joystick: adc-joystick {
-		compatible = "adc-joystick";
-		io-channels = <&saradc0 2>, <&saradc0 3>,
-			      <&saradc0 5>, <&saradc0 6>,
-			      <&saradc1 1>, <&saradc1 4>;
-		poll-interval = <16>;
-		#address-cells = <1>;
-		#size-cells = <0>;
-
-		axis_lx: axis@0 {
-			reg = <0>;
-			abs-flat = <32>;
-			abs-fuzz = <16>;
-			abs-range = <142 881>;
-			linux,code = <ABS_X>;
-		};
-
-		axis_ly: axis@1 {
-			reg = <1>;
-			abs-flat = <32>;
-			abs-fuzz = <16>;
-			abs-range = <142 881>;
-			linux,code = <ABS_Y>;
-		};
-
-		axis@2 {
-			reg = <2>;
-			abs-flat = <32>;
-			abs-fuzz = <16>;
-			abs-range = <881 142>;
-			linux,code = <ABS_RX>;
-		};
-
-		axis@3 {
-			reg = <3>;
-			abs-flat = <32>;
-			abs-fuzz = <16>;
-			abs-range = <881 142>;
-			linux,code = <ABS_RY>;
-		};
-
-		axis@4 {
-			reg = <4>;
-			abs-fuzz = <8>;
-			abs-range = <455 28>;
-			linux,code = <ABS_Z>;
-		};
-
-		axis@5 {
-			reg = <5>;
-			abs-fuzz = <8>;
-			abs-range = <455 28>;
-			linux,code = <ABS_RZ>;
-		};
-	};
-
 	/* Volume keys on SARADC0 channel 1 (fab extrato-v14 l.1-17). */
 	adc-keys-volume {
 		compatible = "adc-keys";
@@ -141,97 +75,6 @@
 	};
 
 	/*
-	 * D-pad left/right/down and the A/B, X, Y face buttons are single
-	 * buttons on SARADC1 channels 0, 2, 3, 5, 6, 7 (fab extrato-v14
-	 * l.1080-1120). One adc-keys node per channel, as on the Pocket AIS.
-	 * The press threshold differs per model (RG43V 600 mV, RG52 80 mV)
-	 * and is set in the .dts files through these labels.
-	 */
-	adc-keys-dpad-left {
-		compatible = "adc-keys";
-		io-channels = <&saradc1 0>;
-		io-channel-names = "buttons";
-		keyup-threshold-microvolt = <1800000>;
-		poll-interval = <16>;
-
-		key_left: button {
-			label = "DPAD-LEFT";
-			linux,code = <BTN_DPAD_LEFT>;
-			press-threshold-microvolt = <600000>;
-		};
-	};
-
-	adc-keys-dpad-right {
-		compatible = "adc-keys";
-		io-channels = <&saradc1 2>;
-		io-channel-names = "buttons";
-		keyup-threshold-microvolt = <1800000>;
-		poll-interval = <16>;
-
-		key_right: button {
-			label = "DPAD-RIGHT";
-			linux,code = <BTN_DPAD_RIGHT>;
-			press-threshold-microvolt = <600000>;
-		};
-	};
-
-	adc-keys-dpad-down {
-		compatible = "adc-keys";
-		io-channels = <&saradc1 3>;
-		io-channel-names = "buttons";
-		keyup-threshold-microvolt = <1800000>;
-		poll-interval = <16>;
-
-		key_down: button {
-			label = "DPAD-DOWN";
-			linux,code = <BTN_DPAD_DOWN>;
-			press-threshold-microvolt = <600000>;
-		};
-	};
-
-	adc-keys-south {
-		compatible = "adc-keys";
-		io-channels = <&saradc1 5>;
-		io-channel-names = "buttons";
-		keyup-threshold-microvolt = <1800000>;
-		poll-interval = <16>;
-
-		key_south: button {
-			label = "SOUTH";
-			linux,code = <BTN_SOUTH>;
-			press-threshold-microvolt = <600000>;
-		};
-	};
-
-	adc-keys-north {
-		compatible = "adc-keys";
-		io-channels = <&saradc1 6>;
-		io-channel-names = "buttons";
-		keyup-threshold-microvolt = <1800000>;
-		poll-interval = <16>;
-
-		key_north: button {
-			label = "NORTH";
-			linux,code = <BTN_NORTH>;
-			press-threshold-microvolt = <600000>;
-		};
-	};
-
-	adc-keys-west {
-		compatible = "adc-keys";
-		io-channels = <&saradc1 7>;
-		io-channel-names = "buttons";
-		keyup-threshold-microvolt = <1800000>;
-		poll-interval = <16>;
-
-		key_west: button {
-			label = "WEST";
-			linux,code = <BTN_WEST>;
-			press-threshold-microvolt = <600000>;
-		};
-	};
-
-	/*
 	 * SARADC0 channel 7 carries the board revision strap read by the
 	 * factory U-Boot (< 1.5 V = v10, above = v14, RELATORIO 1.3) and, on
 	 * the RG43V v14, a reset key (rst-keys, KEY_F1). It is left out: on a
@@ -263,11 +106,128 @@
 		default-brightness-level = <200>;
 	};
 
-	/* Buttons on GPIO, active low with pull-ups (fab extrato-v14 l.1065-1066). */
-	gpio_keys: gpio-keys {
-		compatible = "gpio-keys";
+	/*
+	 * All game controls as one archr-joypad device (factory play_joystick,
+	 * fab extrato-v14 l.1050-1121), with the R36S identity and button codes
+	 * so its SDL, RetroArch and input_sense mappings apply unchanged.
+	 *
+	 * Sticks on SARADC0 channels 2, 3 (left) and 5, 6 (right). SARADC is
+	 * 10 bit on a 1.8 V reference; factory calibration: 250..1550 mV,
+	 * centre dead zone 790..1010 mV. The right stick reads low voltage as
+	 * right/down (BSP rk3562-joystick.c, bmdhacks/kernel_rk3562 557e5c28),
+	 * hence invert-absrx/ry; the left stick polarity is set per model.
+	 *
+	 * D-pad left/right/down and the face buttons A, X, Y are single buttons
+	 * on SARADC1 channels 0, 2, 3, 5, 6, 7, released at 1.8 V; the press
+	 * threshold is per model (RG43V 600 mV, RG52 80 mV), set in the .dts.
+	 *
+	 * L2/R2 are analog on SARADC1 channels 1 and 4 (50..800 mV, released =
+	 * high). They are reported as the digital BTN_TL2/BTN_TR2 of the R36S:
+	 * extra ABS_Z/ABS_RZ axes would renumber the right stick axes in SDL
+	 * and RetroArch (axes are numbered in ABS code order).
+	 *
+	 * GPIO buttons are active low with pull-ups (fab extrato-v14
+	 * l.1065-1066).
+	 */
+	joypad: joypad {
+		compatible = "archr-joypad";
 		pinctrl-names = "default";
 		pinctrl-0 = <&btn_pins>;
+
+		joypad-name = "r36s_Gamepad";
+		joypad-bustype = <0x19>;		/* BUS_HOST */
+		joypad-vendor = <0x0001>;
+		joypad-product = <0x1188>;
+		joypad-revision = <0x0188>;
+
+		io-channels = <&saradc0 2>, <&saradc0 3>,
+			      <&saradc0 5>, <&saradc0 6>;
+		io-channel-names = "joy_left_x", "joy_left_y",
+				   "joy_right_x", "joy_right_y";
+		abs-left-first;
+
+		poll-interval = <10>;
+
+		/* reports in mV x 2: range -1800..1800 */
+		button-adc-scale = <2>;
+		/* factory centre dead zone is +-110 mV (220 here) */
+		button-adc-deadzone = <200>;
+		button-adc-fuzz = <32>;
+		button-adc-flat = <32>;
+
+		/* +-650 mV travel to full range after the dead zone */
+		abs_x-p-tuning = <145>;
+		abs_x-n-tuning = <145>;
+		abs_y-p-tuning = <145>;
+		abs_y-n-tuning = <145>;
+		abs_rx-p-tuning = <145>;
+		abs_rx-n-tuning = <145>;
+		abs_ry-p-tuning = <145>;
+		abs_ry-n-tuning = <145>;
+
+		invert-absx = <0>;
+		invert-absy = <0>;
+		invert-absrx = <1>;
+		invert-absry = <1>;
+
+		key_left: button-dpad-left {
+			io-channels = <&saradc1 0>;
+			label = "DPAD-LEFT";
+			linux,code = <BTN_DPAD_LEFT>;
+			press-threshold-microvolt = <600000>;
+		};
+
+		key_right: button-dpad-right {
+			io-channels = <&saradc1 2>;
+			label = "DPAD-RIGHT";
+			linux,code = <BTN_DPAD_RIGHT>;
+			press-threshold-microvolt = <600000>;
+		};
+
+		key_down: button-dpad-down {
+			io-channels = <&saradc1 3>;
+			label = "DPAD-DOWN";
+			linux,code = <BTN_DPAD_DOWN>;
+			press-threshold-microvolt = <600000>;
+		};
+
+		key_south: button-south {
+			io-channels = <&saradc1 5>;
+			label = "SOUTH";
+			linux,code = <BTN_SOUTH>;
+			press-threshold-microvolt = <600000>;
+		};
+
+		key_north: button-north {
+			io-channels = <&saradc1 6>;
+			label = "NORTH";
+			linux,code = <BTN_NORTH>;
+			press-threshold-microvolt = <600000>;
+		};
+
+		key_west: button-west {
+			io-channels = <&saradc1 7>;
+			label = "WEST";
+			linux,code = <BTN_WEST>;
+			press-threshold-microvolt = <600000>;
+		};
+
+		/* Pressed below 400 mV, released above 500 mV. */
+		button-l2 {
+			io-channels = <&saradc1 1>;
+			label = "L2";
+			linux,code = <BTN_TL2>;
+			press-threshold-microvolt = <400000>;
+			release-threshold-microvolt = <500000>;
+		};
+
+		button-r2 {
+			io-channels = <&saradc1 4>;
+			label = "R2";
+			linux,code = <BTN_TR2>;
+			press-threshold-microvolt = <400000>;
+			release-threshold-microvolt = <500000>;
+		};
 
 		button-l1 {
 			gpios = <&gpio1 RK_PC7 GPIO_ACTIVE_LOW>;
@@ -305,11 +265,14 @@
 			linux,code = <BTN_START>;
 		};
 
-		/* GPIO1_D4: KEY_FN on the RG43V, KEY_HOME on the RG52 (per .dts). */
+		/*
+		 * GPIO1_D4: FN on the RG43V, HOME on the RG52 (per .dts). FN is
+		 * BTN_MODE as on the R36S (input_sense hotkey).
+		 */
 		button_d4: button-d4 {
 			gpios = <&gpio1 RK_PD4 GPIO_ACTIVE_LOW>;
 			label = "FN";
-			linux,code = <KEY_FN>;
+			linux,code = <BTN_MODE>;
 		};
 
 		button-thumbl {
