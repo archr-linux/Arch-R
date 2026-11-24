@@ -1,0 +1,14 @@
+--- a/include/linux/types.h
++++ b/include/linux/types.h
+@@ -47,5 +47,11 @@
+ #define __aligned_be64 __be64 __attribute__((aligned(8)))
+ #define __aligned_le64 __le64 __attribute__((aligned(8)))
+ 
++/* The arm64 asm/sigcontext.h of Linux 7.3 uses __u128. */
++#ifdef __SIZEOF_INT128__
++typedef __signed__ __int128 __s128 __attribute__((aligned(16)));
++typedef unsigned __int128 __u128 __attribute__((aligned(16)));
++#endif
++
+ #endif /*  __ASSEMBLY__ */
+ #endif /* _LINUX_TYPES_H */
