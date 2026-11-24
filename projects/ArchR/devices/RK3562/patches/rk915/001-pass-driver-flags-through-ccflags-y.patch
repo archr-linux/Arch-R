@@ -1,0 +1,14 @@
+rk915: pass the driver flags through ccflags-y
+
+Kbuild stopped honouring EXTRA_CFLAGS in Linux 6.15, so on the RK3562
+kernel (7.3) the include paths and defines were lost.
+
+--- a/Makefile
++++ b/Makefile
+@@ -85,3 +85,6 @@
+ 
+ endif
+ 
++
++# Linux 6.15 and later ignore EXTRA_CFLAGS
++ccflags-y += $(EXTRA_CFLAGS)
