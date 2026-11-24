@@ -27,6 +27,11 @@ post_makeinstall_target() {
   cp -v "${PKG_BUILD}/bin/gpudriver" "${INSTALL}/usr/bin/"
   GPUDRIVER_BIN="${INSTALL}/usr/bin/gpudriver"
 
+  # libmali is the default everywhere but on the RK3562, which came up on
+  # panfrost and keeps it; libmali is the option there.
+  DEFAULT_DRIVER="libmali"
+  [ "${DEVICE}" = "RK3562" ] && DEFAULT_DRIVER="panfrost"
+
   # set the correct mesa pan kernel driver module based on device
   case ${DEVICE} in
     RK3588)
@@ -52,5 +57,8 @@ post_makeinstall_target() {
       -i  "${GPUDRIVER_BIN}"
 
   sed -e "s/@DTB_OVERLAY_GPU@/${DTB_OVERLAY_GPU}/g" \
+      -i  "${GPUDRIVER_BIN}"
+
+  sed -e "s/@DEFAULT_DRIVER@/${DEFAULT_DRIVER}/g" \
       -i  "${GPUDRIVER_BIN}"
 }

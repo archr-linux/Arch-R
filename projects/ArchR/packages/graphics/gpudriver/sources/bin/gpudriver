@@ -6,10 +6,15 @@
 
 GPU_DRIVER_SETTING_KEY="gpu.driver"
 
+# Driver used when gpu.driver is unset and after a boot that crashed while
+# loading the other one; filled in by package.mk (libmali on the RK3326,
+# panfrost on the RK3562).
+DEFAULT_DRIVER="@DEFAULT_DRIVER@"
+
 get_current_driver() {
   CONFDRIVER=$(get_setting ${GPU_DRIVER_SETTING_KEY})
   if [ -z ${CONFDRIVER} ]; then
-    CONFDRIVER="libmali"              # DEFAULT
+    CONFDRIVER="${DEFAULT_DRIVER}"
     set_setting ${GPU_DRIVER_SETTING_KEY} ${CONFDRIVER}
   fi
 }
@@ -320,16 +325,16 @@ case "$1" in
     # We drop a sentinel on /storage before the modprobe and only clear
     # it once we know the driver bound successfully. On the next boot
     # we look for the sentinel: if present, the previous attempt with
-    # this driver crashed before recovery — silently force libmali and
+    # this driver crashed before recovery — silently force the default and
     # rewrite the setting so the user can pick again from a working UI.
     SENTINEL="/storage/.config/gpudriver.attempting"
     if [ -f "${SENTINEL}" ]; then
       PREV="$(cat "${SENTINEL}" 2>/dev/null)"
-      log_event "previous boot crashed while loading ${PREV} — forcing libmali"
+      log_event "previous boot crashed while loading ${PREV} — forcing ${DEFAULT_DRIVER}"
       rm -f "${SENTINEL}"
-      if [ "${CONFDRIVER}" = "${PREV}" ] && [ "${PREV}" != "libmali" ]; then
-        CONFDRIVER="libmali"
-        set_setting ${GPU_DRIVER_SETTING_KEY} libmali
+      if [ "${CONFDRIVER}" = "${PREV}" ] && [ "${PREV}" != "${DEFAULT_DRIVER}" ]; then
+        CONFDRIVER="${DEFAULT_DRIVER}"
+        set_setting ${GPU_DRIVER_SETTING_KEY} ${DEFAULT_DRIVER}
       fi
     fi
 
