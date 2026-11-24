@@ -3,8 +3,8 @@ Subject: [PATCH] ASoC: rk817: settle the codec around the external amplifier
 
 The RK3562 consoles popped when the speaker path came up or went down:
 the external amplifier was switched together with the codec and heard
-its output settle. Switch it on 20 ms after the path is up and off
-20 ms before it goes down, as the vendor codec waits (hp-mute-delay-ms).
+its output settle. Switch it on 100 ms after the path is up, as the vendor codec waits
+(hp-mute-delay-ms), and off 20 ms before it goes down.
 
 ---
 --- a/sound/soc/codecs/rk817_codec.c	2026-11-24 12:32:20.619727241 -0300
@@ -16,13 +16,13 @@ its output settle. Switch it on 20 ms after the path is up and off
 -	gpiod_set_value_cansleep(rk817->spk_ctl_gpio,
 -				 SND_SOC_DAPM_EVENT_ON(event) ? 1 : 0);
 +	/*
-+	 * The amplifier hears the codec's output settle: switch it on only
-+	 * once the path is up, and off a little before the codec goes down
-+	 * (the vendor codec waits 100 ms, hp-mute-delay-ms). Without the
-+	 * pauses the speaker pops.
++	 * The amplifier hears the codec's output settle: switch it on 100 ms
++	 * after the path is up (the vendor codec's hp-mute-delay-ms), and off
++	 * a little before the codec goes down. Without the pauses the
++	 * speaker pops.
 +	 */
 +	if (SND_SOC_DAPM_EVENT_ON(event)) {
-+		msleep(20);
++		msleep(100);
 +		gpiod_set_value_cansleep(rk817->spk_ctl_gpio, 1);
 +	} else {
 +		gpiod_set_value_cansleep(rk817->spk_ctl_gpio, 0);
