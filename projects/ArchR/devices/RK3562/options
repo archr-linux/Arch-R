@@ -50,7 +50,8 @@
     BOOTLOADER="u-boot"
 
   # Mali GPU family (Mali-G52 2EE). Panfrost is the default driver; libmali
-  # g52 can join the gpudriver selector later, as on the RK3326.
+  # g24p0 with the Arm mali_kbase r52p0 is the other option of the
+  # gpudriver selector (gpu.driver), as on the RK3326.
     MALI_FAMILY="bifrost-g52"
     GRAPHIC_DRIVERS="panfrost"
 
@@ -71,16 +72,16 @@
   # SDIO on v14. Both are always installed; udev loads the right one from
   # the SDIO ID of the chip. The USB Wi-Fi dongles still have to be built
   # and tested against linux 7.3.
-    ADDITIONAL_DRIVERS="rk915 AIC8800-SDIO"
+    ADDITIONAL_DRIVERS="rk915 AIC8800-SDIO mali-bifrost"
 
   # Additional Firmware to use ( )
     FIRMWARE=""
 
   # Additional packages to install (no device-switch: it only exists for
   # the RK3326; the generic-dsi panel driver is built into the kernel by
-  # patch 045)
-    ADDITIONAL_PACKAGES=""
-    ADDITIONAL_PACKAGES_32BIT=""
+  # patch 045). libmali brings gpudriver with it.
+    ADDITIONAL_PACKAGES="libmali"
+    ADDITIONAL_PACKAGES_32BIT="libmali"
 
   # Debug tty path
     DEBUG_TTY="/dev/ttyS0"
