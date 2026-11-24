@@ -804,7 +804,7 @@
 		};
 
 		spk_amp_en: spk-amp-en {
-			rockchip,pins = <3 RK_PC3 RK_FUNC_GPIO &pcfg_pull_up>;
+			rockchip,pins = <3 RK_PC3 RK_FUNC_GPIO &pcfg_pull_down>;
 		};
 	};
 
