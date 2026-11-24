@@ -7,8 +7,7 @@
 GPU_DRIVER_SETTING_KEY="gpu.driver"
 
 # Driver used when gpu.driver is unset and after a boot that crashed while
-# loading the other one; filled in by package.mk (libmali on the RK3326,
-# panfrost on the RK3562).
+# loading the other one; filled in by package.mk (libmali).
 DEFAULT_DRIVER="@DEFAULT_DRIVER@"
 
 get_current_driver() {

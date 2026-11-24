@@ -27,10 +27,11 @@ post_makeinstall_target() {
   cp -v "${PKG_BUILD}/bin/gpudriver" "${INSTALL}/usr/bin/"
   GPUDRIVER_BIN="${INSTALL}/usr/bin/gpudriver"
 
-  # libmali is the default everywhere but on the RK3562, which came up on
-  # panfrost and keeps it; libmali is the option there.
+  # libmali is the default everywhere, the RK3562 included: on its
+  # Mali-G52 at 900 MHz God of War runs at 100% on libmali, 45% on panfrost
+  # GL (driver overhead on the CPU) and 70% on PanVK (2026-11-24), and
+  # some ports need libmali.
   DEFAULT_DRIVER="libmali"
-  [ "${DEVICE}" = "RK3562" ] && DEFAULT_DRIVER="panfrost"
 
   # set the correct mesa pan kernel driver module based on device
   case ${DEVICE} in
