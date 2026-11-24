@@ -1009,7 +1009,10 @@
 	status = "okay";
 };
 
-/* Stick LED MCU: transmit only. */
+/*
+ * Stick LED MCU (archr-stick-leds): transmit only here, the RG43V PRO .dts
+ * adds RX as its factory DTB does.
+ */
 &uart1 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&led_mcu_tx>;

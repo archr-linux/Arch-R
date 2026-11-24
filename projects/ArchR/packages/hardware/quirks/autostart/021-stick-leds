@@ -1,0 +1,10 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ArchR (https://github.com/archr-linux/Arch-R)
+
+# Stick RGB LEDs of the AISLPC RG43V PRO / RG52 MINI (archr-stick-leds).
+# Nothing elsewhere. In the background: the UI does not wait for the MCU.
+if [ -x /usr/bin/archr-stick-leds ] && /usr/bin/archr-stick-leds supported; then
+  /usr/bin/archr-stick-leds apply >/dev/null 2>&1 &
+fi
+exit 0

@@ -247,6 +247,11 @@
 	monitored-battery = <&battery>;
 };
 
+/* Stick LED MCU: both uart1m0 pins, as in the factory DTB (RELATORIO 5.3). */
+&uart1 {
+	pinctrl-0 = <&uart1m0_xfer>;
+};
+
 /* 61.0 MHz pixel clock = VPLL 1464 MHz / 24 (as on the Pocket AIS). */
 &vop {
 	assigned-clock-rates = <1464000000>, <0>;

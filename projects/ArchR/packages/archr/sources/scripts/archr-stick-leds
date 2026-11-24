@@ -1,0 +1,128 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ArchR (https://github.com/archr-linux/Arch-R)
+#
+# archr-stick-leds: RGB LEDs around the sticks of the AISLPC RG43V PRO and
+# RG52 MINI. Everywhere else every command exits 1 and touches nothing.
+#
+#   archr-stick-leds supported                 exit 0 only on those boards
+#   archr-stick-leds apply                     the saved settings
+#   archr-stick-leds preview MODE COLOR BRI    the given ones, not saved
+#
+# Settings (system.cfg):
+#   leds.sticks.mode        off|static|breathing|rainbow   (default rainbow)
+#   leds.sticks.color       red|green|blue|cyan|yellow|magenta|white
+#                           (default white; static and breathing only)
+#   leds.sticks.brightness  1..5                           (default 3)
+#
+# The LEDs belong to a small MCU on UART1 (/dev/ttyS1, 9600 8N1), powered
+# by the always-on vcc_led regulator of the DT (off = mode 9, the rail
+# stays on). Each command is one byte, sent 6 times 10 ms apart, in the
+# order of the working dArkOS port for these consoles (ledctl.sh):
+#   init      0x20 + LEDs/4 - 1 (12 LEDs: 0x22), needed once after power-up
+#             before the MCU takes the other commands
+#   mode      1 G, 2 B, 3 R, 4 G+B, 5 R+G, 6 B+R, 7 R+G+B, 8 colour cycle,
+#             9 off, 17..23 breathing in the same colour order
+#   bri b     50 - b, b = 1..9
+
+. /etc/profile.d/001-functions
+
+UART=/dev/ttyS1
+LOCK=/run/archr-stick-leds.lock
+
+# Brightness levels 1..5 to the MCU value b = 1..9 (byte 50 - b).
+BRI_VALUES=(1 3 5 7 9)
+# 12 LEDs on both models (RG52 factory script, dArkOS port).
+INIT_BYTE=$((0x20 + 12 / 4 - 1))
+
+model() {
+  [ -r /proc/device-tree/compatible ] || return 1
+  case " $(tr '\0' ' ' </proc/device-tree/compatible) " in
+    *" aislpc,rg52-mini "*) echo rg52 ;;
+    *" aislpc,rg43v-pro "* | *" aislpc,rg43v-pro-1024x600 "*) echo rg43v ;;
+    *) return 1 ;;
+  esac
+}
+
+supported() { model >/dev/null && [ -c "${UART}" ]; }
+
+colour_index() {
+  case "${1}" in
+    green) echo 1 ;;
+    blue) echo 2 ;;
+    red) echo 3 ;;
+    cyan) echo 4 ;;
+    yellow) echo 5 ;;
+    magenta) echo 6 ;;
+    white) echo 7 ;;
+    *) return 1 ;;
+  esac
+}
+
+valid_mode() { case "${1}" in off | static | breathing | rainbow) return 0 ;; esac; return 1; }
+valid_bri() { [[ "${1}" =~ ^[1-5]$ ]]; }
+
+# send BYTE: one byte, 6 times, 10 ms apart, on fd 3.
+send() {
+  local hex i
+  hex=$(printf '%02x' "${1}")
+  for i in 1 2 3 4 5 6; do
+    printf "\\x${hex}" >&3 || return 1
+    sleep 0.01
+  done
+}
+
+# set MODE COLOR BRIGHTNESS (already validated).
+set_leds() {
+  local mode=${1} colour=${2} bri=${3} code
+
+  case "${mode}" in
+    off) code=9 ;;
+    rainbow) code=8 ;;
+    static) code=$(colour_index "${colour}") ;;
+    breathing) code=$(($(colour_index "${colour}") + 16)) ;;
+  esac
+
+  if command -v flock >/dev/null; then
+    exec 9>"${LOCK}" && flock -w 2 9
+  fi
+  # raw, so no byte is ever translated (0x0a with onlcr, for one).
+  stty -F "${UART}" 9600 cs8 -cstopb -parenb clocal -crtscts -ixon raw -echo || return 1
+  exec 3>"${UART}" || return 1
+  send "${INIT_BYTE}" && sleep 0.1 &&
+    send "${code}" && sleep 0.05 &&
+    send $((50 - BRI_VALUES[bri - 1]))
+  local rc=$?
+  exec 3>&-
+  return ${rc}
+}
+
+apply() {
+  local mode colour bri
+  mode=$(get_setting leds.sticks.mode)
+  colour=$(get_setting leds.sticks.color)
+  bri=$(get_setting leds.sticks.brightness)
+  valid_mode "${mode}" || mode=rainbow
+  colour_index "${colour}" >/dev/null || colour=white
+  valid_bri "${bri}" || bri=3
+  set_leds "${mode}" "${colour}" "${bri}"
+}
+
+preview() {
+  if [ $# -ne 3 ] || ! valid_mode "${1}" || ! colour_index "${2}" >/dev/null || ! valid_bri "${3}"; then
+    echo "usage: archr-stick-leds preview off|static|breathing|rainbow" \
+      "red|green|blue|cyan|yellow|magenta|white 1..5" >&2
+    return 2
+  fi
+  set_leds "${1}" "${2}" "${3}"
+}
+
+case "${1}" in
+  supported) supported ;;
+  apply) supported || exit 1; apply ;;
+  preview) supported || exit 1; shift; preview "$@" ;;
+  *)
+    echo "usage: archr-stick-leds supported|apply|preview MODE COLOR BRIGHTNESS" >&2
+    exit 2
+    ;;
+esac
