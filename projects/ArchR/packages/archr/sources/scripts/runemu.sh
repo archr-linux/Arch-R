@@ -736,6 +736,9 @@ case ${EMULATOR} in
       ;;
       "ports")
         portmaster_ready
+        # No emulator name for the exit shortcut to kill: archr-port-stop
+        # finds the port's script and closes it with what it started.
+        set_kill set "@port"
         # A port's own "systemctl restart emustation" (PortMaster's installer)
         # must not fail: the shim answers it, the launcher re-reads the list.
         export PATH="/usr/lib/archr/port-shims:${PATH}"
@@ -755,6 +758,7 @@ case ${EMULATOR} in
       "windows")
         RUNTHIS='${EMUPERF} ${RUN_SHELL} "${ROMNAME}"'
         portmaster_ready
+        set_kill set "@port"
         # Hook into Portmaster control mapping
         sed -i "/^ACTIVE_GAME=/c\ACTIVE_GAME=\"${ROMNAME}\"" /storage/.config/PortMaster/mapper.txt
         sed -i "/^ACTIVE_PLATFORM=/c\ACTIVE_PLATFORM=\"${PLATFORM}\"" /storage/.config/PortMaster/mapper.txt

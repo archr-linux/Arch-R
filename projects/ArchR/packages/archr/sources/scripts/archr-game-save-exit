@@ -65,6 +65,7 @@
 : "${OSD:=archr-osd}"
 : "${GRIM:=grim}"
 : "${KILL_DATA:=/tmp/.process-kill-data}"
+: "${PORT_STOP:=/usr/bin/archr-port-stop}"
 # Tenths of a second: for a state file to appear, for the game to close
 # after the signal (RetroArch takes about 1 s with its state on the R36S),
 # and for another run holding the lock (battery, suspend).
@@ -252,6 +253,12 @@ fi
 # written (/usr/bin/retroarch), so it matched nothing.
 signal() {
   local name
+  # A port (runemu.sh marks it "@port"): its script and what it started,
+  # TERM then KILL in the one call; the later KILL has nothing left to do.
+  if [ "${TARGETS// /}" = "@port" ]; then
+    [ "$1" = KILL ] || "${PORT_STOP}" 2>/dev/null
+    return
+  fi
   for name in ${TARGETS}; do
     killall "-$1" "${name}" 2>/dev/null
   done
