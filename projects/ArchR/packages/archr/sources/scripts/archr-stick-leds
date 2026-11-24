@@ -84,7 +84,7 @@ set_leds() {
   esac
 
   if command -v flock >/dev/null; then
-    exec 9>"${LOCK}" && flock -w 2 9
+    exec 9>"${LOCK}" && flock 9  # BusyBox flock has no -w; a send takes under 0.5 s
   fi
   # raw, so no byte is ever translated (0x0a with onlcr, for one).
   stty -F "${UART}" 9600 cs8 -cstopb -parenb clocal -crtscts -ixon raw -echo || return 1
