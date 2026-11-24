@@ -1,0 +1,25 @@
+libcody: accept char8_t literals in S2C
+
+Users of cody.hh outside libcody (c++tools, gcc/cp) are built with the
+host compiler's default C++ standard, C++20 on GCC 16, where u8" " is
+char8_t. Add the matching S2C overload.
+
+--- a/libcody/cody.hh
++++ b/libcody/cody.hh
+@@ -54,6 +54,16 @@
+   return s[0];
+ }
+ 
++#if __cpp_char8_t >= 201811
++// C++20 and later: u8"" literals are char8_t
++template<unsigned I>
++constexpr char S2C (char8_t const (&s)[I])
++{
++  static_assert (I == 2, "only single octet strings may be converted");
++  return s[0];
++}
++#endif
++
+ /// Internal buffering class.  Used to concatenate outgoing messages
+ /// and Lex incoming ones.
+ class MessageBuffer

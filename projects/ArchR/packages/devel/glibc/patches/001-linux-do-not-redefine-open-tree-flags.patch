@@ -1,0 +1,26 @@
+linux: do not redefine the open_tree flags from <linux/mount.h>
+
+The kernel uapi <linux/mount.h> of newer kernels (the RK3562 builds
+against linux 7.3 headers) defines OPEN_TREE_CLONE as (1 << 0), which
+clashes with the glibc 2.40 definition under -Werror. Only define the
+flags when the kernel header did not.
+
+--- a/sysdeps/unix/sysv/linux/sys/mount.h
++++ b/sysdeps/unix/sysv/linux/sys/mount.h
+@@ -264,9 +264,13 @@
+ /* fsopen flags.  */
+ #define FSOPEN_CLOEXEC          0x00000001
+ 
+-/* open_tree flags.  */
+-#define OPEN_TREE_CLONE    1         /* Clone the target tree and attach the clone */
+-#define OPEN_TREE_CLOEXEC  O_CLOEXEC /* Close the file on execve() */
++/* open_tree flags.  Linux 6.19 and later define them in <linux/mount.h>.  */
++#ifndef OPEN_TREE_CLONE
++# define OPEN_TREE_CLONE    1         /* Clone the target tree and attach the clone */
++#endif
++#ifndef OPEN_TREE_CLOEXEC
++# define OPEN_TREE_CLOEXEC  O_CLOEXEC /* Close the file on execve() */
++#endif
+ 
+ 
+ __BEGIN_DECLS
