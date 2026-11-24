@@ -876,6 +876,11 @@
 			rockchip,pins = <0 RK_PB3 RK_FUNC_GPIO &pcfg_pull_none>;
 		};
 
+		/* RK915 host wake, GPIO0_B4 (fab WIFI,host_wake_irq). */
+		wifi_host_wake: wifi-host-wake {
+			rockchip,pins = <0 RK_PB4 RK_FUNC_GPIO &pcfg_pull_down>;
+		};
+
 		wifi_poweren: wifi-poweren {
 			rockchip,pins = <0 RK_PA6 RK_FUNC_GPIO &pcfg_pull_up>;
 		};
@@ -952,7 +957,22 @@
 	/* RK915 (v10 boards): CMD52 after data, clock never gated (patch 048). */
 	supports-rk912;
 	vmmc-supply = <&vcc_wifi>;
+	#address-cells = <1>;
+	#size-cells = <0>;
 	status = "okay";
+
+	/*
+	 * SDIO function 1. The RK915 driver takes its out-of-band interrupt
+	 * from here ("host-wake"); the AIC8800 (v14) ignores the node.
+	 */
+	wifi@1 {
+		reg = <1>;
+		interrupt-parent = <&gpio0>;
+		interrupts = <RK_PB4 IRQ_TYPE_EDGE_RISING>;
+		interrupt-names = "host-wake";
+		pinctrl-names = "default";
+		pinctrl-0 = <&wifi_host_wake>;
+	};
 };
 
 &tsadc {

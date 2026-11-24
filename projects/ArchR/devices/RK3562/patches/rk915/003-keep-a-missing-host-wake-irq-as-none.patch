@@ -1,0 +1,26 @@
+Keep a missing "host-wake" interrupt as no interrupt
+
+of_irq_get_byname() returns a negative errno when the SDIO function has
+no "host-wake" interrupt; stored in the unsigned host->irq it passed the
+"<= 0" check and request_irq(4294967274) failed, which stopped the
+firmware bring-up ("rk915_irq_register failed").
+
+--- a/src/sdio.c	2026-11-24 12:14:16.050363447 -0300
++++ b/src/sdio.c	2026-11-24 12:14:16.064483597 -0300
+@@ -710,7 +710,15 @@
+ 	host->dev = &gfunc1->dev;
+ 
+ 	host->io_ops = &sdio_host_ops;
+-	host->irq = of_irq_get_byname(host->dev->of_node, "host-wake");
++	/*
++	 * host->irq is unsigned: keep a missing "host-wake" (a negative
++	 * errno) as 0, which rk915_register_irq() treats as no interrupt.
++	 */
++	{
++		int irq = of_irq_get_byname(host->dev->of_node, "host-wake");
++
++		host->irq = irq > 0 ? irq : 0;
++	}
+ #if SDIO_AUTO_SLEEP
+ 	// init delay sleep worker
+ 	INIT_DELAYED_WORK(&host->sleep_work, sleep_timer_expiry);
