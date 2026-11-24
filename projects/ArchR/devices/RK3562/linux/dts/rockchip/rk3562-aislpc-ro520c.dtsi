@@ -1013,6 +1013,36 @@
 	status = "okay";
 };
 
+/*
+ * Throttle from 75 C, as the factory DT (fab soc-thermal: passive trips at
+ * 75 and 85 C, critical at 115 C). The factory runs power_allocator with
+ * the 85 C trip as its target; here step_wise takes CPU and GPU down from
+ * 75 C, since the GPU has no power model under mali_kbase (libmali, the
+ * default driver) and power_allocator would leave it unthrottled. The 85 C
+ * passive and 115 C critical trips come from rk3562.dtsi.
+ */
+&soc_thermal {
+	trips {
+		soc_warm: soc-warm {
+			temperature = <75000>;
+			hysteresis = <2000>;
+			type = "passive";
+		};
+	};
+
+	cooling-maps {
+		map2 {
+			trip = <&soc_warm>;
+			cooling-device = <&cpu0 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
+		};
+
+		map3 {
+			trip = <&soc_warm>;
+			cooling-device = <&gpu THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
+		};
+	};
+};
+
 &u2phy {
 	status = "okay";
 };
