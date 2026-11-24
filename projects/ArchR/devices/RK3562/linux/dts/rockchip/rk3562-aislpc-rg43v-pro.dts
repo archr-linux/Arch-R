@@ -45,8 +45,9 @@
 /*
  * Vertical case: the left stick is inverted on both axes, so its raw
  * values match the R36S's, which the RetroArch autoconfig and the PPSSPP
- * controls.ini expect (checked on a v10 board). GPIO1_D4 is FN (BTN_MODE, from the dtsi) and the
- * ADC buttons press at 600 mV (dtsi default) on this model.
+ * controls.ini expect (checked on a v10 board). GPIO1_D4 is FN (BTN_MODE,
+ * from the dtsi) and the ADC buttons press at 600 mV (dtsi default) on this
+ * model.
  */
 &joypad {
 	invert-absx = <1>;
