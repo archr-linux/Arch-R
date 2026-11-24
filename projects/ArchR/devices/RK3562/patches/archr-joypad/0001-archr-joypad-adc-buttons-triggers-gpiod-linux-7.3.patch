@@ -1,0 +1,414 @@
+From: ArchR <noreply@archr-linux>
+Subject: [PATCH] archr-joypad: ADC buttons and triggers, gpiod, linux 7.3
+
+The AISLPC RG43V PRO and RG52 MINI (RK3562) have their face buttons,
+part of the D-pad and the L2/R2 triggers on single SARADC channels, next
+to the sticks and the GPIO buttons. This lets archr-joypad drive all of
+them as one input device.
+
+A child node with "io-channels" is read from that channel:
+- EV_KEY (default): pressed when the reading crosses
+  press-threshold-microvolt, released when it crosses back over
+  release-threshold-microvolt (default: press + 100 mV, i.e. pressed at
+  low voltage). release < press means pressed at high voltage.
+- linux,input-type = <EV_ABS>: analog trigger, abs-range = <released
+  pressed> in mV, reported from 0 to the stick maximum.
+Other child nodes stay GPIO buttons.
+
+GPIO buttons now use gpiod (of_gpio.h is gone in linux 7.x); the active
+level comes from the gpios flags as before. Only archr-joypad is built,
+archr-singleadc-joypad does not build against linux 7.3. The IIO
+consumer symbols live in the IIO_CONSUMER namespace since linux 6.13.
+
+--- a/Makefile
++++ b/Makefile
+@@ -1,4 +1,4 @@
+-ifeq ($(DEVICE),$(filter $(DEVICE), S922X RK3588))
++ifeq ($(DEVICE),$(filter $(DEVICE), S922X RK3588 RK3562))
+ 	obj-m := archr-joypad.o
+ else ifeq ($(DEVICE),$(filter $(DEVICE), H700 RK3399))
+ 	obj-m := archr-singleadc-joypad.o
+--- a/archr-joypad.c
++++ b/archr-joypad.c
+@@ -11,12 +11,9 @@
+ #include <linux/input-polldev.h>
+ #include <linux/platform_device.h>
+ #include <linux/iio/consumer.h>
+-#include <linux/version.h>
+-#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 3, 0))
+-#include <linux/of_gpio.h>
+-#else
+-#include <linux/of_gpio_legacy.h>
+-#endif
++#include <linux/gpio/consumer.h>
++#include <linux/of.h>
++#include <linux/property.h>
+ #include "archr-joypad.h"
+ 
+ /*----------------------------------------------------------------------------*/
+@@ -57,16 +54,38 @@
+ struct bt_gpio {
+ 	/* GPIO Request label */
+ 	const char *label;
+-	/* GPIO Number */
+-	int num;
++	/* GPIO descriptor, active level taken from the device tree */
++	struct gpio_desc *desc;
+ 	/* report type */
+ 	int report_type;
+ 	/* report linux code */
+ 	int linux_code;
+-	/* prev button value */
++	/* prev button value (1 = pressed) */
+ 	bool old_value;
+-	/* button press level */
+-	bool active_level;
++};
++
++/*
++ * Input on its own ADC channel (child node with "io-channels"):
++ * - EV_KEY (default): a button pressed when the reading crosses
++ *   press-threshold-microvolt and released when it crosses back over
++ *   release-threshold-microvolt. If release > press the button is
++ *   pressed at low voltage, otherwise at high voltage.
++ * - EV_ABS: an analog trigger, abs-range = <released pressed> in mV,
++ *   reported from 0 (released) to the stick maximum (pressed).
++ */
++#define ADC_KEY_HYSTERESIS_UV	100000
++
++struct bt_adc_key {
++	const char *label;
++	struct iio_channel *ch;
++	int report_type;
++	int linux_code;
++	/* EV_KEY thresholds (uV) */
++	int press_uv, release_uv;
++	bool pressed;
++	/* EV_ABS range (mV) and output maximum */
++	int range_rel, range_prs, max;
++	int value;
+ };
+ 
+ struct joypad {
+@@ -89,6 +108,10 @@
+ 	int bt_gpio_count;
+ 	struct bt_gpio *gpios;
+ 
++	/* buttons and triggers on their own ADC channel */
++	int bt_adckey_count;
++	struct bt_adc_key *adckeys;
++
+ 	/* button auto repeat */
+ 	int auto_repeat;
+ 
+@@ -127,16 +150,16 @@
+ 	for (nbtn = 0; nbtn < joypad->bt_gpio_count; nbtn++) {
+ 		struct bt_gpio *gpio = &joypad->gpios[nbtn];
+ 
+-		if (gpio_get_value_cansleep(gpio->num) < 0) {
++		value = gpiod_get_value_cansleep(gpio->desc);
++		if (value < 0) {
+ 			dev_err(joypad->dev, "failed to get gpio state\n");
+ 			continue;
+ 		}
+-		value = gpio_get_value_cansleep(gpio->num);
+ 		if (value != gpio->old_value) {
+ 			input_event(poll_dev->input,
+ 				gpio->report_type,
+ 				gpio->linux_code,
+-				(value == gpio->active_level) ? 1 : 0);
++				value ? 1 : 0);
+ 			gpio->old_value = value;
+ 		}
+ 	}
+@@ -144,6 +167,47 @@
+ }
+ 
+ /*----------------------------------------------------------------------------*/
++static void joypad_adckey_check(struct input_polled_dev *poll_dev)
++{
++	struct joypad *joypad = poll_dev->private;
++	int nbtn, mv, value;
++
++	for (nbtn = 0; nbtn < joypad->bt_adckey_count; nbtn++) {
++		struct bt_adc_key *key = &joypad->adckeys[nbtn];
++		bool low = key->release_uv > key->press_uv;
++
++		if (iio_read_channel_processed(key->ch, &mv) < 0)
++			continue;
++
++		if (key->report_type == EV_ABS) {
++			value = (mv - key->range_rel) * key->max /
++				(key->range_prs - key->range_rel);
++			value = clamp(value, 0, key->max);
++			if (value != key->value) {
++				input_report_abs(poll_dev->input,
++						 key->linux_code, value);
++				key->value = value;
++			}
++			continue;
++		}
++
++		if (!key->pressed &&
++		    (low ? mv * 1000 < key->press_uv : mv * 1000 > key->press_uv))
++			key->pressed = true;
++		else if (key->pressed &&
++			 (low ? mv * 1000 > key->release_uv :
++				mv * 1000 < key->release_uv))
++			key->pressed = false;
++		else
++			continue;
++
++		input_event(poll_dev->input, key->report_type,
++			    key->linux_code, key->pressed);
++	}
++	input_sync(poll_dev->input);
++}
++
++/*----------------------------------------------------------------------------*/
+ static void joypad_adc_check(struct input_polled_dev *poll_dev)
+ {
+ 	struct joypad *joypad = poll_dev->private;
+@@ -225,6 +289,7 @@
+ 
+ 	if (joypad->enable) {
+ 		joypad_adc_check(poll_dev);
++		joypad_adckey_check(poll_dev);
+ 		joypad_gpio_check(poll_dev);
+ 	}
+ 	if (poll_dev->poll_interval != joypad->poll_interval) {
+@@ -242,7 +307,11 @@
+ 
+ 	for (nbtn = 0; nbtn < joypad->bt_gpio_count; nbtn++) {
+ 		struct bt_gpio *gpio = &joypad->gpios[nbtn];
+-		gpio->old_value = gpio->active_level ? 0 : 1;
++		gpio->old_value = 0;
++	}
++	for (nbtn = 0; nbtn < joypad->bt_adckey_count; nbtn++) {
++		joypad->adckeys[nbtn].pressed = false;
++		joypad->adckeys[nbtn].value = -1;
+ 	}
+ 	for (nbtn = 0; nbtn < joypad->chan_count; nbtn++) {
+ 		struct bt_adc *adc = &joypad->adcs[nbtn];
+@@ -259,6 +328,7 @@
+ 	}
+ 	/* buttons status sync */
+ 	joypad_adc_check(poll_dev);
++	joypad_adckey_check(poll_dev);
+ 	joypad_gpio_check(poll_dev);
+ 
+ 	/* button report enable */
+@@ -416,62 +486,109 @@
+ }
+ 
+ /*----------------------------------------------------------------------------*/
+-static int joypad_gpio_setup(struct device *dev, struct joypad *joypad)
+-{
+-	struct device_node *node, *pp;
+-	int nbtn;
++static int joypad_adckey_setup(struct device *dev, struct joypad *joypad,
++			       struct fwnode_handle *child,
++			       struct bt_adc_key *key)
++{
++	u32 range[2];
++	u32 uv;
++
++	key->ch = devm_fwnode_iio_channel_get_by_name(dev, child, NULL);
++	if (IS_ERR(key->ch))
++		return dev_err_probe(dev, PTR_ERR(key->ch),
++				     "%pfw: no iio channel\n", child);
+ 
+-	node = dev->of_node;
+-	if (!node)
+-		return -ENODEV;
++	fwnode_property_read_string(child, "label", &key->label);
+ 
+-	joypad->gpios = devm_kzalloc(dev, joypad->bt_gpio_count *
+-				sizeof(struct bt_gpio), GFP_KERNEL);
++	if (fwnode_property_read_u32(child, "linux,code", &key->linux_code)) {
++		dev_err(dev, "%pfw: no linux,code\n", child);
++		return -EINVAL;
++	}
++	if (fwnode_property_read_u32(child, "linux,input-type",
++				     &key->report_type))
++		key->report_type = EV_KEY;
++
++	if (key->report_type == EV_ABS) {
++		if (fwnode_property_read_u32_array(child, "abs-range",
++						   range, 2) ||
++		    range[0] == range[1]) {
++			dev_err(dev, "%pfw: bad abs-range\n", child);
++			return -EINVAL;
++		}
++		key->range_rel = range[0];
++		key->range_prs = range[1];
++		key->max = (ADC_MAX_VOLTAGE / 2) *
++			   (joypad->bt_adc_scale ? joypad->bt_adc_scale : 1);
++		return 0;
++	}
+ 
+-	if (!joypad->gpios) {
+-		dev_err(dev, "%s devm_kzmalloc error!", __func__);
+-		return -ENOMEM;
++	if (fwnode_property_read_u32(child, "press-threshold-microvolt",
++				     &uv)) {
++		dev_err(dev, "%pfw: no press-threshold-microvolt\n", child);
++		return -EINVAL;
+ 	}
++	key->press_uv = uv;
++	if (fwnode_property_read_u32(child, "release-threshold-microvolt",
++				     &uv))
++		uv = key->press_uv + ADC_KEY_HYSTERESIS_UV;
++	key->release_uv = uv;
++	if (key->release_uv == key->press_uv) {
++		dev_err(dev, "%pfw: press and release thresholds are equal\n",
++			child);
++		return -EINVAL;
++	}
++	return 0;
++}
+ 
+-	nbtn = 0;
+-	for_each_child_of_node(node, pp) {
+-		enum of_gpio_flags flags;
+-		struct bt_gpio *gpio = &joypad->gpios[nbtn++];
+-		int error;
+-
+-		gpio->num = of_get_gpio_flags(pp, 0, &flags);
+-		if (gpio->num < 0) {
+-			error = gpio->num;
+-			dev_err(dev, "Failed to get gpio flags, error: %d\n",
+-				error);
+-			return error;
+-		}
+-
+-		/* gpio active level(key press level) */
+-		gpio->active_level = (flags & OF_GPIO_ACTIVE_LOW) ? 0 : 1;
+-
+-		gpio->label = of_get_property(pp, "label", NULL);
+-
+-		if (gpio_is_valid(gpio->num)) {
+-			error = devm_gpio_request_one(dev, gpio->num,
+-						      GPIOF_IN, gpio->label);
+-			if (error < 0) {
+-				dev_err(dev,
+-					"Failed to request GPIO %d, error %d\n",
+-					gpio->num, error);
++static int joypad_gpio_setup(struct device *dev, struct joypad *joypad)
++{
++	struct fwnode_handle *child;
++	int ngpio = 0, nadc = 0, error;
++
++	joypad->gpios = devm_kcalloc(dev, joypad->bt_gpio_count,
++				     sizeof(struct bt_gpio), GFP_KERNEL);
++	joypad->adckeys = devm_kcalloc(dev, joypad->bt_adckey_count,
++				       sizeof(struct bt_adc_key), GFP_KERNEL);
++	if ((joypad->bt_gpio_count && !joypad->gpios) ||
++	    (joypad->bt_adckey_count && !joypad->adckeys))
++		return -ENOMEM;
++
++	device_for_each_child_node(dev, child) {
++		struct bt_gpio *gpio;
++
++		if (fwnode_property_present(child, "io-channels")) {
++			error = joypad_adckey_setup(dev, joypad, child,
++						    &joypad->adckeys[nadc++]);
++			if (error) {
++				fwnode_handle_put(child);
+ 				return error;
+ 			}
++			continue;
+ 		}
+-		if (of_property_read_u32(pp, "linux,code", &gpio->linux_code)) {
+-			dev_err(dev, "Button without keycode: 0x%x\n",
+-				gpio->num);
++
++		gpio = &joypad->gpios[ngpio++];
++		gpio->label = NULL;
++		fwnode_property_read_string(child, "label", &gpio->label);
++
++		gpio->desc = devm_fwnode_gpiod_get(dev, child, NULL, GPIOD_IN,
++						   gpio->label);
++		if (IS_ERR(gpio->desc)) {
++			fwnode_handle_put(child);
++			return dev_err_probe(dev, PTR_ERR(gpio->desc),
++					     "%pfw: failed to get gpio\n",
++					     child);
++		}
++		if (fwnode_property_read_u32(child, "linux,code",
++					     &gpio->linux_code)) {
++			dev_err(dev, "%pfw: button without keycode\n", child);
++			fwnode_handle_put(child);
+ 			return -EINVAL;
+ 		}
+-		if (of_property_read_u32(pp, "linux,input-type",
+-				&gpio->report_type))
++		if (fwnode_property_read_u32(child, "linux,input-type",
++					     &gpio->report_type))
+ 			gpio->report_type = EV_KEY;
+ 	}
+-	if (nbtn == 0)
++	if (ngpio == 0)
+ 		return -EINVAL;
+ 
+ 	return	0;
+@@ -545,6 +662,21 @@
+ 				gpio->linux_code);
+ 	}
+ 
++	for (nbtn = 0; nbtn < joypad->bt_adckey_count; nbtn++) {
++		struct bt_adc_key *key = &joypad->adckeys[nbtn];
++
++		if (key->report_type == EV_ABS)
++			input_set_abs_params(input, key->linux_code, 0,
++					     key->max, joypad->bt_adc_fuzz, 0);
++		else
++			input_set_capability(input, key->report_type,
++					     key->linux_code);
++		dev_info(dev, "%s : adc %s %s code 0x%x press %d uV release %d uV\n",
++			 __func__, key->label ? key->label : "-",
++			 key->report_type == EV_ABS ? "axis" : "key",
++			 key->linux_code, key->press_uv, key->release_uv);
++	}
++
+ 	if (joypad->auto_repeat)
+ 		__set_bit(EV_REP, input->evbit);
+ 
+@@ -585,7 +717,16 @@
+ 
+ 	joypad->auto_repeat = device_property_present(dev, "autorepeat");
+ 
+-	joypad->bt_gpio_count = device_get_child_node_count(dev);
++	{
++		struct fwnode_handle *child;
++
++		device_for_each_child_node(dev, child) {
++			if (fwnode_property_present(child, "io-channels"))
++				joypad->bt_adckey_count++;
++			else
++				joypad->bt_gpio_count++;
++		}
++	}
+ 
+ 	if ((joypad->chan_count == 0) || (joypad->bt_gpio_count == 0)) {
+ 		dev_err(dev, "adc key = %d, gpio key = %d error!",
+@@ -605,8 +746,9 @@
+ 	if (error)
+ 		return error;
+ 
+-	dev_info(dev, "%s : adc key cnt = %d, gpio key cnt = %d\n",
+-			__func__, joypad->chan_count, joypad->bt_gpio_count);
++	dev_info(dev, "%s : adc key cnt = %d, gpio key cnt = %d, adc button cnt = %d\n",
++			__func__, joypad->chan_count, joypad->bt_gpio_count,
++			joypad->bt_adckey_count);
+ 
+ 	return error;
+ }
+@@ -691,6 +833,7 @@
+ MODULE_DESCRIPTION("ARCH-R joypad driver");
+ MODULE_LICENSE("GPL");
+ MODULE_ALIAS("platform:" DRV_NAME);
++MODULE_IMPORT_NS("IIO_CONSUMER");
+ MODULE_INFO(intree, "Y");
+ 
+ /*----------------------------------------------------------------------------*/
