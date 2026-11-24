@@ -36,6 +36,11 @@ post_makeinstall_target() {
   mkdir -p ${INSTALL}/etc/pacman.d
   cp ${PKG_DIR}/config/pacman.conf ${INSTALL}/etc/pacman.conf
   cp ${PKG_DIR}/config/mirrorlist ${INSTALL}/etc/pacman.d/mirrorlist
+  # Each SoC family has its own repo tags (archr-update keeps this line
+  # in step with the channel); RK3326 keeps the bare tag.
+  case ${DEVICE} in
+    RK3562) sed -i 's|/repo-stable$|/repo-stable-rk3562|' ${INSTALL}/etc/pacman.d/mirrorlist ;;
+  esac
   cp ${PKG_DIR}/config/makepkg.conf ${INSTALL}/etc/makepkg.conf
 
   # /var/lib/pacman is a symlink directly into the rw storage overlay.

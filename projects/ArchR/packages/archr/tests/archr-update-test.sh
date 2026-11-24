@@ -191,7 +191,7 @@ run() {
     POWER_SUPPLY="${TMP}/power" UPDATE_PROGRESS="${TMP}/run/progress" \
     UPDATE_CANCEL="${TMP}/run/cancel" PACMAN_CONF="${TMP}/pacman.conf" \
     ARCHR_UPDATE_OFFLINE_DIR="${TMP}/card/update" OFFLINE_WORK="${TMP}/storage/.archr-update-offline" \
-    TICK=0.2 "$@" bash "${SCRIPT}" "${ARGS[@]}"
+    DT_COMPATIBLE="${TMP}/compatible" TICK=0.2 "$@" bash "${SCRIPT}" "${ARGS[@]}"
 }
 # A field of the last JSON line on stdin.
 field() {
@@ -230,6 +230,18 @@ check "check packages" "$(field packages <<<"${OUT}")" \
 check "an unpublished channel reads stable" "$(grep '^Server' "${TMP}/mirrorlist")" \
   "Server = https://github.com/archr-linux/archr-repo/releases/download/repo-stable"
 check "log written" "$(grep -c 'check: 3 package' "${TMP}/log/archr-update.log")" 1
+
+# An RK3562 board reads its own tags; the kernel of one SoC must never
+# reach the other.
+printf 'aislpc,rg43v-pro\0rockchip,rk3562\0' >"${TMP}/compatible"
+OUT=$(run)
+check "rk3562 reads its own tag" "$(grep '^Server' "${TMP}/mirrorlist")" \
+  "Server = https://github.com/archr-linux/archr-repo/releases/download/repo-stable-rk3562"
+printf 'hardkernel,odroid-go2\0rockchip,rk3326\0' >"${TMP}/compatible"
+OUT=$(run)
+check "rk3326 keeps the bare tag" "$(grep '^Server' "${TMP}/mirrorlist")" \
+  "Server = https://github.com/archr-linux/archr-repo/releases/download/repo-stable"
+rm -f "${TMP}/compatible"
 
 mv "${TMP}/changelog" "${TMP}/changelog.off"
 printf 'archr-launcher 1.4.2-1\n' >"${TMP}/installed"
