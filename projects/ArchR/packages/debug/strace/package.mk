@@ -28,3 +28,9 @@ PKG_URL="https://strace.io/files/${PKG_VERSION}/strace-${PKG_VERSION}.tar.xz"
 if [ "${TARGET_ARCH}" = x86_64 -o "${TARGET_ARCH}" = "aarch64" ]; then
   PKG_CONFIGURE_OPTS_TARGET="--enable-mpers=no"
 fi
+
+# The Linux 7.3 io_uring uapi header of the RK3562 sysroot no longer
+# matches strace 6.17's size checks: use the kernel headers strace bundles.
+if [ "${DEVICE}" = "RK3562" ]; then
+  PKG_CONFIGURE_OPTS_TARGET+=" --enable-bundled=yes"
+fi
