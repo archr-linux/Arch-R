@@ -13,7 +13,10 @@
 # Source used for oga_controls available at
 # https://github.com/christianhaitian/oga_controls
 
-. /etc/profile
+# In the Debian compatibility mode (archr-compat-debian) /etc is Debian's:
+# Arch R's profile and its pad functions are not there. runemu.sh made the
+# pad mapping before entering it, and get_controls reuses it.
+[ "${ARCHR_COMPAT}" = debian ] || . /etc/profile
 
 directory="roms"
 controlfolder="/$directory/ports/PortMaster"
@@ -126,7 +129,10 @@ get_controls() {
     export SDL_GAMECONTROLLERCONFIG_FILE="/tmp/gamecontrollerdb.txt"
 
     # Generate controller file for controllers mapped in emulationstation
-    /storage/.config/PortMaster/mapper.txt ${SDL_GAMECONTROLLERCONFIG_FILE} ${controlfolder}
+    # (in the Debian mode, the one runemu.sh made on Arch R).
+    if [ "${ARCHR_COMPAT}" != debian ] || [ ! -s "${SDL_GAMECONTROLLERCONFIG_FILE}" ]; then
+        /storage/.config/PortMaster/mapper.txt ${SDL_GAMECONTROLLERCONFIG_FILE} ${controlfolder}
+    fi
 
     # Set compatability libs
     export LD_LIBRARY_PATH=${clibs}
