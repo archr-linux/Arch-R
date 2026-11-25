@@ -1,0 +1,27 @@
+Subject: [PATCH] npusr-gles: check the right block with an even scale
+
+The block check samples one pixel of every SxS block (dst pixel i samples
+x0 + (i + 0.5) * S) and its right neighbour, and a block whose two differ
+counts as "not one colour" (a menu or text over the frame). With S = 3 the
+sampled pixel is the block's middle one and its right neighbour is still in
+the block; with S = 2 it is the block's right column and its right neighbour
+is the next block's, so a nearest x2 frame counted 65% of its blocks as not
+one colour and was always shown without the upscale (PPSSPP at 960x544 on
+the RG43V PRO). With an even S the left neighbour is taken.
+
+Arch R, for the x2 PSP model on 1024x768 panels.
+
+--- a/npusr-gles/npusr_gles.c
++++ b/npusr-gles/npusr_gles.c
+@@ -1013,7 +1013,10 @@
+         /* blits: dst pixel i samples src x0 + (i + 0.5) * fw2 / W - the block's centre (S = 3: its middle pixel;
+          * scaled by 3.2: the middle of its 3-4 pixels); tb one to the right (or left when the area touches the
+          * window's right edge) - still inside the same block */
+-        int rx = (fx + fw2 < fw) ? 1 : -1;
++        /* Arch R: with an even S the sampled pixel is the block's right column (x2: offset 1 of 0-1), so its
++         * right neighbour is the next block's; the left one is still inside the block (with fx = 0 only the
++         * blit's bounds start at -1, every pixel it samples is inside the window) */
++        int rx = (S % 2 == 0) ? -1 : (fx + fw2 < fw) ? 1 : -1;
+         p_glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+         p_glReadBuffer(GL_BACK);
+         p_glBindFramebuffer(GL_DRAW_FRAMEBUFFER, s->fba);

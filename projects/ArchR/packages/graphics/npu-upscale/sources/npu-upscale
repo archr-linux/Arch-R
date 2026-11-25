@@ -1,0 +1,89 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ArchR (https://github.com/archr-linux/Arch-R)
+#
+# npu-upscale: NPU UPSCALE from dArkOS for the RG52 Mini by mamaich
+# (https://github.com/mamaich/dArkOS_rg52mini). An emulator that shows its
+# native frame enlarged by an integer S, nearest filtered, gets it enlarged by
+# a super-resolution network on the RK3562's NPU instead (libnpusr_gles.so,
+# preloaded; nothing in the emulator changes).
+#
+#   npu-upscale status                  can it run here (exit 0) or why not
+#   npu-upscale up                      load the NPU driver (rknpu stays off at boot)
+#   npu-upscale exec SPEC -- CMD ARGS   up, then CMD with the upscale on
+#
+# SPEC is libnpusr_gles.so's DARKOS_NPU_SR: x2:480x272 (the PSP at 960x544),
+# x3:auto (PS1 and the 16-bit consoles at x3, the size from the viewport).
+# Without the NPU, the driver, the runtime or the model, exec runs CMD as it
+# is. NPU_UPSCALE_STATS=1 prints the library's counters every 5 s.
+
+MODELS=/usr/share/npu-upscale
+LIB=/usr/lib/libnpusr_gles.so
+RT=/usr/lib/librknnrt.so
+
+log() { echo "npu-upscale: $*" >&2; }
+
+npu_node() {
+  [ -e /sys/bus/platform/devices/ff300000.npu ] && grep -qs 'rockchip,rk3562' /proc/device-tree/compatible
+}
+
+npu_dev() {
+  [ -e /sys/bus/platform/drivers/RKNPU/ff300000.npu ]
+}
+
+status() {
+  npu_node || { log "no RK3562 NPU in the device tree"; return 1; }
+  [ -f "${LIB}" ] && [ -f "${RT}" ] || { log "libnpusr_gles.so or librknnrt.so missing"; return 1; }
+  return 0
+}
+
+up() {
+  status || return 1
+  npu_dev && return 0
+  modprobe rknpu 2>/dev/null
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    npu_dev && return 0
+    sleep 0.1
+  done
+  log "rknpu did not come up"
+  return 1
+}
+
+# the model file the library will open for SPEC (fixed sizes only)
+model_for() {
+  case "$1" in
+    x*:auto*) return 0 ;;
+    x[234]:*x*)
+      s=${1%%:*}; s=${s#x}; wh=${1#*:}; wh=${wh%%:*}
+      [ -f "${MODELS}/espcn_x${s}_${wh}.rknn" ] || { log "no model ${MODELS}/espcn_x${s}_${wh}.rknn"; return 1; }
+      ;;
+    *) log "SPEC ${1} not understood"; return 1 ;;
+  esac
+}
+
+case "$1" in
+  status) status ;;
+  up) up ;;
+  exec)
+    SPEC=$2
+    shift 2
+    [ "$1" = "--" ] && shift
+    if up && model_for "${SPEC}"; then
+      export LD_PRELOAD="${LIB}${LD_PRELOAD:+ ${LD_PRELOAD}}"
+      export DARKOS_NPU_SR="${SPEC}"
+      case "${SPEC}" in
+        *:auto*) export DARKOS_NPU_SR_MODEL="${MODELS}/x{S}_{W}x{H}.rknn" ;;
+        *) export DARKOS_NPU_SR_MODEL="${MODELS}/espcn_x%d_%dx%d.rknn" ;;
+      esac
+      export DARKOS_NPU_SR_LIB="${RT}"
+      [ "${NPU_UPSCALE_STATS}" = 1 ] && export DARKOS_NPU_SR_STATS=1
+    else
+      log "running without the upscale"
+    fi
+    exec "$@"
+    ;;
+  *)
+    sed -n 's/^#   //p' "$0" >&2
+    exit 2
+    ;;
+esac

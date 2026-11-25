@@ -72,15 +72,17 @@
   # SDIO on v14. Both are always installed; udev loads the right one from
   # the SDIO ID of the chip. The USB Wi-Fi dongles still have to be built
   # and tested against linux 7.3.
-    ADDITIONAL_DRIVERS="rk915 AIC8800-SDIO mali-bifrost"
+  # rknpu: the NPU, for npu-upscale (not loaded at boot).
+    ADDITIONAL_DRIVERS="rk915 AIC8800-SDIO mali-bifrost rknpu"
 
   # Additional Firmware to use ( )
     FIRMWARE=""
 
   # Additional packages to install (no device-switch: it only exists for
   # the RK3326; the generic-dsi panel driver is built into the kernel by
-  # patch 045). libmali brings gpudriver with it.
-    ADDITIONAL_PACKAGES="libmali"
+  # patch 045). libmali brings gpudriver with it. npu-upscale (dArkOS's NPU
+  # UPSCALE, with Rockchip's librknnrt) enlarges emulator frames on the NPU.
+    ADDITIONAL_PACKAGES="libmali npu-upscale"
     ADDITIONAL_PACKAGES_32BIT="libmali"
 
   # Debug tty path
