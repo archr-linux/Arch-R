@@ -175,5 +175,30 @@ expect "vsync key in Graphics" "VerticalSync = True" \
   "$(sed -n '/^\[Graphics\]/{n;p;}' "${INI}")"
 expect "vsync key once" "1" "$(grep -c '^VerticalSync =' "${INI}")"
 
+# Upscaler: FSR first in PPSSPP's post shader chain, the player's own
+# shaders after it; off takes FSR out and leaves them. Nothing set, the
+# chain is the player's; none by default.
+chain() { sed -n '/^\[PostShaderList\]/,/^\[/{s/^PostShader[0-9]* = //p}' "${INI}" | tr '\n' ' '; }
+expect "no upscaler by default" "" "$(chain)"
+run "psp.upscaler=fsr"
+expect "fsr set" "FSR-EASU FSR-RCAS " "$(chain)"
+expect "one chain section" "1" "$(grep -c '^\[PostShaderList\]' "${INI}")"
+expect "graphics key untouched" "Off" "$(key PostShader "${INI}")"
+sed -i '/^PostShader2 = /a PostShader3 = Vignette' "${INI}"
+run "psp.upscaler=fsr"
+expect "fsr again, own shader kept" "FSR-EASU FSR-RCAS Vignette " "$(chain)"
+run
+expect "no setting: chain kept" "FSR-EASU FSR-RCAS Vignette " "$(chain)"
+run "psp.upscaler=off"
+expect "fsr off, own shader kept" "Vignette " "$(chain)"
+run "psp[\"Game.iso\"].upscaler=fsr"
+expect "fsr per game" "FSR-EASU FSR-RCAS Vignette " "$(chain)"
+run "psp.upscaler=off"
+sed -i '/^PostShader1 = Vignette/d' "${INI}"
+run "psp.upscaler=easu"
+expect "easu alone" "FSR-EASU " "$(chain)"
+run "psp.upscaler=off"
+expect "off again" "" "$(chain)"
+
 [ ${FAILED} -eq 0 ] && echo "ok   start_ppsspp.sh"
 exit ${FAILED}

@@ -160,6 +160,38 @@ fi
 		[1-4]) ini_set InternalResolution "${IRES}" ;;
 	esac
 
+  #Upscaler: the game drawn at the PSP's own 480x272 and brought to the
+  #screen by AMD FSR 1 (PPSSPP's FSR-EASU upscale and FSR-RCAS sharpen
+  #post shaders) in place of a bilinear stretch. psp.upscaler=fsr, easu
+  #(the upscale alone) or off, per game or platform, rewrites PPSSPP's
+  #post shader chain; other shaders in it stay, after FSR. Unset, the
+  #chain is the player's. Off by default everywhere: on the RG43V PRO
+  #(Mali-G52, 1024x768) FSR keeps the GPU 96% busy and Tekken 6 drops
+  #from 55 to 40-43 fps (EASU alone 45-54); the Mali-G31 is weaker still.
+  #PPSSPP runs no post shader while it skips buffer effects (God of War).
+	UPSCALER=$(get_setting upscaler "${PLATFORM}" "${GAME}")
+	case "${UPSCALER}" in
+		fsr|easu|off)
+			# The chain without FSR, then FSR first: the upscaler must
+			# be the first shader.
+			CHAIN=$(sed -n '/^\[PostShaderList\]/,/^\[/{s/^PostShader[0-9][0-9]* = //p}' "${INI}" |
+				grep -v '^FSR-\(EASU\|RCAS\)$')
+			case "${UPSCALER}" in
+				fsr) CHAIN=$(printf 'FSR-EASU\nFSR-RCAS\n%s' "${CHAIN}") ;;
+				easu) CHAIN=$(printf 'FSR-EASU\n%s' "${CHAIN}") ;;
+			esac
+			grep -q '^\[PostShaderList\]' "${INI}" || echo '[PostShaderList]' >>"${INI}"
+			awk -v chain="$(echo ${CHAIN})" '
+				/^\[/ { list = ($0 == "[PostShaderList]") }
+				list && /^PostShader[0-9]+ = / { next }
+				{ print }
+				$0 == "[PostShaderList]" {
+					n = split(chain, s, " ")
+					for (i = 1; i <= n; i++) print "PostShader" i " = " s[i]
+				}' "${INI}" >"${INI}.new" && mv "${INI}.new" "${INI}"
+			;;
+	esac
+
   #Show FPS
 	case "${FPS}" in
 		1) ini_set iShowStatusFlags 2 ;;
