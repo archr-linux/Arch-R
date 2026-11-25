@@ -83,7 +83,7 @@
   # patch 045). libmali brings gpudriver with it. npu-upscale (dArkOS's NPU
   # UPSCALE, with Rockchip's librknnrt) enlarges emulator frames on the NPU.
     ADDITIONAL_PACKAGES="libmali npu-upscale"
-    ADDITIONAL_PACKAGES_32BIT="libmali"
+    ADDITIONAL_PACKAGES_32BIT="libmali npu-upscale"
 
   # Debug tty path
     DEBUG_TTY="/dev/ttyS0"
