@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (C) 2026-present ArchR (https://github.com/archr-linux/Arch-R)
 
-# Host test for the dArkOS compatibility mode in runemu.sh
+# Host test for the port compatibility mode in runemu.sh
 # (port_compat_wanted, port_compat_ready, port_compat_learn) and the parts
 # of archr-compat-debian that need no root: listed, the manifest check of
 # install. Nothing is mounted or downloaded.
@@ -128,7 +128,7 @@ check "learn: an earlier run's error is not this one's" "$(ls "${COMPAT_STATE}/w
 echo "./game: /lib/libc.so.6: version \`GLIBC_2.41' not found (required by ./game)" >>"${OUTPUT_LOG}"
 port_compat_learn "${PORTS}/Plain.sh" "${offset}"
 check "learn: GLIBC_2.41 marks the port" "$(ls "${COMPAT_STATE}/wanted")" "Plain.sh"
-check "learn: and says so" "$(toast)" "info|errors|Plain will open in compatibility mode|Made for dArkOS: next time it opens with its libraries|"
+check "learn: and says so" "$(toast)" "info|errors|Plain|Next time it opens with Debian's libraries|"
 check "wanted: after the mark" "$(wanted Plain.sh)" yes
 PORT_COMPAT=1
 port_compat_learn "${PORTS}/Plain.sh" "${offset}"
@@ -145,7 +145,7 @@ AMIONLINE=false
 SETTINGS[lang]=pt_BR
 port_compat_ready "${PORTS}/Apt.sh"
 check "ready: offline and missing" "$?" 1
-check "ready: toast in the system language" "$(toast | cut -d'|' -f1-3)" "error|network|Apt precisa do modo de compatibilidade"
+check "ready: toast in the system language" "$(toast | cut -d'|' -f1-4)" "error|network|Apt|Precisa baixar o Debian: conecte à internet (1 MB)"
 cp "${TMP}/img" "${ARCHR_COMPAT_STATE}/rt.squashfs"
 echo "${sha}" >"${ARCHR_COMPAT_STATE}/rt.squashfs.sha256"
 port_compat_ready "${PORTS}/Apt.sh"

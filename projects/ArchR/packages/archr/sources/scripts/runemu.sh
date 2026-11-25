@@ -443,16 +443,17 @@ function port_compat_toast() { # KIND CATEGORY NAME pt|es|ru|de|zh|en texts...
 function port_compat_ready() {
         local script=$1 name rc mb
         name=$(port_title "${script}" "$(port_dir "${script}")")
-        mb=$(( $(sed -n 's/^SIZE=//p' "${COMPAT_SHARE}/manifest" 2>/dev/null || echo 0) / 1048576 ))
+        # Rounded up, as the launcher's page shows it.
+        mb=$(( ($(sed -n 's/^SIZE=//p' "${COMPAT_SHARE}/manifest" 2>/dev/null || echo 0) + 1048575) / 1048576 ))
         "${COMPAT}" ensure >>${OUTPUT_LOG} 2>&1
         rc=$?
         case "${rc}" in
         0) return 0 ;;
         2) log $0 "Compatibility runtime missing and no network: ${name} not started"
            port_compat_toast error network \
-                "${name} precisa do modo de compatibilidade" "Conecte à internet uma vez para baixar (${mb} MB)" \
-                "${name} necesita el modo de compatibilidad" "Conéctate a internet una vez para descargarlo (${mb} MB)" \
-                "${name} needs the compatibility mode" "Connect to the internet once to download it (${mb} MB)" ;;
+                "${name}" "Precisa baixar o Debian: conecte à internet (${mb} MB)" \
+                "${name}" "Necesita descargar Debian: conéctate a internet (${mb} MB)" \
+                "${name}" "Needs Debian downloaded: connect to the internet (${mb} MB)" ;;
         *) log $0 "Compatibility runtime could not be installed: ${name} not started"
            port_compat_toast error errors \
                 "Modo de compatibilidade não instalou" "Veja o espaço livre e tente de novo" \
@@ -481,9 +482,9 @@ function port_compat_learn() {
         mkdir -p "${COMPAT_STATE}/wanted" && : >"${COMPAT_STATE}/wanted/${base}" || return 0
         log $0 "${base} needs Debian: compatibility mode from the next run"
         port_compat_toast info errors \
-                "${name} vai abrir em modo de compatibilidade" "Feito para o dArkOS: na próxima vez abre com as bibliotecas dele" \
-                "${name} se abrirá en modo de compatibilidad" "Hecho para dArkOS: la próxima vez se abre con sus bibliotecas" \
-                "${name} will open in compatibility mode" "Made for dArkOS: next time it opens with its libraries"
+                "${name}" "Na próxima vez abre com as bibliotecas do Debian" \
+                "${name}" "La próxima vez se abre con las bibliotecas de Debian" \
+                "${name}" "Next time it opens with Debian's libraries"
 }
 
 # PortMaster's bind_directories/bind_files mount a port's save folder (in the
