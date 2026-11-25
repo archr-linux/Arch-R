@@ -1,0 +1,7 @@
+# Arch R compatibility runtime: no manuals, translations or docs (the
+# image ships without them too); licenses stay.
+path-exclude /usr/share/man/*
+path-exclude /usr/share/info/*
+path-exclude /usr/share/locale/*
+path-exclude /usr/share/doc/*
+path-include /usr/share/doc/*/copyright

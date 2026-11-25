@@ -1,0 +1,1 @@
+/storage/.config/SDL-GameControllerDB/gamecontrollerdb.txt

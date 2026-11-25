@@ -1,0 +1,12 @@
+// Arch R compatibility runtime: everything runs as root, and the services
+// a postinst would start belong to Arch R.
+APT::Sandbox::User "root";
+APT::Install-Recommends "false";
+DPkg::Options { "--force-confold"; };
+// The layer lives on the card: package lists stay compressed, and no
+// binary caches or downloaded .debs are kept (they would double it).
+Acquire::GzipIndexes "true";
+Acquire::CompressionTypes::Order { "gz"; };
+Dir::Cache::pkgcache "";
+Dir::Cache::srcpkgcache "";
+APT::Keep-Downloaded-Packages "false";

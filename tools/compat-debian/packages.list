@@ -1,0 +1,38 @@
+# Debian packages of the dArkOS compatibility runtime (archr-compat-debian).
+# One or more per line; name:arch for another architecture, name:* for all
+# of --arch.
+#
+# Base: the shell and tools a port script runs.
+base-files base-passwd bash dash coreutils debianutils sed grep mawk libc-bin
+findutils diffutils procps psmisc util-linux tar gzip xz-utils bzip2 zstd
+unzip file jq less ncurses-bin dialog wget curl ca-certificates
+# apt and dpkg: dArkOSen tools install what they need with apt-get.
+apt dpkg debian-archive-keyring gpgv init-system-helpers
+# Python, as dArkOSen ships it, and the modules its tools import.
+python3 python3-venv python3-pip python3-sdl2 python3-pygame python3-evdev
+python3-pil python3-requests python3-serial
+# Libraries ports link against. SDL2 core comes from Arch R at run time
+# (kmsdrm falls back to wayland); the Debian one is there for the others.
+libsdl2-2.0-0 libsdl2-mixer-2.0-0 libsdl2-ttf-2.0-0 libsdl2-image-2.0-0
+libsdl2-net-2.0-0 libsdl1.2debian libopenal1 libegl1 libgles2 libgl1
+libgbm1 libdrm2 libwayland-client0 libwayland-server0 libwayland-egl1 libwayland-cursor0
+libxkbcommon0 libasound2t64 libasound2-plugins libpulse0 libvorbisfile3
+libogg0 libflac14 libmpg123-0t64 libopusfile0 libmodplug1 libpng16-16t64
+libjpeg62-turbo libfreetype6 libharfbuzz0b libfontconfig1 fonts-dejavu-core
+zlib1g libssl3t64 libcurl4t64 libudev1 libevdev2 libusb-1.0-0 libzip5
+libglew2.2 libglu1-mesa libtheora0
+libstdc++6 libgcc-s1 libc6
+# !name: left out, with what only it would pull; dropped from the
+# dependencies recorded for apt, so apt-get can still install it later.
+# =name: Arch R supplies it at run time; a stand-in package provides it.
+#
+# Never an init, udev, D-Bus or a sound server inside the runtime: Arch R's
+# run outside, their sockets are in /run.
+=systemd =systemd-sysv =udev =pipewire =pulseaudio =dbus-daemon =dbus
+=systemd-timesyncd
+# GL and GBM are Arch R's at run time (libmali or its Mesa, which needs no
+# LLVM): Debian's Mesa would add ~180 MB of LLVM for nothing.
+=mesa-libgallium =libgbm1 =libegl-mesa0 =libgl1-mesa-dri =libglx-mesa0
+# ffmpeg comes only with an ALSA resampler plugin nobody uses here (the
+# pulse plugin needs none of it), numpy only with pygame's optional arrays.
+!libavcodec61 !libavutil59 !libswresample5 !python3-numpy
