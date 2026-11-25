@@ -272,4 +272,37 @@ export MESA_GLTHREAD=true
 # God of War on Vulkan ran 27-40% of full speed without, 40-58% with.
 export PANVK_CPU_INDEX_MINMAX=1
 
-${EMUPERF} ppsspp --pause-menu-exit "${ARG}"
+#NPU upscale (npu-upscale, the RK3562's NPU; dArkOS's NPU UPSCALE): the
+#PSP frame drawn at 1x, nearest, integer scale (960x544) and enlarged on the
+#NPU. Setting npu_upscale (off, auto, x2, x3), per game or platform. auto
+#upscales only a game PPSSPP already draws at 1x into a buffer: skipping
+#buffer effects (God of War) draws straight at the screen's size and keeps
+#its own path. x2 or x3 force the 1x buffered render for the run. Nothing
+#happens where "npu-upscale supported" fails (every other device).
+NPU_SPEC=""
+if command -v npu-upscale >/dev/null 2>&1 && npu-upscale supported; then
+	npu-upscale ppsspp-ini restore "${INI}"
+	NPU=$(get_setting npu_upscale "${PLATFORM}" "${GAME}")
+	NPU=${NPU:-auto}
+	NPU_SPEC=$(npu-upscale spec psp "${NPU}")
+	if [ -n "${NPU_SPEC}" ]; then
+		if [ "${NPU}" = auto ]; then
+			if npu-upscale ppsspp-auto "${INI}"; then
+				npu-upscale ppsspp-ini set "${INI}"
+			else
+				NPU_SPEC=""
+			fi
+		else
+			npu-upscale ppsspp-ini set "${INI}" force
+		fi
+	fi
+	echo "NPU UPSCALE set to: ${NPU} (${NPU_SPEC:-off})"
+fi
+
+if [ -n "${NPU_SPEC}" ]; then
+	${EMUPERF} npu-upscale exec "${NPU_SPEC}" -- ppsspp --pause-menu-exit "${ARG}"
+	npu-upscale ppsspp-ini restore "${INI}"
+	npu-upscale down
+else
+	${EMUPERF} ppsspp --pause-menu-exit "${ARG}"
+fi

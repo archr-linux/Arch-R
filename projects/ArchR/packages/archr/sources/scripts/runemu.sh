@@ -802,6 +802,24 @@ case ${EMULATOR} in
     if [[ ${EXTRAOPTS} != 0 ]]; then
       RUNTHIS=$(echo ${RUNTHIS} | sed "s|--config|${EXTRAOPTS} --config|")
     fi
+
+    ### NPU upscale (npu-upscale, the RK3562's NPU; dArkOS's NPU UPSCALE):
+    ### the frame shown x3, integer scale, square pixels, nearest, and
+    ### enlarged on the NPU (PS1 and the 16-bit consoles: 960x720 at most).
+    ### Setting npu_upscale (off, auto, x2, x3), per game or platform; the
+    ### append config's lines go back after the game with the rest of it.
+    ### Nothing happens where "npu-upscale supported" fails.
+    NPU_SPEC=""
+    if command -v npu-upscale >/dev/null 2>&1 && npu-upscale supported; then
+      NPU_SPEC=$(npu-upscale spec "${PLATFORM}" "$(get_setting npu_upscale "${PLATFORM}" "${ROMNAME##*/}")")
+      if [ -n "${NPU_SPEC}" ]; then
+        ${VERBOSE} && log $0 "NPU upscale ${NPU_SPEC}"
+        npu-upscale retroarch-append "${RETROARCH_APPEND_CONFIG}"
+        NPU_LIB32=""
+        [ "${RABIN}" = "retroarch32" ] && NPU_LIB32="--lib32"
+        RUNTHIS=$(echo "${RUNTHIS}" | sed "s|/usr/bin/\${RABIN}|/usr/bin/npu-upscale exec ${NPU_LIB32} ${NPU_SPEC} -- /usr/bin/\${RABIN}|")
+      fi
+    fi
   ;;
   *)
     case ${PLATFORM} in
@@ -1016,6 +1034,7 @@ else
 fi
 
 [ -n "${MEMORY_GUARD}" ] && kill "${MEMORY_GUARD}" 2>/dev/null
+[ -n "${NPU_SPEC}" ] && npu-upscale down
 # After the pause (a game that ends at once), and in the background: Wi-Fi
 # coming back must not hold the menu.
 wait "${GAME_SERVICES}" 2>/dev/null
