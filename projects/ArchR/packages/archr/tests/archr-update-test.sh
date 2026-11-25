@@ -463,6 +463,12 @@ offline_reset
 bundle "${CARD}/archr-update.tar" 20261120.1 next
 OUT=$(run)
 check "offline scan: another channel is reported as such" "$(field found <<<"${OUT}") $(field channel <<<"${OUT}")" "true next"
+# An RK3562 picks its own family's file over the RK3326 one.
+bundle "${CARD}/archr-update-r36s.tar" 20261125
+bundle "${CARD}/archr-update-rk3562.tar" 20261113.4 stable-rk3562
+printf 'aislpc,rg43v-pro\0rockchip,rk3562\0' >"${TMP}/compatible"
+check "offline scan: an RK3562 takes its own family's file" "$(field file <<<"$(run)")" "${CARD}/archr-update-rk3562.tar"
+rm -f "${TMP}/compatible" "${CARD}/archr-update-r36s.tar" "${CARD}/archr-update-rk3562.tar"
 bundle "${CARD}/archr-update.tar" 20261112.6
 OUT=$(run)
 check "offline scan: the installed id is not newer" "$(field newer <<<"${OUT}")|$(field changelog <<<"${OUT}")" "false|[]"
@@ -551,6 +557,17 @@ check "a tar with a directory: offline-invalid, nothing extracted" "$(run | fiel
 offline_reset
 bundle "${CARD}/archr-update.tar" 20261120.1 next
 check "another channel: offline-invalid" "$(run | field message)" "This update file is for the next channel; this console is on stable."
+# Another SoC family's file (its kernel) is refused both ways.
+offline_reset
+bundle "${CARD}/archr-update.tar" 20261120.1
+printf 'aislpc,rg43v-pro\0rockchip,rk3562\0' >"${TMP}/compatible"
+check "an RK3326 file on an RK3562: offline-invalid" "$(run | field message)" \
+  "This update file is for the stable channel; this console is on stable-rk3562."
+rm -f "${TMP}/compatible"
+offline_reset
+bundle "${CARD}/archr-update.tar" 20261120.1 stable-rk3562
+check "an RK3562 file on an RK3326: offline-invalid" "$(run | field message)" \
+  "This update file is for the stable-rk3562 channel; this console is on stable."
 
 offline_reset
 bundle "${CARD}/archr-update.tar" 20261113.4

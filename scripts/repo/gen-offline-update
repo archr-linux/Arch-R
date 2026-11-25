@@ -16,7 +16,8 @@
 #             /usr/share/archr/pacman-image-db.tar.gz).
 #   OUT       the bundle to write (e.g. archr-update-20261113.4.tar; it is
 #             published as archr-update.tar).
-#   CHANNEL   the manifest's channel (default stable).
+#   CHANNEL   the manifest's channel (default stable): the branch plus the SoC
+#             family's repo suffix, "stable-rk3562" for the RK3562.
 #
 # The bundle updates any console flashed with one of those images: it holds
 # every package of the repo db whose version is not the same in ALL base
@@ -50,7 +51,7 @@ die() { echo "gen-offline-update: $*" >&2; exit 1; }
 [ -n "${REPO_DIR}" ] && [ -d "${REPO_DIR}" ] || die "REPO_DIR is not a directory: '${REPO_DIR}'"
 [ -n "${OUT}" ] || die "OUT is not set"
 [ -n "${BASE_DBS}" ] || die "BASE_DBS is not set: give the db of every supported image"
-[[ ${CHANNEL} =~ ^[a-z]+$ ]] || die "bad CHANNEL '${CHANNEL}'"
+[[ ${CHANNEL} =~ ^[a-z][a-z0-9-]*$ ]] || die "bad CHANNEL '${CHANNEL}'"
 
 db="${REPO_DIR}/archr.db.tar.gz"
 [ -e "${db}" ] || db="${REPO_DIR}/archr.db"

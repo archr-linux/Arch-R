@@ -185,6 +185,9 @@ repo_suffix() {
     esac
 }
 TAG="repo-${BRANCH}$(repo_suffix)"
+# An update file names the channel with the same suffix ("stable-rk3562"):
+# a bundle for another SoC family, its kernel above all, is refused.
+OFFLINE_CHANNEL="${BRANCH}$(repo_suffix)"
 
 # Channel is reflected by a single line in mirrorlist; rewrite it on
 # the fly so the user can switch channels by changing the setting.
@@ -831,7 +834,7 @@ read_manifest() {
     B_ID="$(printf '%s\n' "${text}" | sed -n 's/^id=//p' | head -n 1)"
     B_CHANNEL="$(printf '%s\n' "${text}" | sed -n 's/^channel=//p' | head -n 1)"
     B_CREATED="$(printf '%s\n' "${text}" | sed -n 's/^created=//p' | head -n 1)"
-    is_update_id "${B_ID}" && [[ ${B_CHANNEL} =~ ^[a-z]+$ ]]
+    is_update_id "${B_ID}" && [[ ${B_CHANNEL} =~ ^[a-z][a-z0-9-]*$ ]]
 }
 
 # changelog_json TAR CURRENT: the "- " lines of the bundle's changelog.txt
@@ -868,7 +871,7 @@ cmd_offline() {
     for tar in "${ARCHR_UPDATE_OFFLINE_DIR}"/archr-update*.tar; do
         [ -f "${tar}" ] && read_manifest "${tar}" || continue
         own=""
-        [ "${B_CHANNEL}" = "${BRANCH}" ] && own=1
+        [ "${B_CHANNEL}" = "${OFFLINE_CHANNEL}" ] && own=1
         # One for this console's channel first, then the newest id.
         if [ -z "${best}" ] || { [ -n "${own}" ] && [ -z "${best_own}" ]; } ||
            { [ "${own}" = "${best_own}" ] && id_newer "${B_ID}" "${best_id}"; }; then
@@ -975,8 +978,8 @@ cmd_update_offline() {
     emit "\"phase\":\"extract\",\"bytes\":0,\"total\":${TOTAL},\"percent\":0"
     { [ "${TOTAL}" -gt 0 ] && read_manifest "${tar}" && bundle_listing_ok "${tar}"; } ||
         fail offline-invalid "This is not a readable Arch R update file; copy it again."
-    [ "${B_CHANNEL}" = "${BRANCH}" ] ||
-        fail offline-invalid "This update file is for the ${B_CHANNEL} channel; this console is on ${BRANCH}."
+    [ "${B_CHANNEL}" = "${OFFLINE_CHANNEL}" ] ||
+        fail offline-invalid "This update file is for the ${B_CHANNEL} channel; this console is on ${OFFLINE_CHANNEL}."
     current="$(installed_update_id)"
     id_newer "${B_ID}" "${current}" ||
         fail offline-old "This update file (${B_ID}) is not newer than the installed update (${current})."
