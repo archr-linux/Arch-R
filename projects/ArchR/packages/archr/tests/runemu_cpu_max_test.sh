@@ -21,14 +21,14 @@ eval "$(sed -n '/^pick_cpu_max() {/,/^}/p' "${PKG}/profile.d/099-freqfunctions")
 CPUFREQ=$(mktemp -d)
 trap 'rm -rf "${CPUFREQ}"' EXIT
 mkdir -p "${CPUFREQ}/policy0"
-echo "408000 816000 1008000 1416000 " >"${CPUFREQ}/policy0/scaling_available_frequencies"
+echo "600000 816000 1008000 1200000 1296000 1416000 " >"${CPUFREQ}/policy0/scaling_available_frequencies"
 echo "1512000 " >"${CPUFREQ}/policy0/scaling_boost_frequencies"
 export CPUFREQ
 
-for khz in 408000 816000 1416000 1512000; do
+for khz in 600000 816000 1416000 1512000; do
   check "${khz} is a ceiling" '[ "$(pick_cpu_max "${khz}")" = "${khz}" ]'
 done
-for bad in '' 600000 '816000 ' ' 816000' 0816000 816000x '$(reboot)' \
+for bad in '' 408000 '816000 ' ' 816000' 0816000 816000x '$(reboot)' \
   '816000; reboot' '816000
 reboot' 99999999999 -816000 '*'; do
   check "refused: ${bad//$'\n'/\\n}" '[ -z "$(pick_cpu_max "${bad}")" ]'

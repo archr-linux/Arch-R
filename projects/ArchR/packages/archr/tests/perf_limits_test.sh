@@ -13,7 +13,7 @@ expect() { [ "$2" = "$3" ] || fail "$1: got '$3', expected '$2'"; }
 
 C=${TMP}/cpufreq
 mkdir -p "${C}/policy0" "${TMP}/gpu"
-echo "408000 816000 1008000 1416000" >"${C}/policy0/scaling_available_frequencies"
+echo "600000 816000 1008000 1200000 1296000 1416000" >"${C}/policy0/scaling_available_frequencies"
 echo "1512000" >"${C}/policy0/scaling_boost_frequencies"
 echo 1416000 >"${C}/policy0/scaling_max_freq"
 echo 0 >"${C}/boost"

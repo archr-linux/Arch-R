@@ -43,6 +43,7 @@ finish() {
 trap finish EXIT
 
 CHANGED=0
+DTBS_CHANGED=0
 FAILED=0
 
 # sync_file <src> <dst>: copy only when the content differs, via a
@@ -102,8 +103,18 @@ if [ -d "${SRC}/device_trees" ] && [ -d "${BOOT}/dtbs" ]; then
     # image deliberately leaves out), so adding files here would undo
     # that curation. Content never diverges for same-named DTBs.
     [ -f "${BOOT}/dtbs/$(basename "${dtb}")" ] || continue
+    [ "$(sha256sum <"${dtb}")" = "$(sha256sum <"${BOOT}/dtbs/$(basename "${dtb}")")" ] ||
+      DTBS_CHANGED=1
     sync_file "${dtb}" "${BOOT}/dtbs/$(basename "${dtb}")"
   done
+fi
+
+# The voltage tuning overlay (archr-boot-tuning) was made against the old
+# tables: back to the neutral one, so a step the new DTB lacks cannot break
+# its CPU table at the next boot. It leaves /flash read-only; nothing is
+# written here after it.
+if [ "${DTBS_CHANGED}" = "1" ] && command -v archr-boot-tuning >/dev/null; then
+  log "voltage tuning: $(archr-boot-tuning dtbs-changed 2>&1)"
 fi
 
 if [ "${FAILED}" = "1" ]; then

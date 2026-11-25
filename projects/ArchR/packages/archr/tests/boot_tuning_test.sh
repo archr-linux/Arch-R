@@ -5,7 +5,8 @@
 # archr-boot-tuning against a scratch root: each step's range, the
 # overlay's nodes (a new CPU step with its frequency and latency, a GPU
 # step), a uniform CPU offset, extlinux.conf listing the overlay once, the
-# neutral overlay after reset, and a revert told once.
+# neutral overlay after reset, a revert told once, and new DTBs (the
+# 600 MHz table) putting the neutral overlay back.
 #   bash tests/boot_tuning_test.sh
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -22,7 +23,8 @@ chmod +x "${TMP}/bin/archr-toast"
 export PATH=${TMP}/bin:${PATH}
 printf 'LABEL ArchR\n  LINUX /KERNEL\n  FDTDIR /dtbs/\n  FDTOVERLAYS /overlays/mipi-panel.dtbo\n  APPEND x\n' \
   >"${TMP}/flash/extlinux/extlinux.conf"
-# The R36S tables.
+# The RK3326 tables before 20261125.2: no 1200 and 1296 MHz steps, so they
+# are the new ones.
 python3 -I - "${TMP}" <<'PY'
 import os, struct, sys
 dt = sys.argv[1] + "/proc/device-tree"
@@ -135,5 +137,36 @@ expect "in English without a language" "error errors Voltage tuning undone: the 
 expect "status keeps it" "2" "$(run status | field reverted)"
 expect "brief says so" "true" "$(run brief | field reverted)"
 expect "settings cleared" "[1416,0,1350,1300,1375]" "$(run brief | field cpu.5)"
+
+# New DTBs with the 600 MHz table (20261125.2): the 408 MHz node of the old
+# settings would break the CPU table, so the neutral overlay goes back.
+run offset cpu -25000 >/dev/null
+run boot >/dev/null
+: >"${TMP}/toasts"
+expect "tuned before the update" "false" "$(run status | field neutral)"
+expect "dtbs-changed resets" '{"ok":true,"reset":true}' "$(run dtbs-changed)"
+expect "neutral after it" "1" "$(cmp -s "${ACTIVE}" "${TMP}/flash/overlays/tuning.neutral.dtbo" && echo 1)"
+expect "no stock kept" "1" "$([ ! -e "${TMP}/flash/tuning.stock.json" ] && echo 1)"
+expect "nothing read from the old tree" "false" "$(run brief | field supported)"
+rm -rf "${TMP:?}/proc/device-tree/opp-table-0"
+python3 -I - "${TMP}" <<'PY'
+import os, struct, sys
+dt = sys.argv[1] + "/proc/device-tree"
+cpu = [(600, 950000), (816, 1050000), (1008, 1175000), (1200, 1300000), (1296, 1350000),
+       (1416, 1350000), (1512, 1400000)]
+for mhz, uv in cpu:
+    d = f"{dt}/opp-table-0/opp-{mhz}000000"; os.makedirs(d)
+    top = 1400000 if mhz == 1512 else 1350000
+    open(f"{d}/opp-microvolt", "wb").write(struct.pack(">3I", uv, uv, top))
+    open(f"{d}/clock-latency-ns", "wb").write(struct.pack(">I", 40000))
+PY
+run boot >/dev/null
+expect "told at the next boot" "info updates Voltage tuning undone by the update The processor table changed; tune it again in Performance and chip" \
+  "$(cat "${TMP}/toasts")"
+expect "told once" "false" "$(run boot | field reset)"
+expect "600 MHz first" "[600,0,950,900,975]" "$(run brief | field cpu.0)"
+expect "1296 a stock step now" "[1296,0,1350,1300,1375]" "$(run brief | field cpu.4)"
+expect "seven CPU steps" "7" "$(run brief | python3 -I -c 'import json,sys; print(len(json.load(sys.stdin)["cpu"]))')"
+expect "untouched settings: nothing to do" '{"ok":true,"reset":false}' "$(run dtbs-changed)"
 [ ${FAILED} -eq 0 ] && echo "ok   archr-boot-tuning"
 exit ${FAILED}

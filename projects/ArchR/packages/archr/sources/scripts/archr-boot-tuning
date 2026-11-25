@@ -18,11 +18,14 @@
 #   archr-boot-tuning reset                  the neutral overlay: stock voltages
 #   archr-boot-tuning boot                   at start: a revert becomes a toast
 #   archr-boot-tuning clean                  at a clean shutdown: trial to 0
+#   archr-boot-tuning dtbs-changed           archr-flash-sync put new DTBs in
+#                                            /flash: the neutral overlay
 #
 # Changes take effect at the next boot. Voltages go in the regulators'
 # 12.5 mV steps. A CPU step from 50 mV under its stock voltage to 25 over;
-# the new 1200 and 1296 MHz steps between the stock voltages of the steps
-# around them; the GPU only down to 1.1 V, the floor of vdd_logic, which it
+# the 1200 and 1296 MHz steps, where a table lacks them (the RK3326 has
+# both since 20261125.2), between the stock voltages of the steps around
+# them; the GPU only down to 1.1 V, the floor of vdd_logic, which it
 # shares with the DDR (patch 035: lower corrupts the memory), and never
 # over its stock voltage, the rail's ceiling.
 import json
@@ -42,6 +45,7 @@ SETTINGS = FLASH + "/tuning.json"
 TRIAL = FLASH + "/tuning.trial"
 REVERTED = FLASH + "/tuning.reverted"
 REVERTED_SEEN = REVERTED + ".seen"  # told once, kept for status
+RESET = FLASH + "/tuning.reset"  # new DTBs undid the settings: told once
 EXTLINUX = FLASH + "/extlinux/extlinux.conf"
 DT = ROOT + "/proc/device-tree"
 CFG = ROOT + "/storage/.config/system/configs/system.cfg"
@@ -371,6 +375,22 @@ TOAST = {
 }
 
 
+# New DTBs (an update) undid the settings: their tables may have other steps.
+TOAST_RESET = {
+    "pt": ("Ajuste de tensão desfeito pela atualização",
+           "A tabela do processador mudou; ajuste de novo em Desempenho e chip"),
+    "es": ("La actualización deshizo el ajuste de voltaje",
+           "La tabla del procesador cambió; ajústalo de nuevo en Rendimiento y chip"),
+    "ru": ("Обновление отменило настройку напряжения",
+           "Таблица процессора изменилась; настройте заново в «Производительность и чип»"),
+    "de": ("Das Update hat die Spannungsanpassung zurückgesetzt",
+           "Die Prozessortabelle hat sich geändert; neu einstellen"),
+    "zh": ("更新撤销了电压调整", "处理器频率表已改变，请重新调整"),
+    "en": ("Voltage tuning undone by the update",
+           "The processor table changed; tune it again in Performance and chip"),
+}
+
+
 def language():
     try:
         with open(CFG, encoding="utf-8", errors="replace") as f:
@@ -398,16 +418,55 @@ def boot():
         if settings and any(settings.get(t) for t in TABLES):
             settings = {"pending_reboot": False}
             changed = True
-    if changed or reverted:
+    reset = os.path.exists(RESET)
+    if reset:
+        title, detail = TOAST_RESET.get(language(), TOAST_RESET["en"])
+        subprocess.run(["archr-toast", "info", "updates", title, detail],
+                       capture_output=True)
+    if changed or reverted or reset:
         flash_rw()
         try:
             if changed:
                 write(SETTINGS, json.dumps(settings))
             if reverted:
                 os.replace(REVERTED, REVERTED_SEEN)
+            if reset:
+                os.remove(RESET)
         finally:
             flash_ro()
-    return {"ok": True, "reverted": reverted}
+    return {"ok": True, "reverted": reverted, "reset": reset}
+
+
+def dtbs_changed():
+    """New DTBs in /flash: the stock tables kept here, and settings made
+    against them, may not fit (20261125.2 took the 408 MHz step out, and an
+    overlay node for a step a table lacks breaks its whole CPU table). The
+    stock goes, to be read again from the next boot's tree; settings go
+    back to the neutral overlay, told at that boot."""
+    settings = load(SETTINGS, {})
+    tuned = not is_neutral() or any(settings.get(t) for t in TABLES)
+    if not tuned and not os.path.exists(STOCK):
+        return {"ok": True, "reset": False}
+    flash_rw()
+    try:
+        if os.path.exists(STOCK):
+            os.remove(STOCK)
+        if tuned:
+            os.makedirs(OVERLAYS, exist_ok=True)
+            neutral = overlay({"cpu": {}, "gpu": {}}, {})
+            if not os.path.exists(NEUTRAL):
+                write(NEUTRAL, neutral)
+            with open(NEUTRAL, "rb") as f:
+                write(ACTIVE, f.read())
+            for stale in (TRIAL, REVERTED):
+                if os.path.exists(stale):
+                    os.remove(stale)
+            write(RESET, "1\n")
+        # The running tree is still the old one: no stock read until a boot.
+        write(SETTINGS, json.dumps({"pending_reboot": True}))
+    finally:
+        flash_ro()
+    return {"ok": True, "reset": tuned}
 
 
 def number(text):
@@ -425,6 +484,8 @@ def main(argv):
         out(brief())
     if cmd == "boot":
         out(boot())
+    if cmd == "dtbs-changed":
+        out(dtbs_changed())
     if cmd == "clean":
         if os.path.exists(TRIAL):
             flash_rw()

@@ -3,9 +3,9 @@
 # Copyright (C) 2025-present ArchR (https://github.com/archr-linux/Arch-R)
 
 # Above the game: runemu.sh runs it at nice -19, and asleep it keeps the one
-# core left at 408 MHz. At nice 0 the wake took minutes (more than 5 with a
-# busy game on the R36S), and the player, before a black screen, held the
-# power button. Its children (swaymsg, pactl) inherit this.
+# core left at the lowest speed (600 MHz on the RK3326). At nice 0 the wake
+# took minutes (more than 5 with a busy game on the R36S), and the player,
+# before a black screen, held the power button. Its children (swaymsg, pactl) inherit this.
 renice -n -20 -p $$ >/dev/null 2>&1
 
 . /etc/profile
@@ -264,8 +264,8 @@ do_shutdown() {
     return 0
   fi
 
-  # Full speed before anything else: the sleep left one core at 408 MHz,
-  # and with that the launcher could not save its data within its stop
+  # Full speed before anything else: the sleep left one core at its lowest
+  # speed, and with that the launcher could not save its data within its stop
   # timeout (8 s, then SIGKILL), and the error report's stop, starved of
   # disk behind it, left the boot mark for a false "abrupt" report.
   [[ "${ENABLE_CORE_PARKING}" == "1" ]] && unpark_cores
