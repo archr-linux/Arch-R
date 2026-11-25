@@ -407,11 +407,11 @@ perform_optimization() {
 }
 
 recompress_idle() {
-    # Disabled: on the 6.12 kernel, recompressing zram pages corrupts kernel
-    # memory now and then (panics and freezes seconds after a pass, on
-    # several consoles). Kept as a no-op so an old timer or a manual call
-    # does nothing; the second tier comes back with a kernel that fixes it.
-    [ "${ARCHR_ZRAM_RECOMPRESS:-0}" = 1 ] || return 0
+    # Every few minutes (archr-zram-recompress.timer, at idle priority):
+    # pages left untouched since the last pass go to the second tier, then
+    # every page is marked again. zram clears the mark on access, so what
+    # gets recompressed sat unread for a whole interval: the fast first
+    # tier serves the working set, zstd packs the rest (~25% smaller).
     local z=/sys/block/zram0
     [ -f "$z/recompress" ] && grep -q '\[' "$z/recomp_algorithm" 2>/dev/null || return 0
     grep -q /dev/zram0 /proc/swaps || return 0
@@ -440,10 +440,9 @@ setup_zram() {
     
     local algo_path="/sys/block/zram0/comp_algorithm"
     [ -f "$algo_path" ] && echo "$PRIMARY_ALGO" > "$algo_path" 2>/dev/null
-    # The second tier (see recompress_idle, disabled for now), set like the
-    # first one before the size.
-    if [ "${ARCHR_ZRAM_RECOMPRESS:-0}" = 1 ] &&
-        [ -n "$SECONDARY_ALGO" ] && [ -f /sys/block/zram0/recomp_algorithm ] &&
+    # The second tier (see recompress_idle), set like the first one before
+    # the size.
+    if [ -n "$SECONDARY_ALGO" ] && [ -f /sys/block/zram0/recomp_algorithm ] &&
         grep -qw "$SECONDARY_ALGO" "$algo_path"; then
         echo "algo=$SECONDARY_ALGO priority=1" > /sys/block/zram0/recomp_algorithm 2>/dev/null
     fi
