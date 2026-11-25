@@ -1,0 +1,38 @@
+--- a/drivers/gpu/drm/bridge/synopsys/dw-mipi-dsi.c	2026-11-25 17:42:47.915382644 -0300
++++ b/drivers/gpu/drm/bridge/synopsys/dw-mipi-dsi.c	2026-11-25 17:42:47.930344612 -0300
+@@ -254,6 +254,14 @@
+ 	u32 lanes;
+ 	u32 format;
+ 	unsigned long mode_flags;
++	/*
++	 * Send the panel's init sequence without first resetting the
++	 * controller into command mode (no high-speed clock request on the
++	 * clock lane): some 1024x768 panels on RK3326 handhelds (R45H/R46H)
++	 * stay white or black otherwise. Set by "archr,init-in-video-mode"
++	 * on the panel node.
++	 */
++	bool init_keep_mode;
+ 
+ #ifdef CONFIG_DEBUG_FS
+ 	struct dentry *debugfs;
+@@ -331,6 +339,8 @@
+ 	dsi->channel = device->channel;
+ 	dsi->format = device->format;
+ 	dsi->mode_flags = device->mode_flags;
++	dsi->init_keep_mode = of_property_read_bool(device->dev.of_node,
++						    "archr,init-in-video-mode");
+ 
+ 	bridge = devm_drm_of_get_bridge(dsi->dev, dsi->dev->of_node, 1, 0);
+ 	if (IS_ERR(bridge))
+@@ -1015,7 +1025,10 @@
+ 	dw_mipi_dsi_wait_for_two_frames(adjusted_mode);
+ 
+ 	/* Switch to cmd mode for panel-bridge pre_enable & panel prepare */
+-	dw_mipi_dsi_set_mode(dsi, 0);
++	if (dsi->init_keep_mode)
++		dsi_write(dsi, DSI_PWR_UP, POWERUP);
++	else
++		dw_mipi_dsi_set_mode(dsi, 0);
+ 
+ 	if (phy_ops->power_on)
+ 		phy_ops->power_on(dsi->plat_data->priv_data);
