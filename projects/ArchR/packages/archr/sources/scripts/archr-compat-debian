@@ -1,0 +1,270 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ArchR (https://github.com/archr-linux/Arch-R)
+#
+# archr-compat-debian: the dArkOS compatibility mode. dArkOS and dArkOSen
+# are Debian 13 (Trixie); a port or tool made there that needs what only
+# Debian has (apt-get, Debian library names, glibc 2.41, python modules from
+# dist-packages) runs here inside a Debian runtime, and nothing else does.
+#
+#   archr-compat-debian status            what is installed, what the system wants
+#   archr-compat-debian ensure            install the image the manifest names, if missing
+#                                         (0 ready, 2 no network, 1 failed)
+#   archr-compat-debian install [FILE]    download it (or take FILE), check its SHA256
+#   archr-compat-debian run [--] CMD...   run CMD inside the runtime
+#   archr-compat-debian shell             a shell inside it (SSH)
+#   archr-compat-debian listed NAME       0 when NAME (a port script) is on our list
+#   archr-compat-debian reset             forget what was installed inside (apt)
+#   archr-compat-debian remove            delete the image and that layer
+#
+# The runtime is a read-only squashfs (tools/compat-debian/build-image.sh in
+# the distribution repo) with a writable overlay layer per image version in
+# /storage/.cache/compat-debian. The image is trusted by the SHA256 in
+# /usr/share/archr/compat-debian/manifest, which comes in this (signed)
+# package. run makes a private mount and PID namespace (util-linux unshare,
+# no extra tools), binds /dev, /sys, /run (sway, pipewire-pulse, udev), /tmp
+# and /storage, and Arch R's /usr read-only on /.host/usr. GL, GBM and SDL2
+# are Arch R's (libmali or its Mesa; SDL2 with the kmsdrm-to-wayland
+# fallback); Arch R programs a port calls (gptokeyb, systemctl) run with
+# Arch R's own loader. Everything runs as root, as ports already do: this
+# is compatibility, not a sandbox.
+
+SHARE=${ARCHR_COMPAT_SHARE:-/usr/share/archr/compat-debian}
+STATE=${ARCHR_COMPAT_STATE:-/storage/.cache/compat-debian}
+MANIFEST=${SHARE}/manifest
+HOST_LD=/usr/lib/ld-linux-aarch64.so.1
+
+die() { echo "archr-compat-debian: $*" >&2; exit 1; }
+
+manifest() { # KEY
+  sed -n "s/^$1=//p" "${MANIFEST}" 2>/dev/null | head -1
+}
+
+image() {
+  local file
+  file=$(manifest FILE)
+  [ -n "${file}" ] && [ -f "${STATE}/${file}" ] && echo "${STATE}/${file}"
+}
+
+# The writable layer belongs to one image: a new image starts a new one.
+upper() {
+  local sha
+  sha=$(manifest SHA256)
+  echo "${STATE}/upper-${sha:0:12}"
+}
+
+cmd_status() {
+  local img
+  echo "manifest: $(manifest FILE) ($(manifest SIZE) bytes)"
+  if img=$(image); then
+    echo "installed: ${img}"
+    du -sh "$(upper)" 2>/dev/null | sed 's/^/layer: /'
+  else
+    echo "installed: no"
+  fi
+}
+
+checksum_ok() { # FILE
+  [ "$(stat -c %s "$1" 2>/dev/null)" = "$(manifest SIZE)" ] &&
+    [ "$(sha256sum "$1" | cut -d' ' -f1)" = "$(manifest SHA256)" ]
+}
+
+# The image and the layers of other versions go: one runtime at a time.
+drop_old() {
+  local keep f
+  keep=$(manifest FILE)
+  for f in "${STATE}"/*.squashfs "${STATE}"/*.part "${STATE}"/*.sha256; do
+    [ -e "${f}" ] && [ "${f##*/}" != "${keep}" ] && [ "${f##*/}" != "${keep}.sha256" ] && rm -f "${f}"
+  done
+  for f in "${STATE}"/upper-*; do
+    [ -d "${f}" ] && [ "${f}" != "$(upper)" ] && rm -rf "${f:?}"
+  done
+  return 0
+}
+
+cmd_install() {
+  local file url size dest part free
+  file=$(manifest FILE)
+  url=$(manifest URL)
+  size=$(manifest SIZE)
+  [ -n "${file}" ] && [ -n "${url}" ] || die "no runtime in ${MANIFEST}"
+  mkdir -p "${STATE}" || die "cannot create ${STATE}"
+  dest="${STATE}/${file}"
+  part="${dest}.part"
+  installed_ok && return 0
+  # The image plus room to unpack what apt installs later.
+  free=$(df -k "${STATE}" | awk 'NR == 2 { print $4 }')
+  [ "${free:-0}" -gt $((size / 1024 + 64 * 1024)) ] || die "not enough space in ${STATE}"
+  if [ -n "$1" ]; then
+    cp -f "$1" "${part}" || die "cannot copy $1"
+  else
+    curl -fL --retry 3 --connect-timeout 20 -C - -o "${part}" "${url}" ||
+      die "download failed: ${url}"
+  fi
+  if ! checksum_ok "${part}"; then
+    rm -f "${part}"
+    die "${file}: size or SHA256 differs from the manifest"
+  fi
+  mv -f "${part}" "${dest}" && manifest SHA256 >"${dest}.sha256" && sync
+  drop_old
+}
+
+# Checked in full once, at install; then by the stamp it left and the size.
+installed_ok() {
+  local img
+  img=$(image) &&
+    [ "$(cat "${img}.sha256" 2>/dev/null)" = "$(manifest SHA256)" ] &&
+    [ "$(stat -c %s "${img}")" = "$(manifest SIZE)" ]
+}
+
+cmd_ensure() {
+  installed_ok && return 0
+  ${AMIONLINE:-/usr/bin/amionline} >/dev/null 2>&1 || return 2
+  cmd_install >&2
+}
+
+cmd_listed() {
+  local name=$1 pattern
+  [ -n "${name}" ] && [ -f "${SHARE}/ports.list" ] || return 1
+  while IFS= read -r pattern; do
+    pattern=${pattern%%#*}
+    pattern=${pattern%"${pattern##*[![:space:]]}"}
+    pattern=${pattern#"${pattern%%[![:space:]]*}"}
+    [ -n "${pattern}" ] || continue
+    # shellcheck disable=SC2053 # the list holds globs
+    [[ "${name,,}" == ${pattern,,} ]] && return 0
+  done <"${SHARE}/ports.list"
+  return 1
+}
+
+# Inside the new namespaces, as their PID 1: mount, then run CMD as a
+# child (PID 1 ignores TERM, the child does not) and pass signals on, so
+# archr-port-stop closes the port as it closes any other. When this exits,
+# the kernel ends whatever the port left running in here.
+enter() {
+  local base=$1 img=$2 up=$3 m f
+  shift 3
+  m="${base}/merged"
+  mount -t tmpfs -o mode=0755 archr-compat "${base}" &&
+    mkdir -p "${base}/lower" "${m}" "${up}/data" "${up}/work" &&
+    mount -t squashfs -o loop,ro "${img}" "${base}/lower" &&
+    mount -t overlay overlay \
+      -o "lowerdir=${base}/lower,upperdir=${up}/data,workdir=${up}/work" "${m}" ||
+    die "cannot mount the runtime"
+  for f in dev sys run tmp storage; do
+    mount -o rbind "/${f}" "${m}/${f}" || die "cannot bind /${f}"
+  done
+  mount -t proc proc "${m}/proc"
+  # Debian scripts set XDG_RUNTIME_DIR=/run/user/$UID; Arch R's session
+  # (sway, pipewire) is elsewhere. Only in here: /run/user/0 leads to it.
+  if [ -d "${XDG_RUNTIME_DIR}" ] && [ "${XDG_RUNTIME_DIR}" != /run/user/0 ]; then
+    mount -t tmpfs -o mode=0755 archr-user "${m}/run/user" 2>/dev/null &&
+      ln -s "$(readlink -f "${XDG_RUNTIME_DIR}")" "${m}/run/user/0"
+  fi
+  mkdir -p "${m}/.host/usr"
+  mount -o rbind /usr "${m}/.host/usr" && mount -o remount,bind,ro "${m}/.host/usr"
+  # The certificates, DNS and time zone are Arch R's.
+  for f in /etc/ssl/certs/ca-certificates.crt /etc/resolv.conf /etc/localtime /etc/machine-id /etc/hostname; do
+    [ -e "${f}" ] || continue
+    [ -L "${m}${f}" ] && rm -f "${m}${f}"
+    [ -e "${m}${f}" ] || { mkdir -p "${m}${f%/*}" && : >"${m}${f}"; } 2>/dev/null
+    mount -o bind "$(readlink -f "${f}")" "${m}${f}" 2>/dev/null
+  done
+  mount -t tmpfs -o mode=0755 archr-host "${m}/.archr"
+  host_tools "${m}/.archr"
+  host_gl "${m}/.archr/gl"
+  # Debian's ld.so finds its multiarch folders without a cache; ldconfig
+  # adds the rest (pulseaudio's private libs) once, into the layer.
+  [ -s "${m}/etc/ld.so.cache" ] || chroot "${m}" /usr/sbin/ldconfig 2>/dev/null
+
+  unset LD_PRELOAD LD_LIBRARY_PATH
+  export HOME=/home/ark USER=root LOGNAME=root LANG=C.UTF-8
+  unset LC_ALL
+  export PATH=/.archr/shims:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+  export LD_LIBRARY_PATH=/.archr/gl
+  export ARCHR_COMPAT=debian
+  [ -n "${COMPAT_EGL_VENDOR}" ] && export __EGL_VENDOR_LIBRARY_FILENAMES=${COMPAT_EGL_VENDOR}
+  [ -n "${COMPAT_GBM}" ] && export GBM_BACKENDS_PATH=${COMPAT_GBM}
+  [ -n "${COMPAT_DRI}" ] && export LIBGL_DRIVERS_PATH=${COMPAT_DRI}
+
+  chroot "${m}" /bin/sh -c 'cd "$1" 2>/dev/null || cd /home/ark; shift; exec "$@"' sh "${PWD}" "$@" &
+  local child=$!
+  trap 'kill -TERM "${child}" 2>/dev/null' TERM INT HUP
+  local rc
+  while :; do
+    wait "${child}"
+    rc=$?
+    kill -0 "${child}" 2>/dev/null || break
+  done
+  return "${rc}"
+}
+
+# /.archr/bin: Arch R programs, run by Arch R's loader with its libraries;
+# /.archr/shims: what runemu.sh's port-shims answer outside.
+host_tools() {
+  local d=$1 t
+  mkdir -p "${d}/bin" "${d}/shims"
+  for t in gptokeyb systemctl; do
+    [ -x "/usr/bin/${t}" ] || continue
+    printf '#!/bin/sh\nexec /.host%s --library-path /.host/usr/lib /.host/usr/bin/%s "$@"\n' \
+      "${HOST_LD}" "${t}" >"${d}/bin/${t}"
+  done
+  if [ -f /usr/lib/archr/port-shims/systemctl ]; then
+    sed 's#^real=.*#real=/.archr/bin/systemctl#' /usr/lib/archr/port-shims/systemctl >"${d}/shims/systemctl"
+  fi
+  # runemu.sh already set the game's governor; the splash has no screen.
+  for t in maxperf normperf perfmax perfnorm show_splash.sh; do
+    printf '#!/bin/sh\nexit 0\n' >"${d}/shims/${t}"
+  done
+  chmod 0755 "${d}"/bin/* "${d}"/shims/* 2>/dev/null
+}
+
+# /.archr/gl: Arch R's GL for the driver in use, and its SDL2, ahead of
+# Debian's. Links to /.host, resolved here (the names inside /usr/lib/mali
+# are links into /usr/lib).
+host_gl() {
+  local gl=$1 f driver
+  mkdir -p "${gl}"
+  link() { [ -e "$1" ] && ln -sf "/.host$(readlink -f "$1")" "${gl}/${2:-${1##*/}}"; }
+  driver=$(/usr/bin/gpudriver 2>/dev/null)
+  if [ "${driver}" = libmali ] && [ -d /usr/lib/mali ]; then
+    for f in /usr/lib/mali/*.so* /usr/lib/libmali*.so*; do link "${f}"; done
+  else
+    for f in /usr/lib/libEGL_mesa.so.0 /usr/lib/libgallium-*.so /usr/lib/libgbm.so.1 /usr/lib/libglapi.so.0; do
+      link "${f}"
+    done
+    COMPAT_EGL_VENDOR=/.host/usr/share/glvnd/egl_vendor.d/50_mesa.json
+    [ -d /usr/lib/gbm ] && COMPAT_GBM=/.host/usr/lib/gbm
+    [ -d /usr/lib/dri ] && COMPAT_DRI=/.host/usr/lib/dri
+  fi
+  [ "${ARCHR_COMPAT_HOST_SDL:-1}" = 1 ] && link /usr/lib/libSDL2-2.0.so.0
+  unset -f link
+}
+
+cmd_run() {
+  local img base
+  [ "$1" = -- ] && shift
+  [ $# -gt 0 ] || die "run: no command"
+  img=$(image) || die "runtime not installed (archr-compat-debian install)"
+  base="/run/archr/compat-debian/$$"
+  mkdir -p "${base}" || die "cannot create ${base}"
+  # The mount point stays behind on /run (a tmpfs) and goes at the next run.
+  find /run/archr/compat-debian -mindepth 1 -maxdepth 1 -type d ! -name "$$" -empty -delete 2>/dev/null
+  # busybox unshare: no --kill-child; when PID 1 inside ends, the kernel
+  # ends the rest, and archr-port-stop signals the whole tree anyway.
+  exec unshare --mount --pid --fork --propagation private \
+    "$0" __enter "${base}" "${img}" "$(upper)" "$@"
+}
+
+case "$1" in
+  status) cmd_status ;;
+  ensure) cmd_ensure ;;
+  install) shift; cmd_install "$@" ;;
+  run) shift; cmd_run "$@" ;;
+  shell) cmd_run /bin/bash -l ;;
+  listed) cmd_listed "$2" ;;
+  reset) layer=$(upper); rm -rf "${layer:?}" ;;
+  remove) rm -rf "${STATE:?}" ;;
+  __enter) shift; enter "$@" ;;
+  *) sed -n '9,18p' "$0" >&2; exit 2 ;;
+esac

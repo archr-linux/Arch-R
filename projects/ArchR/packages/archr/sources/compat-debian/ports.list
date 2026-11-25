@@ -1,0 +1,7 @@
+# Ports that run in the dArkOS compatibility mode (archr-compat-debian) on
+# their own: a glob on the script's file name per line, case ignored.
+# Add one when a report shows it needs Debian (apt-get, a Debian library
+# name, glibc 2.41) and the runtime makes it start. runemu.sh also marks a
+# port by itself after such a failure, and system.cfg decides above both:
+#   ports["Name.sh"].compat=debian | native     one port
+#   ports.compat=off                            never

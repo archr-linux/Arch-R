@@ -1,0 +1,3 @@
+# dialog without shadows, as dArkOS tools ask with --rc.
+use_shadow = OFF
+use_colors = ON

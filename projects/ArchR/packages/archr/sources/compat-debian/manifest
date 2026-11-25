@@ -1,0 +1,5 @@
+VERSION=20261125
+FILE=debian-trixie-arm64-20261125.squashfs
+URL=https://github.com/archr-linux/archr-repo/releases/download/compat-debian/debian-trixie-arm64-20261125.squashfs
+SHA256=1e02bb7eff29329b95c87f805ee18e6fddc91a54cad3b709a0fd1b482ab3bb5d
+SIZE=65671168

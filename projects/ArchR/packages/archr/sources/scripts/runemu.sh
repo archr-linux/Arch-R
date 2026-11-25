@@ -407,6 +407,85 @@ function port_runtime_ready() {
         return 1
 }
 
+# dArkOS compatibility mode (archr-compat-debian): a port made for dArkOS
+# that needs Debian itself runs inside a Debian runtime. system.cfg decides
+# first (ports["X.sh"].compat=debian|native, ports.compat=off), then: our
+# list, a mark left by an earlier run that failed for want of Debian, or a
+# script that installs with apt-get/dpkg. After a run, port_compat_learn
+# leaves or takes back that mark.
+COMPAT_STATE=${COMPAT_STATE:-/storage/.cache/compat-debian}
+COMPAT=${COMPAT:-/usr/bin/archr-compat-debian}
+COMPAT_SHARE=${ARCHR_COMPAT_SHARE:-/usr/share/archr/compat-debian}
+PORT_COMPAT=0
+function port_compat_wanted() {
+        local script=$1 base=${1##*/}
+        case "$(get_setting compat ports "${base}")" in
+        debian | on | 1) return 0 ;;
+        native | off | 0) return 1 ;;
+        esac
+        [ -e "${COMPAT_STATE}/no/${base}" ] && return 1
+        [ -e "${COMPAT_STATE}/wanted/${base}" ] && return 0
+        "${COMPAT}" listed "${base}" && return 0
+        # A command, not a word in a message: at the start of a line or
+        # after ; && || then do, maybe behind sudo or $ESUDO.
+        grep -qE '(^|;|&&|\|\||\bthen|\bdo)[[:space:]]*((sudo|\$\{?ESUDO\}?)[[:space:]]+)?(apt-get|apt|dpkg)[[:space:]]+(-[-A-Za-z=]+[[:space:]]+)*(install|update|--configure|-i)([[:space:]]|$)' \
+                "${script}" 2>/dev/null
+}
+function port_compat_toast() { # KIND CATEGORY NAME pt|es|ru|de|zh|en texts...
+        local kind=$1 cat=$2
+        shift 2
+        case "$(get_setting system.language)" in
+        pt*) archr-toast "${kind}" "${cat}" "$1" "$2" ;;
+        es*) archr-toast "${kind}" "${cat}" "$3" "$4" ;;
+        *) archr-toast "${kind}" "${cat}" "$5" "$6" ;;
+        esac
+}
+function port_compat_ready() {
+        local script=$1 name rc mb
+        name=$(port_title "${script}" "$(port_dir "${script}")")
+        mb=$(( $(sed -n 's/^SIZE=//p' "${COMPAT_SHARE}/manifest" 2>/dev/null || echo 0) / 1048576 ))
+        "${COMPAT}" ensure >>${OUTPUT_LOG} 2>&1
+        rc=$?
+        case "${rc}" in
+        0) return 0 ;;
+        2) log $0 "Compatibility runtime missing and no network: ${name} not started"
+           port_compat_toast error network \
+                "${name} precisa do modo de compatibilidade" "Conecte à internet uma vez para baixar (${mb} MB)" \
+                "${name} necesita el modo de compatibilidad" "Conéctate a internet una vez para descargarlo (${mb} MB)" \
+                "${name} needs the compatibility mode" "Connect to the internet once to download it (${mb} MB)" ;;
+        *) log $0 "Compatibility runtime could not be installed: ${name} not started"
+           port_compat_toast error errors \
+                "Modo de compatibilidade não instalou" "Veja o espaço livre e tente de novo" \
+                "El modo de compatibilidad no se instaló" "Revisa el espacio libre e inténtalo de nuevo" \
+                "Compatibility mode did not install" "Check the free space and try again" ;;
+        esac
+        return 1
+}
+# What only Debian answers: a library or glibc symbol Arch R lacks, apt or
+# dpkg, a python module from Debian's dist-packages.
+COMPAT_SIGNS="error while loading shared libraries|version .GLIBC_2\.(4[1-9]|[5-9][0-9])' not found|(apt-get|apt|dpkg): (command )?not found|ModuleNotFoundError: No module named"
+function port_compat_learn() {
+        local script=$1 offset=$2 base=${1##*/} name
+        [ -f "${COMPAT_SHARE}/manifest" ] || return 0
+        case "$(get_setting compat ports "${base}")" in debian | on | 1 | native | off | 0) return 0 ;; esac
+        tail -c +$((offset + 1)) "${OUTPUT_LOG}" 2>/dev/null | grep -qE "${COMPAT_SIGNS}" || return 0
+        name=$(port_title "${script}" "$(port_dir "${script}")")
+        if [ "${PORT_COMPAT}" = 1 ]; then
+                # Debian did not help either: back to Arch R, for good.
+                mkdir -p "${COMPAT_STATE}/no" && rm -f "${COMPAT_STATE}/wanted/${base}" &&
+                        : >"${COMPAT_STATE}/no/${base}"
+                log $0 "${base} failed in compatibility mode too: not trying it again"
+                return 0
+        fi
+        [ -e "${COMPAT_STATE}/no/${base}" ] && return 0
+        mkdir -p "${COMPAT_STATE}/wanted" && : >"${COMPAT_STATE}/wanted/${base}" || return 0
+        log $0 "${base} needs Debian: compatibility mode from the next run"
+        port_compat_toast info errors \
+                "${name} vai abrir em modo de compatibilidade" "Feito para o dArkOS: na próxima vez abre com as bibliotecas dele" \
+                "${name} se abrirá en modo de compatibilidad" "Hecho para dArkOS: la próxima vez se abre con sus bibliotecas" \
+                "${name} will open in compatibility mode" "Made for dArkOS: next time it opens with its libraries"
+}
+
 # PortMaster's bind_directories/bind_files mount a port's save folder (in the
 # ports folder) over a path such as ~/.config or /tmp and never take it back. A port deleted
 # afterwards leaves that path on a dead folder, and the next port that uses it
@@ -752,6 +831,14 @@ case ${EMULATOR} in
         chmod +x "${ROMNAME}"
         port_exec_bits "${ROMNAME}"
         port_runtime_ready "${ROMNAME}" || quit 0
+        # dArkOS tools live in /roms/tools (= /opt/system/Tools).
+        grep -qE '/roms2?/tools|/opt/system/Tools' "${ROMNAME}" 2>/dev/null && mkdir -p /storage/roms/tools
+        if port_compat_wanted "${ROMNAME}"; then
+          port_compat_ready "${ROMNAME}" || quit 0
+          PORT_COMPAT=1
+          log $0 "Running ${ROMNAME##*/} in the dArkOS compatibility mode"
+          RUNTHIS='${EMUPERF} ${COMPAT} run -- ${RUN_SHELL} "${ROMNAME}"'
+        fi
         sed -i "/^ACTIVE_GAME=/c\ACTIVE_GAME=\"${ROMNAME}\"" /storage/.config/PortMaster/mapper.txt
         sed -i "/^ACTIVE_PLATFORM=/c\ACTIVE_PLATFORM=\"${PLATFORM}\"" /storage/.config/PortMaster/mapper.txt
       ;;
@@ -935,6 +1022,7 @@ setsid archr-game-services resume >/dev/null 2>&1 </dev/null &
 
 if [ "${PLATFORM}" = "ports" ]; then
   comm -13 <(printf '%s\n' "${PORT_BINDS_BEFORE}") <(port_binds) | port_unbind
+  port_compat_learn "${ROMNAME}" "${RUN_OFFSET}"
 fi
 
 ### A failed run is reported, unless reports are off. Its own unit: this

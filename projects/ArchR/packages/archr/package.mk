@@ -110,6 +110,28 @@ EOF
   # (GTA Chinatown Wars) cd there. automount points the link at its ROMs.
   ln -s /run/archr/card2 ${INSTALL}/roms2
 
+  ### The dArkOS/dArkOSen layout their ports and tools use. What needs
+  ### Debian itself runs in archr-compat-debian (runemu.sh decides).
+  # The user there is ark, at /home/ark: here everything is root's, at /storage.
+  mkdir -p ${INSTALL}/home
+  ln -sfn /storage ${INSTALL}/home/ark
+  # Tools live in /roms/tools, bound on /opt/system/Tools (dArkOS fstab).
+  mkdir -p ${INSTALL}/opt/system
+  ln -sfn /storage/roms/tools ${INSTALL}/opt/system/Tools
+  # Their menus' helpers: gptokeyb, its key map (as dArkOS's
+  # /opt/inttools/keys.gptk, by Christian Haitian) and the pad database.
+  mkdir -p ${INSTALL}/opt/inttools
+  ln -sf /usr/bin/gptokeyb ${INSTALL}/opt/inttools/gptokeyb
+  install -m644 ${PKG_DIR}/sources/darkos/* ${INSTALL}/opt/inttools/
+  ln -sf /storage/.config/SDL-GameControllerDB/gamecontrollerdb.txt ${INSTALL}/opt/inttools/gamecontrollerdb.txt
+  # EmulationStation's files where dArkOS keeps them.
+  mkdir -p ${INSTALL}/etc/emulationstation
+  ln -sf /storage/.config/emulationstation/es_input.cfg ${INSTALL}/etc/emulationstation/es_input.cfg
+  ln -sf /usr/share/archr/systems.cfg ${INSTALL}/etc/emulationstation/es_systems.cfg
+  # The compatibility runtime: the image it trusts and the ports it takes.
+  install -Dm644 ${PKG_DIR}/sources/compat-debian/manifest ${INSTALL}/usr/share/archr/compat-debian/manifest
+  install -Dm644 ${PKG_DIR}/sources/compat-debian/ports.list ${INSTALL}/usr/share/archr/compat-debian/ports.list
+
   ### Add some quality of life customizations for hardworking devs.
   if [ -n "${LOCAL_SSH_KEYS_FILE}" ]
   then
