@@ -3,7 +3,7 @@
 
 PKG_NAME="lib32"
 PKG_VERSION="1.0"
-PKG_REV="2"
+PKG_REV="3"
 PKG_ARCH="aarch64"
 PKG_LICENSE="GPLv2"
 PKG_DEPENDS_TARGET="toolchain retroarch SDL2 libsndfile libmodplug"
