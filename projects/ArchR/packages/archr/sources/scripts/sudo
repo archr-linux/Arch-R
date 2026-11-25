@@ -37,4 +37,13 @@ while [ $# -gt 0 ]; do
 done
 
 [ $# -eq 0 ] && exit 0
+# sudo VAR=value... command: the assignments go to the command's
+# environment, as with the real sudo (dArkOSen tools:
+# "sudo DEBIAN_FRONTEND=noninteractive apt-get ...").
+case "$1" in
+  [A-Za-z_]*=*)
+    name=${1%%=*}
+    case "${name}" in *[!A-Za-z0-9_]*) ;; *) exec env "$@" ;; esac
+    ;;
+esac
 exec "$@"
