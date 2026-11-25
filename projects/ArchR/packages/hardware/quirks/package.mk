@@ -3,7 +3,7 @@
 
 PKG_NAME="quirks"
 PKG_VERSION="2.1"
-PKG_REV="7"
+PKG_REV="8"
 PKG_LICENSE="GPLv2"
 PKG_SITE=""
 PKG_URL=""

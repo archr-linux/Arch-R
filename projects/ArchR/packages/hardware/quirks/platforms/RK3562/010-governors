@@ -4,5 +4,5 @@
 
 cat <<EOF >/storage/.config/profile.d/010-governors
 CPU_FREQ=("/sys/devices/system/cpu/cpufreq/policy0")
-GPU_FREQ=("/sys/devices/platform/ff320000.gpu/devfreq/ff320000.gpu")
+GPU_FREQ=("/sys/class/devfreq/ff320000.gpu")
 EOF
