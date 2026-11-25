@@ -13,6 +13,12 @@ case "${DEVICE}" in
     # Pin rk3588 here until it hits mainline
     PKG_VERSION="7c35e21a8529b3758d1f051d1a5dc62aae934b2b"
     ;;
+  RK3326)
+    # 2026-06-24: rk3326_bl31_v1.37 ("DDR frequency scaling occasionally
+    # causes kernel panic"). This tree ships the DDR init as v2.12 (v2.11
+    # is gone; v2.12 only adds DDR security fixes, same parameters).
+    PKG_VERSION="2eca6e24fc6f8cf879b4f2f204b9c8acdfe37518"
+    ;;
   *)
     PKG_VERSION="74213af1e952c4683d2e35952507133b61394862"
     ;;
