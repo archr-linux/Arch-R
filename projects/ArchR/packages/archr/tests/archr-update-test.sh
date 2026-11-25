@@ -644,6 +644,19 @@ echo 'ARCHR_RELEASE="3.1.0"' >>"${TMP}/os-release"
 check "release: an image that names its own, before the table has it" "$(run RELEASES="${TMP}/releases.none")" 3.1.0
 mv "${TMP}/os-release.saved" "${TMP}/os-release"
 check "release: no table, no name: nothing" "$(run RELEASES="${TMP}/releases.none")" ""
+# A label one device carries (RK3562 "Beta 1") follows the release it
+# names, and not the next one.
+printf '2.1.0 3.0.2\n2.1.1 3.1.1 Beta 1\n2.1.2 3.1.2\n' >"${TMP}/releases.label"
+check "release: labeled in the table" "$(run RELEASES="${TMP}/releases.label")" "3.1.1 - Beta 1"
+mkdir -p "${TMP}/state"
+echo 2.1.2 >"${TMP}/state/version"
+check "release: the next release has no label" "$(run RELEASES="${TMP}/releases.label")" 3.1.2
+reset
+cp "${TMP}/os-release" "${TMP}/os-release.saved"
+printf 'ARCHR_RELEASE="3.1.1"\nARCHR_RELEASE_LABEL="Beta 1"\n' >>"${TMP}/os-release"
+check "release: the image's label, before the table has it" "$(run RELEASES="${TMP}/releases.none")" "3.1.1 - Beta 1"
+check "release: the image's label, the table without one" "$(run RELEASES="${TMP}/releases")" "3.1.1 - Beta 1"
+mv "${TMP}/os-release.saved" "${TMP}/os-release"
 ARGS=(info)
 check "info: the release before the version" "$(run RELEASES="${TMP}/releases" | head -n 1)" "OS:         ArchR v3.0.3 · 2.1.1"
 

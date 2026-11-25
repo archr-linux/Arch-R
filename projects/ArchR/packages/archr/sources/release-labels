@@ -1,0 +1,5 @@
+# Labels a release carries on one device, shown after it: "v3.1.1 - Beta 1".
+# One line per device and release, "<DEVICE> <release> <label>". The archr
+# package adds the label to that release's line of sources/releases on that
+# device, and scripts/image names the device's official image after it.
+RK3562 3.1.1 Beta 1

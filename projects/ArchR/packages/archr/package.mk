@@ -16,7 +16,7 @@ PKG_NAME="archr"
 # versions; the install silently skipped a PKG_INSTALL dir that did not
 # exist and the image assembly then failed in post_install.
 PKG_VERSION="$(date +%Y%m%d)"
-PKG_REV="71"
+PKG_REV="72"
 PKG_LICENSE="GPLv2"
 PKG_SITE=""
 PKG_URL=""
@@ -49,6 +49,13 @@ makeinstall_target() {
   install -Dm644 ${PKG_DIR}/sources/usb-advisor-chips.tsv ${INSTALL}/usr/share/archr/usb-advisor-chips.tsv
   # The update each release matches: archr-update release reads it.
   install -Dm644 ${PKG_DIR}/sources/releases ${INSTALL}/usr/share/archr/releases
+  # This device's release labels (sources/release-labels) become a third
+  # field: "20261125 3.1.1 Beta 1".
+  awk -v device="${DEVICE}" '
+    FNR == NR { if ($1 == device) { r = $2; $1 = $2 = ""; sub(/^ +/, ""); label[r] = $0 } next }
+    /^[^#]/ && ($2 in label) { print $1, $2, label[$2]; next }
+    { print }
+  ' ${PKG_DIR}/sources/release-labels ${PKG_DIR}/sources/releases >${INSTALL}/usr/share/archr/releases
   ln -sf /storage/.config/system ${INSTALL}/system
   ### /sbin is /usr/sbin here, but glibc puts ldconfig in /usr/bin.
   ### Python's ctypes.util.find_library runs /sbin/ldconfig -p; without

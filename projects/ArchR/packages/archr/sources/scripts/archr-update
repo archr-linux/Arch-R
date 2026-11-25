@@ -376,19 +376,26 @@ os_version() {
 # (os-release's ARCHR_RELEASE, official images from 3.1.0 on). A 3.0.3 card
 # updated past 3.1.0's update is 3.1.0. Nothing for a community image that
 # has reached no release.
+# A release may carry a label on one device ("<update> <release> <label>",
+# merged into the table at build time from sources/release-labels): it is
+# shown after the release, "3.1.1 - Beta 1". The image's own label
+# (os-release ARCHR_RELEASE_LABEL) covers its release before the table has it.
 system_release() {
-    local version release update name
+    local version release label update name tag
     version="$(os_version)"
     release="$(sed -n 's/^ARCHR_RELEASE="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "${OS_RELEASE}")"
-    while read -r update name; do
+    label="$(sed -n 's/^ARCHR_RELEASE_LABEL="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "${OS_RELEASE}")"
+    while read -r update name tag; do
         case "${update}" in "" | "#"*) continue ;; esac
         [ "$(printf '%s\n%s\n' "${update}" "${version}" | sort -V | tail -n 1)" = "${version}" ] ||
             continue
-        [ -z "${release}" ] ||
-            [ "$(printf '%s\n%s\n' "${release}" "${name}" | sort -V | tail -n 1)" = "${name}" ] &&
+        if [ -z "${release}" ] ||
+            [ "$(printf '%s\n%s\n' "${release}" "${name}" | sort -V | tail -n 1)" = "${name}" ]; then
+            [ "${name}" = "${release}" ] && [ -z "${tag}" ] || label="${tag}"
             release="${name}"
+        fi
     done <"${RELEASES}" 2>/dev/null
-    printf '%s' "${release}"
+    printf '%s' "${release}${release:+${label:+ - ${label}}}"
 }
 
 # pacman's last error line in an output file, else its last line.

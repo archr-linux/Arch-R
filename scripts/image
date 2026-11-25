@@ -97,6 +97,19 @@ else
   export OS_BUILD="community"
 fi
 
+# An official image of a release with a label on this device (archr's
+# sources/release-labels: "RK3562 3.1.1 Beta 1") carries it in os-release
+# and in its file name ("-beta1").
+ARCHR_RELEASE_LABEL=""
+if [ "${OS_BUILD}" = "official" ]; then
+  ARCHR_RELEASE_LABEL="$(awk -v device="${DEVICE}" -v release="${ARCHR_RELEASE}" \
+    '$1 == device && $2 == release { $1 = $2 = ""; sub(/^ +/, ""); print; exit }' \
+    "${PROJECT_DIR}/${PROJECT}/packages/archr/sources/release-labels" 2>/dev/null)"
+  if [ -n "${ARCHR_RELEASE_LABEL}" ]; then
+    IMAGE_SUFFIX="${IMAGE_SUFFIX:+${IMAGE_SUFFIX}-}$(echo "${ARCHR_RELEASE_LABEL}" | tr -d ' ' | tr '[:upper:]' '[:lower:]')"
+  fi
+fi
+
 if [ -n "${CUSTOM_VERSION}" ]; then
   DISTRO_VERSION="${CUSTOM_VERSION}"
 fi
@@ -178,6 +191,7 @@ OS_NAME="${DISTRONAME}"
 OS_VERSION="${OS_VERSION}"
 OS_BUILD="${OS_BUILD}"
 ARCHR_RELEASE="$([ "${OS_BUILD}" = official ] && echo "${ARCHR_RELEASE}")"
+ARCHR_RELEASE_LABEL="${ARCHR_RELEASE_LABEL}"
 GIT_ORGANIZATION="${GIT_ORGANIZATION}"
 GIT_REPO="${GIT_REPO}"
 BUILD_ID="${GIT_HASH}"
