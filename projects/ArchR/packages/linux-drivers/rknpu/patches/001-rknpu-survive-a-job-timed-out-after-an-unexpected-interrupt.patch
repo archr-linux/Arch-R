@@ -1,0 +1,75 @@
+From: mamaich <mamaich.eng@gmail.com>
+Subject: [PATCH] rknpu: survive a job timed out after an unexpected interrupt
+
+From dArkOS for the RG52 Mini (mamaich/kernel_rk3562 c0c1473, the kernel of
+mamaich/dArkOS_rg52mini), unchanged but for the paths.
+
+rknpu 0.9.x crashed the kernel on the submit after a job timed out:
+rknpu_irq_handler() sets job->irq_entry for every interrupt of the job and
+left it set on the "invalid irq status" path, so a timeout's
+rknpu_job_abort() freed the job while the core still pointed at it (or while
+it was still queued), and the next submit committed freed memory.
+
+- irq_entry cleared on that path, the handler being done with the job;
+- rknpu_job_abort() takes the job off the core's queue if it is still there;
+- the job's queue entries initialised at allocation, and list_del_init() on
+  the "job commit failed" path, so that taking it off is safe.
+
+diff --git a/rknpu_job.c b/rknpu_job.c
+index 23ed8e5..7997915 100644
+--- a/rknpu_job.c
++++ b/rknpu_job.c
+@@ -146,8 +146,11 @@ static inline struct rknpu_job *rknpu_job_alloc(struct rknpu_device *rknpu_dev,
+ 	atomic_set(&job->run_count, job->use_core_num);
+ 	atomic_set(&job->interrupt_count, job->use_core_num);
+ 	job->iommu_domain_id = args->iommu_domain_id;
+-	for (i = 0; i < rknpu_dev->config->num_irqs; i++)
++	for (i = 0; i < rknpu_dev->config->num_irqs; i++) {
+ 		atomic_set(&job->submit_count[i], 0);
++		/* dArkOS: rknpu_job_abort() takes a job off a queue it may still be on */
++		INIT_LIST_HEAD(&job->head[i]);
++	}
+ #ifdef CONFIG_ROCKCHIP_RKNPU_DRM_GEM
+ 	task_obj = (struct rknpu_gem_object *)(uintptr_t)args->task_obj_addr;
+ 	if (task_obj)
+@@ -228,7 +231,7 @@ static inline int rknpu_job_wait(struct rknpu_job *job)
+ 			list_for_each_entry_safe(
+ 				entry, q, &subcore_data->todo_list, head[i]) {
+ 				if (entry == job) {
+-					list_del(&job->head[i]);
++					list_del_init(&job->head[i]);
+ 					break;
+ 				}
+ 			}
+@@ -578,6 +581,16 @@ static void rknpu_job_abort(struct rknpu_job *job)
+ 				subcore_data->task_num -=
+ 					rknpu_get_task_number(job, i);
+ 			}
++			/*
++			 * dArkOS: a job never committed is still on the core's
++			 * queue; it is freed below, and the next submit would
++			 * commit it from there.
++			 */
++			if (!list_empty(&job->head[i])) {
++				list_del_init(&job->head[i]);
++				subcore_data->task_num -=
++					rknpu_get_task_number(job, i);
++			}
+ 		}
+ 	}
+ 	spin_unlock_irqrestore(&rknpu_dev->irq_lock, flags);
+@@ -671,6 +684,14 @@ static inline irqreturn_t rknpu_irq_handler(int irq, void *data, int core_index)
+ 			(REG_READ(rknpu_dev->config->pc_task_status_offset) &
+ 			 rknpu_dev->config->pc_task_number_mask));
+ 		REG_WRITE(RKNPU_INT_CLEAR, RKNPU_OFFSET_INT_CLEAR);
++		/*
++		 * dArkOS: done with the job here. Left true, a timeout's
++		 * rknpu_job_abort() keeps the core pointing at the job it
++		 * frees, and the next submit commits freed memory.
++		 */
++		spin_lock_irqsave(&rknpu_dev->irq_lock, flags);
++		job->irq_entry[core_index] = false;
++		spin_unlock_irqrestore(&rknpu_dev->irq_lock, flags);
+ 		return IRQ_HANDLED;
+ 	}
+ 
