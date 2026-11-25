@@ -888,6 +888,12 @@ case ${EMULATOR} in
         fi
         sed -i "/^ACTIVE_GAME=/c\ACTIVE_GAME=\"${ROMNAME}\"" /storage/.config/PortMaster/mapper.txt
         sed -i "/^ACTIVE_PLATFORM=/c\ACTIVE_PLATFORM=\"${PLATFORM}\"" /storage/.config/PortMaster/mapper.txt
+        # The Debian mode has none of the pad tools mapper.txt uses: the
+        # mapping is made here, and control.txt in there reuses it.
+        if [ "${PORT_COMPAT}" = 1 ]; then
+          rm -f /tmp/gamecontrollerdb.txt
+          /storage/.config/PortMaster/mapper.txt /tmp/gamecontrollerdb.txt /storage/roms/ports/PortMaster >/dev/null 2>>${OUTPUT_LOG}
+        fi
       ;;
       "windows")
         RUNTHIS='${EMUPERF} ${RUN_SHELL} "${ROMNAME}"'
