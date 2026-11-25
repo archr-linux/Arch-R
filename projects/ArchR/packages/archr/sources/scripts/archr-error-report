@@ -628,6 +628,12 @@ unit() {
     common
     section "journal of ${name} (last 200 lines)"
     printf '%s\n' "${JOURNAL}"
+    # archr-update keeps pacman's and pacman-key's own output in its log,
+    # not in the journal: the reason behind "install" or "keyring" is there.
+    if [ "${name}" = archr-update.service ]; then
+      section "archr-update.log (last 120 lines)"
+      tail -n 120 "${ROOT}/storage/.config/archr-update.log" 2>/dev/null
+    fi
   }
   SIGNATURE=$(errors <<<"${JOURNAL}" | tail -n 3 | sign unit "${name}" "$(sed -n 's/^Result=//p' <<<"${show}")")
   queue "${SIGNATURE}" build

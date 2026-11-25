@@ -136,6 +136,7 @@ report unit iwd.service
 fake systemctl 'printf "Result=exit-code\nExecMainCode=1\nExecMainStatus=1\nNRestarts=0\nFragmentPath=/usr/lib/systemd/system/archr-x.service\n"'
 check "unit reported; own, module and recovered units skipped" "$(count "${Q}")" "3"
 check "the unit is what failed" "$(grep -h '^what: archr-x' "${Q}"/*.txt)" "what: archr-x.service"
+check "another unit carries no update log" "$(grep -c 'archr-update.log' "${Q}"/*.txt | awk -F: '{ n += $2 } END { print n }')" "0"
 printf 'Unable to handle kernel NULL pointer dereference at virtual address 0000000000000008\npc : panfrost_job_run+0x24/0x1a0\n' \
   >"${R}/sys/fs/pstore/dmesg-ramoops-0"
 report kernel
@@ -632,5 +633,14 @@ fake systemd-run 'echo "$*" >>"'"${TMP}"'/runs"'
 check "runemu: a port that exited 0 still goes" "$(runemu_report ports 0)" "port 0 7 10 /storage/roms/ports/A.sh -- /storage/roms/ports/A.sh -Pports"
 check "runemu: a game that exited 0 does not" "$(runemu_report gb 0)" ""
 check "runemu: a game that failed does" "$(runemu_report gb 139)" "game 139 7 10 gb x y -- /storage/roms/ports/A.sh -Pports"
+
+# --- a failed update brings the end of its log (own queue and day) ---
+rm -f "${Q:?}"/*.txt "${R:?}/storage/.cache/error-reports/seen" "${R:?}/storage/.cache/error-reports/today"
+fake systemctl 'printf "Result=exit-code\nExecMainCode=1\nExecMainStatus=1\nNRestarts=0\nFragmentPath=/run/systemd/transient/archr-update.service\n"'
+printf 'archr-update: {"phase":"error","reason":"keyring"}\n' >"${TMP}/journal"
+printf '2026-11-25 22:25:00 sync\n==> ERROR: keyring file archr.gpg not found\n' >"${R}/storage/.config/archr-update.log"
+report unit archr-update.service
+check "a failed update brings the end of its log" \
+  "$(cat "${Q}"/*.txt 2>/dev/null | grep -A2 -- '--- archr-update.log' | grep -c 'archr.gpg not found')" "1"
 
 exit ${FAILED}
