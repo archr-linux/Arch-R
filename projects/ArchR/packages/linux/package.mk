@@ -328,7 +328,9 @@ make_target() {
 
       # perf 7.x links libstdc++ for C++ symbol demangling, and libstdc++
       # needs libgcc_s, which the sysroot does not carry: build without it.
-      [ "${DEVICE}" = "RK3562" ] && PERF_BUILD_ARGS+=" NO_DEMANGLE=1"
+      # perf 7.x also builds a Rust test workload when it finds a rustc,
+      # and the toolchain's rustc has no aarch64 std: build without it.
+      [ "${DEVICE}" = "RK3562" ] && PERF_BUILD_ARGS+=" NO_DEMANGLE=1 NO_RUST=1"
 
       WERROR=0 \
       NO_LIBPERL=1 \
