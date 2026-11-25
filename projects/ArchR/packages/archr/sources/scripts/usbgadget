@@ -606,11 +606,29 @@ cleanup_usb_mtp() {
         "${g_mtp}"
 }
 
+# The role switch is found through the UDC, and else in the usb_role class:
+# a DWC3 (RK3562) in the host role has no UDC at all, so a gadget stopped
+# once (usb_stop sets host) could never come back to the device role.
 set_role() {
-	for sw in "${ROOT}/sys/class/udc/${UDC_NAME}"/device/usb_role/*/role; do
+	local sw seen=""
+	for sw in "${ROOT}/sys/class/udc/${UDC_NAME}"/device/usb_role/*/role \
+		"${ROOT}"/sys/class/usb_role/*/role; do
 		[ -e "${sw}" ] || continue
-		if [ "$verbose" -gt "0" ]; then echo "swithing usb role to $1: $sw"; fi
+		sw=$(readlink -f "${sw}")
+		case " ${seen} " in *" ${sw} "*) continue ;; esac
+		seen="${seen} ${sw}"
+		if [ "$verbose" -gt "0" ]; then echo "switching usb role to $1: $sw"; fi
 		echo "$1" > "${sw}"
+	done
+	[ "$1" = device ] || return 0
+	# The UDC appears once the controller is in the device role.
+	local i=0
+	while [ ! -e "${ROOT}/sys/class/udc/${UDC_NAME}" ] || [ -z "${UDC_NAME}" ]; do
+		UDC_NAME=$(ls -1 "${ROOT}/sys/class/udc" 2>/dev/null | head -n1)
+		[ -n "${UDC_NAME}" ] && [ -e "${ROOT}/sys/class/udc/${UDC_NAME}" ] && break
+		i=$((i + 1))
+		[ "${i}" -gt 20 ] && break
+		sleep 0.1
 	done
 }
 
