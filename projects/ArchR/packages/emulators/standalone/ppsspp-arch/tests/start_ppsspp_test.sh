@@ -13,7 +13,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 PKG=$(dirname "${HERE}")
 FUNCTIONS="${PKG}/../../../archr/profile.d/001-functions"
 TMP=$(mktemp -d)
-trap 'rm -rf "${TMP}"' EXIT
+trap '[ -n "${KEEP:-}" ] || rm -rf "${TMP}"' EXIT
 FAILED=0
 fail() { echo "FAIL: $1"; FAILED=1; }
 expect() { [ "$2" = "$3" ] || fail "$1: got '$3', expected '$2'"; }
@@ -199,6 +199,60 @@ run "psp.upscaler=easu"
 expect "easu alone" "FSR-EASU " "$(chain)"
 run "psp.upscaler=off"
 expect "off again" "" "$(chain)"
+
+# NPU upscale (npu-upscale, RK3562 only). No helper, or a helper that says
+# unsupported (every other device): PPSSPP starts as before, ppsspp.ini as is.
+printf '#!/bin/sh\necho "$*" >"%s/ppsspp.args"\n' "${TMP}" >"${TMP}/bin/ppsspp"
+run
+expect "no helper: ppsspp as before" "--pause-menu-exit /roms/psp/Game.iso" "$(cat "${TMP}/ppsspp.args")"
+NPU="${PKG}/../../../graphics/npu-upscale/sources/npu-upscale"
+mkdir -p "${TMP}/npu"
+touch "${TMP}/npu/lib.so" "${TMP}/npu/rt.so" "${TMP}/npu/espcn_x2_480x272.rknn"
+sed -e "s#^RESTORE=.*#RESTORE=${TMP}/npu.restore#" \
+    -e "s#^MODELS=.*#MODELS=${TMP}/npu#" -e "s#^LIB=.*#LIB=${TMP}/npu/lib.so#" -e "s#^RT=.*#RT=${TMP}/npu/rt.so#" \
+    -e 's#^supported() {#supported() { [ -e "'"${TMP}"'/npu.ok" ]; return; #' \
+    -e 's#^down() {#down() { echo down >>"'"${TMP}"'/npu.log"; return; #' \
+    -e 's#^up() {#up() { return 0; #' \
+    -e 's#^    exec "\$@"#    echo "exec ${DARKOS_NPU_SR:-none}" >>"'"${TMP}"'/npu.log"; exec "$@"#' \
+    "${NPU}" >"${TMP}/bin/npu-upscale"
+chmod +x "${TMP}/bin/npu-upscale"
+cp "${INI}" "${TMP}/ini.before"
+run
+expect "unsupported: ppsspp as before" "--pause-menu-exit /roms/psp/Game.iso" "$(cat "${TMP}/ppsspp.args")"
+expect "unsupported: no NPU" "" "$(cat "${TMP}/npu.log" 2>/dev/null)"
+cmp -s "${INI}" "${TMP}/ini.before" || fail "unsupported: ppsspp.ini changed"
+touch "${TMP}/npu.ok"
+# auto: a 1x render without skipping buffer effects is upscaled x2, and
+# PPSSPP's display keys come back after the game.
+ini InternalResolution 1
+ini SkipBufferEffects False
+cp "${INI}" "${TMP}/ini.before"
+run
+expect "auto 1x: x2 through the NPU" "exec x2:480x272 down" "$(tr '\n' ' ' <"${TMP}/npu.log" | sed 's/ $//')"
+# A config from before 1.20 has no [DisplayLayout.Landscape]: it comes back
+# with PPSSPP's own values; everything else as it was.
+sect() { sed -n "/^\[${1}\]/,/^\[/{/^\[/!p}" "$2"; }
+expect "auto 1x: layout back to PPSSPP's defaults" "BufferFiltering = 1|DisplayStretch = False|DisplayIntegerScale = False|DisplayScale = 1.000000|DisplayOffsetX = 0.500000|DisplayOffsetY = 0.500000|DisplayAspectRatio = 1.000000" \
+  "$(sect DisplayLayout.Landscape "${INI}" | tr '\n' '|' | sed 's/|$//')"
+sed '/^\[DisplayLayout.Landscape\]/,$d' "${INI}" | cmp -s - "${TMP}/ini.before" || fail "auto 1x: ppsspp.ini not put back"
+# auto with skip buffer effects (God of War): no NPU
+rm -f "${TMP}/npu.log"
+GAMEFILE="God of War.iso" run
+expect "auto, skip buffer effects: no NPU" "" "$(cat "${TMP}/npu.log" 2>/dev/null)"
+# auto with a post shader (FSR): no NPU
+run "psp.upscaler=fsr"
+expect "auto with FSR: no NPU" "" "$(cat "${TMP}/npu.log" 2>/dev/null)"
+run "psp.upscaler=off"
+rm -f "${TMP}/npu.log"
+# off, and x2 forced on a 2x render with skip buffer effects
+ini InternalResolution 2
+run "psp.npu_upscale=off"
+expect "off: no NPU" "" "$(cat "${TMP}/npu.log" 2>/dev/null)"
+ini SkipBufferEffects True
+cp "${INI}" "${TMP}/ini.before"
+run "psp.npu_upscale=x2"
+expect "x2 forced" "exec x2:480x272 down" "$(tr '\n' ' ' <"${TMP}/npu.log" | sed 's/ $//')"
+cmp -s "${INI}" "${TMP}/ini.before" || fail "x2 forced: ppsspp.ini not put back"
 
 [ ${FAILED} -eq 0 ] && echo "ok   start_ppsspp.sh"
 exit ${FAILED}

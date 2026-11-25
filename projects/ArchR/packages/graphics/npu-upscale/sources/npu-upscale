@@ -174,12 +174,14 @@ ppsspp_restore() {
   rm -f "${RESTORE}"
 }
 
-# auto on the PSP: only a game PPSSPP draws at 1x into a buffer. Skipping
-# buffer effects (God of War) draws straight at the screen's size, and a 2x
-# or bigger render already has the detail: nothing to upscale there.
+# auto on the PSP: only a game PPSSPP draws at 1x into a buffer, with no
+# post shader. Skipping buffer effects (God of War) draws straight at the
+# screen's size, a 2x or bigger render already has the detail, and a post
+# shader (FSR, psp.upscaler) already enlarges the frame: nothing to upscale.
 ppsspp_auto() {
   [ "$(ini_get "$1" Graphics SkipBufferEffects)" != True ] &&
-    [ "$(ini_get "$1" Graphics InternalResolution)" = 1 ]
+    [ "$(ini_get "$1" Graphics InternalResolution)" = 1 ] &&
+    ! awk '/^\[/ { l = ($0 == "[PostShaderList]") } l && /^PostShader[0-9]+ = / { f = 1 } END { exit !f }' "$1"
 }
 
 case "$1" in
