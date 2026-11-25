@@ -349,6 +349,16 @@ function tools_view() {
   ln -s /storage/roms/ports/PortMaster "${v}/PortMaster" 2>/dev/null
 }
 
+# libmali has OpenGL ES alone, yet SDL2 picks its desktop "opengl" renderer
+# on it (the window is made, the first draw crashes in libmali): PortMaster
+# itself closed at once on the RG43V. Ports there get the GLES2 renderer,
+# unless they or the user chose one.
+function port_render_driver() {
+  [ -d "${MALI_MODULE:-/sys/module/mali_kbase}" ] || return 0
+  [ -n "${SDL_RENDER_DRIVER}" ] && return 0
+  export SDL_RENDER_DRIVER=opengles2
+}
+
 function port_exec_bits() {
         local dir file magic
         dir=$(port_dir "$1")
@@ -869,6 +879,7 @@ case ${EMULATOR} in
         port_runtime_ready "${ROMNAME}" || quit 0
         # dArkOS tools live in /roms/tools (= /opt/system/Tools).
         grep -qE '/roms2?/tools|/opt/system/Tools' "${ROMNAME}" 2>/dev/null && tools_view
+        port_render_driver
         if port_compat_wanted "${ROMNAME}"; then
           port_compat_ready "${ROMNAME}" || quit 0
           PORT_COMPAT=1
