@@ -43,11 +43,13 @@ performance 2>/dev/null
 chmod 0666 /sys/class/backlight/*/brightness 2>/dev/null
 chmod 0666 /sys/devices/system/cpu/cpufreq/boost 2>/dev/null
 
-### Disable rumble motor on boot (prevents vibration on boards where PWM0 defaults high)
-if [ -d /sys/class/pwm/pwmchip0 ]; then
-  echo 0 > /sys/class/pwm/pwmchip0/export 2>/dev/null
+### Disable rumble motor on boot (prevents vibration on boards where PWM0 defaults high).
+### Let go of it right after: while exported, the joypad driver can't take
+### its rumble PWM (-EBUSY), and the R36S Soysauce one probes about now.
+if [ -d /sys/class/pwm/pwmchip0 ] && echo 0 > /sys/class/pwm/pwmchip0/export 2>/dev/null; then
   echo 0 > /sys/class/pwm/pwmchip0/pwm0/duty_cycle 2>/dev/null
   echo 0 > /sys/class/pwm/pwmchip0/pwm0/enable 2>/dev/null
+  echo 0 > /sys/class/pwm/pwmchip0/unexport 2>/dev/null
 fi
 
 ### The GPU driver from the start, beside the quirks and the storage: it

@@ -1,0 +1,153 @@
+From: Douglas Teles <dga.teles@gmail.com>
+Subject: [PATCH] singleadc: never fail the joypad over the rumble PWM
+
+autostart exports pwm0 through /sys/class/pwm to switch the motor off on
+boards where it starts high. When that ran before this module probed
+(boot got faster, and 0003 asks for the PWM first), devm_pwm_get()
+answered -EBUSY and the whole probe failed: no controls until a reboot
+where the module won the race.
+
+Wait up to ~0.5 s for a busy PWM, then go on without rumble; only a
+deferral still fails the probe. Cancel the rumble work and stop the
+motor (managed) when the joypad goes away.
+
+Publish joypad_input_g (used by adc-keys for BTN_MODE) only after the
+input device is registered and clear it, managed, before that device
+is freed: a probe that failed after input setup left adc-keys writing
+into a freed input device. Cancel the Miyoo delayed init the same way.
+
+---
+--- a/archr-singleadc-joypad.c	2026-11-25 15:26:48.224783029 -0300
++++ b/archr-singleadc-joypad.c	2026-11-25 15:27:14.984629485 -0300
+@@ -853,18 +853,44 @@
+ }
+ 
+ /*----------------------------------------------------------------------------*/
++static void joypad_rumble_release(void *data)
++{
++	struct joypad *joypad = data;
++
++	cancel_work_sync(&joypad->play_work);
++	pwm_disable(joypad->pwm);
++}
++
+ static int joypad_rumble_setup(struct device *dev, struct joypad *joypad)
+ {
+-	int error;
++	int error, tries = 0;
+ 	struct pwm_state state;
+ 
+-	joypad->pwm = devm_pwm_get(dev, "enable");
+-	if (IS_ERR(joypad->pwm))
+-		return dev_err_probe(dev, PTR_ERR(joypad->pwm),
+-				     "rumble get error\n");
++	/*
++	 * -EBUSY: someone holds the PWM, usually userspace through
++	 * /sys/class/pwm (autostart switches the motor off that way on boards
++	 * where PWM0 starts high). Give it a moment to let go.
++	 */
++	for (;;) {
++		joypad->pwm = devm_pwm_get(dev, "enable");
++		if (!IS_ERR(joypad->pwm) || PTR_ERR(joypad->pwm) != -EBUSY ||
++		    ++tries > 10)
++			break;
++		msleep(50);
++	}
++	if (IS_ERR(joypad->pwm)) {
++		error = PTR_ERR(joypad->pwm);
++		joypad->pwm = NULL;
++		return error;
++	}
+ 
+ 	INIT_WORK(&joypad->play_work, pwm_vibrator_play_work);
+ 
++	/* Runs after the input device is gone, before the PWM is put. */
++	error = devm_add_action_or_reset(dev, joypad_rumble_release, joypad);
++	if (error)
++		return error;
++
+ 	/* Sync up PWM state and ensure it is off. */
+ 	pwm_init_state(joypad->pwm, &state);
+ 	state.enabled = false;
+@@ -885,6 +911,12 @@
+ }
+ 
+ /*----------------------------------------------------------------------------*/
++static void joypad_input_g_clear(void *data)
++{
++	if (joypad_input_g == data)
++		joypad_input_g = NULL;
++}
++
+ static int joypad_input_setup(struct device *dev, struct joypad *joypad)
+ {
+ 	struct input_polled_dev *poll_dev;
+@@ -911,8 +943,6 @@
+ 
+ 	input->name = DRV_NAME;
+ 
+-	joypad_input_g=input;
+-
+ 	device_property_read_string(dev, "joypad-name", &input->name);
+ 	input->phys = DRV_NAME"/input0";
+ 
+@@ -1005,7 +1035,14 @@
+ 		return error;
+ 	}
+ 
+-	return 0;
++	/*
++	 * adc-keys reports BTN_MODE through this pointer: publish it only
++	 * once the device is registered, and take it back (managed, so before
++	 * the device is freed) when the joypad goes away or a later probe step
++	 * fails; a stale pointer there writes into freed memory.
++	 */
++	joypad_input_g = input;
++	return devm_add_action_or_reset(dev, joypad_input_g_clear, input);
+ }
+ 
+ /*
+@@ -1409,6 +1446,13 @@
+ 
+ static SIMPLE_DEV_PM_OPS(joypad_pm_ops, joypad_suspend, joypad_resume);
+ 
++static void joypad_miyoo_cancel(void *data)
++{
++	struct joypad *joypad = data;
++
++	cancel_delayed_work_sync(&joypad->miyoo_init_work);
++}
++
+ /*----------------------------------------------------------------------------*/
+ static int joypad_probe(struct platform_device *pdev)
+ {
+@@ -1447,9 +1491,16 @@
+ 	 */
+ 	if (joypad->has_rumble) {
+ 		error = joypad_rumble_setup(dev, joypad);
+-		if (error)
+-			return dev_err_probe(dev, error, "rumble setup failed\n");
+-		joypad->rumble_enabled = true;
++		if (error == -EPROBE_DEFER)
++			return dev_err_probe(dev, error, "rumble not ready\n");
++		if (error) {
++			/* The controls matter more than the motor. */
++			dev_warn(dev, "rumble unavailable (%d), going on without it\n",
++				 error);
++			joypad->has_rumble = false;
++		} else {
++			joypad->rumble_enabled = true;
++		}
+ 	}
+ 
+ 	/* poll input device setup */
+@@ -1471,6 +1522,9 @@
+ 		 * thread, we schedule a delayed work for 10 seconds.
+ 		 */
+ 		INIT_DELAYED_WORK(&joypad->miyoo_init_work, miyoo_delayed_init_workfn);
++		error = devm_add_action_or_reset(dev, joypad_miyoo_cancel, joypad);
++		if (error)
++			return error;
+ 		schedule_delayed_work(&joypad->miyoo_init_work, 10 * HZ);
+ 	}
+ 
