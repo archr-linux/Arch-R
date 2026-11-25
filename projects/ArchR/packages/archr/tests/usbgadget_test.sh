@@ -260,4 +260,25 @@ check "concurrent stop: supervisor gone" '! unit_up && ! pgrep -f "${SCRIPT} sup
 check "concurrent stop: Wi-Fi released once" '[ "$(field wifi)" = free ] && [ "$(calls "wifictl enable")" = $((ons + 1)) ]'
 wait_for "concurrent stop: function off" '[ "$(field mode)" = disabled ]'
 
+
+# RK3562 (DWC3): in the host role there is no UDC; the role switch is found
+# in the usb_role class and the device role brings the UDC back.
+S="${T}/rs"
+mkdir -p "${S}/sys/class/usb_role/fe500000.usb-role-switch" "${S}/sys/class/udc"
+echo host >"${S}/sys/class/usb_role/fe500000.usb-role-switch/role"
+fn=$(sed -n '/^set_role() {/,/^}/p' "${SCRIPT}")
+role_run() {
+  ( ROOT=${S} UDC_NAME="" verbose=0
+    eval "${fn}"
+    # The kernel adds the UDC when the role becomes device.
+    sleep() { mkdir -p "${ROOT}/sys/class/udc/fe500000.usb"; }
+    set_role "$1"
+    echo "${UDC_NAME}" )
+}
+got=$(role_run device)
+check "no UDC: role switch found in usb_role" '[ "$(cat "${S}/sys/class/usb_role/fe500000.usb-role-switch/role")" = device ]'
+check "no UDC: the UDC that appears is used" '[ "${got}" = fe500000.usb ]'
+role_run host >/dev/null
+check "no UDC: back to host" '[ "$(cat "${S}/sys/class/usb_role/fe500000.usb-role-switch/role")" = host ]'
+
 exit "${FAILED}"
