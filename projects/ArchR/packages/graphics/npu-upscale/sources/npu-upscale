@@ -8,18 +8,34 @@
 # a super-resolution network on the RK3562's NPU instead (libnpusr_gles.so,
 # preloaded; nothing in the emulator changes).
 #
-#   npu-upscale status                  can it run here (exit 0) or why not
-#   npu-upscale up                      load the NPU driver (rknpu stays off at boot)
-#   npu-upscale exec SPEC -- CMD ARGS   up, then CMD with the upscale on
+#   npu-upscale supported               exit 0 only where it can run (the launcher shows the option then)
+#   npu-upscale systems                 the platforms it works for, one a line
+#   npu-upscale spec PLATFORM SETTING   the upscale for a game (setting npu_upscale: off auto x2 x3);
+#                                       prints e.g. x3:auto, nothing (exit 1) when it is off
+#   npu-upscale up | down               load the NPU driver / unload it (the NPU rail goes off)
+#   npu-upscale exec [--lib32] SPEC -- CMD ARGS
+#                                       up, then CMD with the upscale on (--lib32: a 32-bit CMD)
+#   npu-upscale retroarch-append FILE   what RetroArch needs for the run (integer scale, square
+#                                       pixels, nearest, no shader or overlay), added to its append config
+#   npu-upscale ppsspp-ini set|restore INI [force]
+#                                       PPSSPP at 1x, nearest, integer scale for the run, and put back
+#   npu-upscale ppsspp-auto INI         exit 0 when PPSSPP draws a 1x frame (no skip buffer effects)
 #
-# SPEC is libnpusr_gles.so's DARKOS_NPU_SR: x2:480x272 (the PSP at 960x544),
-# x3:auto (PS1 and the 16-bit consoles at x3, the size from the viewport).
-# Without the NPU, the driver, the runtime or the model, exec runs CMD as it
-# is. NPU_UPSCALE_STATS=1 prints the library's counters every 5 s.
+# The PSP is upscaled x2 (960x544; x3 needs 1440x816), the other systems x3
+# from the size RetroArch draws the frame with (256, 304, 320, 368 by 224 or
+# 240: 960x720 at most). Without the NPU, the driver, the runtime or the model,
+# exec runs CMD as it is. NPU_UPSCALE_STATS=1 prints the library's counters
+# every 5 s.
 
 MODELS=/usr/share/npu-upscale
 LIB=/usr/lib/libnpusr_gles.so
 RT=/usr/lib/librknnrt.so
+LIB32=/usr/lib32/libnpusr_gles.so
+RT32=/usr/lib32/librknnrt.so
+RESTORE=/storage/.config/npu-upscale/ppsspp.restore
+
+SYSTEMS="psp pspminis psx megadrive megadrive-japan megadriveh genesis genh megacd segacd sega32x
+snes sfc snesh snesmsu1 nes nesh famicom fds pcengine pcenginecd tg16 tg16cd supergrafx sgfx neogeo neocd"
 
 log() { echo "npu-upscale: $*" >&2; }
 
@@ -31,14 +47,14 @@ npu_dev() {
   [ -e /sys/bus/platform/drivers/RKNPU/ff300000.npu ]
 }
 
-status() {
-  npu_node || { log "no RK3562 NPU in the device tree"; return 1; }
-  [ -f "${LIB}" ] && [ -f "${RT}" ] || { log "libnpusr_gles.so or librknnrt.so missing"; return 1; }
-  return 0
+supported() {
+  npu_node || return 1
+  [ -f "${LIB}" ] && [ -f "${RT}" ] || return 1
+  npu_dev || modinfo rknpu >/dev/null 2>&1
 }
 
 up() {
-  status || return 1
+  supported || { log "no NPU stack here"; return 1; }
   npu_dev && return 0
   modprobe rknpu 2>/dev/null
   for i in 1 2 3 4 5 6 7 8 9 10; do
@@ -49,8 +65,46 @@ up() {
   return 1
 }
 
-# the model file the library will open for SPEC (fixed sizes only)
-model_for() {
+# The NPU off after the game: the driver goes, its power domain and rail with it.
+down() {
+  grep -q '^rknpu ' /proc/modules || return 0
+  modprobe -r rknpu 2>/dev/null || log "rknpu still in use"
+}
+
+is_system() {
+  for s in ${SYSTEMS}; do [ "${s}" = "$1" ] && return 0; done
+  return 1
+}
+
+screen_height() {
+  for m in /sys/class/drm/card*-*/modes; do
+    [ "$(cat "${m%/modes}/status" 2>/dev/null)" = connected ] || continue
+    head -n1 "${m}" | cut -dx -f2 | tr -cd '0-9'
+    return
+  done
+  echo 0
+}
+
+# SPEC for PLATFORM and the setting. off: nothing. The PSP has an x2 model
+# (and an x3 that only a 816-line screen fits: x2 on these panels); the rest
+# have x3 models only (x2 there is off).
+spec() {
+  is_system "$1" || return 1
+  case "$2" in
+    off | 0) return 1 ;;
+  esac
+  case "$1" in
+    psp | pspminis)
+      if [ "$2" = x3 ] && [ "$(screen_height)" -ge 816 ]; then echo x3:480x272; else echo x2:480x272; fi
+      ;;
+    *)
+      [ "$2" = x2 ] && return 1
+      echo x3:auto
+      ;;
+  esac
+}
+
+model_ok() {
   case "$1" in
     x*:auto*) return 0 ;;
     x[234]:*x*)
@@ -61,21 +115,112 @@ model_for() {
   esac
 }
 
+# ini_get INI SECTION KEY / ini_put INI SECTION KEY VALUE: one key of one
+# section (the section and the key are added when missing)
+ini_get() {
+  awk -v sec="[$2]" -v key="$3" '/^\[/ { in_sec = ($0 == sec) }
+    in_sec && index($0, key " = ") == 1 { print substr($0, length(key) + 4); exit }' "$1"
+}
+ini_put() {
+  awk -v sec="[$2]" -v key="$3" -v val="$4" '
+    /^\[/ { if (in_sec && !done) { print key " = " val; done = 1 } in_sec = ($0 == sec); if (in_sec) seen = 1 }
+    in_sec && index($0, key " = ") == 1 { if (!done) print key " = " val; done = 1; next }
+    { print }
+    END { if (!seen) print sec; if (!done) print key " = " val }' "$1" >"$1.npu" && mv "$1.npu" "$1"
+}
+
+PPSSPP_DEFAULTS="BufferFiltering=1 DisplayStretch=False DisplayIntegerScale=False DisplayScale=1.000000
+DisplayOffsetX=0.500000 DisplayOffsetY=0.500000 DisplayAspectRatio=1.000000"
+PPSSPP_DISPLAY="BufferFiltering=2 DisplayStretch=False DisplayIntegerScale=True DisplayScale=1.000000
+DisplayOffsetX=0.500000 DisplayOffsetY=0.500000 DisplayAspectRatio=1.000000"
+
+# The keys PPSSPP gets for the run, the values they had kept in RESTORE (a
+# run that never returned, a power-off, is put back on the next one).
+# force (x2/x3 chosen, not auto): the game is also drawn at 1x without
+# skipping buffer effects, which the upscale needs.
+ppsspp_set() {
+  ini=$1
+  ppsspp_restore "${ini}"
+  mkdir -p "${RESTORE%/*}"
+  : >"${RESTORE}"
+  keys=""
+  for kv in ${PPSSPP_DISPLAY}; do
+    keys="${keys} DisplayLayout.Landscape:${kv} Graphics:${kv}"
+  done
+  [ "$2" = force ] && keys="${keys} Graphics:InternalResolution=1 Graphics:SkipBufferEffects=False"
+  for e in ${keys}; do
+    sec=${e%%:*}; kv=${e#*:}; key=${kv%%=*}; val=${kv#*=}
+    old=$(ini_get "${ini}" "${sec}" "${key}")
+    # no [DisplayLayout.Landscape] yet (a config from before 1.20): PPSSPP
+    # takes the [Graphics] value, else its default, and that comes back
+    if [ "${sec}" = DisplayLayout.Landscape ] && [ -z "${old}" ]; then
+      old=$(ini_get "${ini}" Graphics "${key}")
+      [ -z "${old}" ] && for d in ${PPSSPP_DEFAULTS}; do [ "${d%%=*}" = "${key}" ] && old=${d#*=}; done
+    fi
+    # [Graphics] holds the layout only in configs from before 1.20
+    [ "${sec}" = Graphics ] && [ -z "${old}" ] && [ "${key}" != InternalResolution ] &&
+      [ "${key}" != SkipBufferEffects ] && continue
+    echo "${sec}:${key}=${old}" >>"${RESTORE}"
+    ini_put "${ini}" "${sec}" "${key}" "${val}"
+  done
+}
+
+ppsspp_restore() {
+  [ -s "${RESTORE}" ] || return 0
+  while IFS= read -r e; do
+    sec=${e%%:*}; kv=${e#*:}; key=${kv%%=*}; val=${kv#*=}
+    [ -n "${val}" ] && ini_put "$1" "${sec}" "${key}" "${val}"
+  done <"${RESTORE}"
+  rm -f "${RESTORE}"
+}
+
+# auto on the PSP: only a game PPSSPP draws at 1x into a buffer. Skipping
+# buffer effects (God of War) draws straight at the screen's size, and a 2x
+# or bigger render already has the detail: nothing to upscale there.
+ppsspp_auto() {
+  [ "$(ini_get "$1" Graphics SkipBufferEffects)" != True ] &&
+    [ "$(ini_get "$1" Graphics InternalResolution)" = 1 ]
+}
+
 case "$1" in
-  status) status ;;
+  supported) supported ;;
+  systems) for s in ${SYSTEMS}; do echo "${s}"; done ;;
+  spec) spec "$2" "${3:-auto}" ;;
   up) up ;;
+  down) down ;;
+  retroarch-append)
+    cat >>"$2" <<'EOF'
+video_driver = "gl"
+video_scale_integer = "true"
+video_scale_integer_overscale = "false"
+aspect_ratio_index = "21"
+video_smooth = "false"
+video_shader_enable = "false"
+input_overlay_enable = "false"
+EOF
+    ;;
+  ppsspp-ini)
+    case "$2" in
+      set) ppsspp_set "$3" "$4" ;;
+      restore) ppsspp_restore "$3" ;;
+    esac
+    ;;
+  ppsspp-auto) ppsspp_auto "$2" ;;
   exec)
-    SPEC=$2
-    shift 2
+    shift
+    L=${LIB} R=${RT}
+    [ "$1" = --lib32 ] && { L=${LIB32} R=${RT32}; shift; }
+    SPEC=$1
+    shift
     [ "$1" = "--" ] && shift
-    if up && model_for "${SPEC}"; then
-      export LD_PRELOAD="${LIB}${LD_PRELOAD:+ ${LD_PRELOAD}}"
+    if [ -f "${L}" ] && [ -f "${R}" ] && up && model_ok "${SPEC}"; then
+      export LD_PRELOAD="${L}${LD_PRELOAD:+ ${LD_PRELOAD}}"
       export DARKOS_NPU_SR="${SPEC}"
       case "${SPEC}" in
         *:auto*) export DARKOS_NPU_SR_MODEL="${MODELS}/x{S}_{W}x{H}.rknn" ;;
         *) export DARKOS_NPU_SR_MODEL="${MODELS}/espcn_x%d_%dx%d.rknn" ;;
       esac
-      export DARKOS_NPU_SR_LIB="${RT}"
+      export DARKOS_NPU_SR_LIB="${R}"
       [ "${NPU_UPSCALE_STATS}" = 1 ] && export DARKOS_NPU_SR_STATS=1
     else
       log "running without the upscale"
