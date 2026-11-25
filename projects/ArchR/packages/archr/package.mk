@@ -16,7 +16,7 @@ PKG_NAME="archr"
 # versions; the install silently skipped a PKG_INSTALL dir that did not
 # exist and the image assembly then failed in post_install.
 PKG_VERSION="$(date +%Y%m%d)"
-PKG_REV="74"
+PKG_REV="75"
 PKG_LICENSE="GPLv2"
 PKG_SITE=""
 PKG_URL=""
@@ -116,8 +116,11 @@ EOF
   mkdir -p ${INSTALL}/home
   ln -sfn /storage ${INSTALL}/home/ark
   # Tools live in /roms/tools, bound on /opt/system/Tools (dArkOS fstab).
+  # The link goes to a view runemu.sh builds from /roms/tools, with
+  # PortMaster always Arch R's: a PortMaster a dArkOS card left in
+  # /roms/tools would otherwise be what every port's header picks.
   mkdir -p ${INSTALL}/opt/system
-  ln -sfn /storage/roms/tools ${INSTALL}/opt/system/Tools
+  ln -sfn /run/archr/tools ${INSTALL}/opt/system/Tools
   # Their menus' helpers: gptokeyb, its key map (as dArkOS's
   # /opt/inttools/keys.gptk, by Christian Haitian) and the pad database.
   mkdir -p ${INSTALL}/opt/inttools

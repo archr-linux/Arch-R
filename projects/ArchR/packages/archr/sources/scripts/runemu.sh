@@ -332,6 +332,23 @@ function port_programs() {
                 -o -name '*.aarch64' -o -name '*.arm64' -o -name '*.armhf' -o -name '*.bin' \
                 -o -name '*.elf' -o -name '*.x86' -o -name '*.x86_64' \) -size +0 -print0 2>/dev/null
 }
+
+# /opt/system/Tools (dArkOS) is /run/archr/tools: one link per entry of
+# /roms/tools, except PortMaster, which is always Arch R's. A card from
+# dArkOS keeps its own PortMaster in /roms/tools, and every port's header
+# takes /opt/system/Tools/PortMaster first: its control.txt breaks here.
+function tools_view() {
+  local v=/run/archr/tools e
+  mkdir -p /storage/roms/tools "${v}" || return 0
+  find "${v}" -mindepth 1 -maxdepth 1 -type l -delete 2>/dev/null
+  for e in /storage/roms/tools/* /storage/roms/tools/.[!.]*; do
+    [ -e "${e}" ] || continue
+    [ "${e##*/}" = PortMaster ] && continue
+    ln -s "${e}" "${v}/${e##*/}" 2>/dev/null
+  done
+  ln -s /storage/roms/ports/PortMaster "${v}/PortMaster" 2>/dev/null
+}
+
 function port_exec_bits() {
         local dir file magic
         dir=$(port_dir "$1")
@@ -851,7 +868,7 @@ case ${EMULATOR} in
         port_exec_bits "${ROMNAME}"
         port_runtime_ready "${ROMNAME}" || quit 0
         # dArkOS tools live in /roms/tools (= /opt/system/Tools).
-        grep -qE '/roms2?/tools|/opt/system/Tools' "${ROMNAME}" 2>/dev/null && mkdir -p /storage/roms/tools
+        grep -qE '/roms2?/tools|/opt/system/Tools' "${ROMNAME}" 2>/dev/null && tools_view
         if port_compat_wanted "${ROMNAME}"; then
           port_compat_ready "${ROMNAME}" || quit 0
           PORT_COMPAT=1
