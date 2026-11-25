@@ -89,9 +89,9 @@ Download the latest images from [Releases](https://github.com/archr-linux/Arch-R
 
 - **Original image** (`ArchR-R36S.aarch64-<date>-original.img.gz`) for genuine R36S and compatible boards.
 - **Clone image** (`ArchR-R36S.aarch64-<date>-clone.img.gz`) for K36 clones and compatible boards.
-- **AISLPC image** (`ArchR-RK3562.aarch64-<date>-aislpc.img.gz`) for the RG43V PRO and RG52 MINI.
+- **AISLPC image** (`ArchR-RK3562.aarch64-<date>-beta1-aislpc.img.gz`) for the RG43V PRO and RG52 MINI.
 
-For the R36S family the easiest path is the [Arch R Flasher](https://github.com/archr-linux/archr-flasher), which downloads, verifies, flashes and installs your panel overlay in one go. Manual flashing works for every image:
+The easiest path is the [Arch R Flasher](https://github.com/archr-linux/archr-flasher) (1.4.0 or later), which downloads, verifies and flashes the image: on the R36S family it also installs your panel overlay, and on the AISLPC consoles it sets the board's `extlinux.conf` for the model you pick. Manual flashing works for every image:
 
 ```bash
 gzip -d ArchR-<device>.aarch64-<date>-<variant>.img.gz
@@ -99,7 +99,7 @@ sudo dd if=ArchR-<device>.aarch64-<date>-<variant>.img of=/dev/sdX bs=4M conv=fs
 sync
 ```
 
-**RG52 MINI:** the AISLPC image starts as an RG43V PRO (1024x768). Before the first boot, open the `ARCHR` partition and copy `extlinux/extlinux.conf.rg52-mini` over `extlinux/extlinux.conf`. The same folder has `extlinux.conf.rg43v-pro` (the default) and `extlinux.conf.rg43v-pro-1024x600` (that screen is not supported yet), and a `README.txt` listing them.
+**RG52 MINI (manual flashing):** the AISLPC image starts as an RG43V PRO (1024x768). Before the first boot, open the `ARCHR` partition and copy `extlinux/extlinux.conf.rg52-mini` over `extlinux/extlinux.conf`. The same folder has `extlinux.conf.rg43v-pro` (the default) and `extlinux.conf.rg43v-pro-1024x600` (that screen is not supported yet), and a `README.txt` listing them.
 
 **microSD card: 32 GB or larger is recommended.** The first boot gives the system its own partitions and puts the ROMs on an exFAT partition (`ARCHR_ROMS`) that opens on any computer. Cards of 16 GB or less have no room for it and keep the older layout, with the ROMs inside the ext4 `STORAGE` partition: everything works, but the ROMs are only reachable from a PC over the network (Samba/SSH). 8 GB is the minimum.
 
