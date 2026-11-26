@@ -5,16 +5,20 @@
 
 PKG_NAME="bash"
 PKG_VERSION="5.3"
+PKG_REV="2"
 PKG_LICENSE="GPL"
 PKG_SITE="http://www.gnu.org/software/bash/"
 PKG_URL="https://mirrors.kernel.org/gnu/bash/${PKG_NAME}-${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain ncurses readline"
 PKG_LONGDESC="The GNU Bourne Again shell."
 
+# The bundled readline, as Debian does: ports put their own libreadline.so.8
+# (often an older one) on LD_LIBRARY_PATH, and a bash linked to the shared
+# one then dies on every sh it starts (undefined symbol rl_full_quoting_desired).
 PKG_CONFIGURE_OPTS_TARGET="--with-curses \
                            --enable-readline \
                            --without-bash-malloc \
-                           --with-installed-readline"
+                           --without-installed-readline"
 
 pre_configure_target() {
   export CFLAGS_FOR_BUILD="${CFLAGS_FOR_BUILD} -std=gnu17"
