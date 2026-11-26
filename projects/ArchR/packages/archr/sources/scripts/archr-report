@@ -212,6 +212,10 @@ state() {
     END { printf "memory: %d MB free of %d MB, swap %d MB used\n", a / 1024, t / 1024, (st - sf) / 1024 }' \
     "${ROOT}/proc/meminfo" 2>/dev/null
   df -Pm "${ROOT}/storage" 2>/dev/null | awk 'NR == 2 { printf "storage: %d MB free of %d MB\n", $4, $2 }'
+  # The ROMs often live on their own (exFAT) partition or card: a full one
+  # makes ports fail with "No space left on device" while storage looks fine.
+  df -Pm "${ROOT}/storage/roms" 2>/dev/null | awk -v s="$(df -P "${ROOT}/storage" 2>/dev/null | awk 'NR == 2 { print $1 }')" \
+    'NR == 2 && $1 != s { printf "roms: %d MB free of %d MB\n", $4, $2 }'
   temp=$(cat "${ROOT}"/sys/class/thermal/thermal_zone0/temp 2>/dev/null)
   [ -n "${temp}" ] && echo "temperature: $((temp / 1000)).$((temp % 1000 / 100)) C"
   for f in "${ROOT}"/sys/class/power_supply/*; do
