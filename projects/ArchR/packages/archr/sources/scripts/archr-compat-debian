@@ -216,6 +216,14 @@ host_tools() {
   for t in maxperf normperf perfmax perfnorm show_splash.sh; do
     printf '#!/bin/sh\nexit 0\n' >"${d}/shims/${t}"
   done
+  # The runtime has no mount (ports mount their PortMaster runtimes, such as
+  # weston_pkg) and no lsusb (device_info.txt): Arch R's, only while the
+  # runtime lacks them. --argv0 keeps the name busybox picks its applet by.
+  for t in mount umount lsusb; do
+    [ -x "/usr/bin/${t}" ] && [ ! -e "${d%/.archr}/usr/bin/${t}" ] || continue
+    printf '#!/bin/sh\nexec /.host%s --library-path /.host/usr/lib --argv0 %s /.host/usr/bin/%s "$@"\n' \
+      "${HOST_LD}" "${t}" "${t}" >"${d}/shims/${t}"
+  done
   chmod 0755 "${d}"/bin/* "${d}"/shims/* 2>/dev/null
 }
 
