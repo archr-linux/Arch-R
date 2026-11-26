@@ -134,8 +134,14 @@ get_controls() {
         /storage/.config/PortMaster/mapper.txt ${SDL_GAMECONTROLLERCONFIG_FILE} ${controlfolder}
     fi
 
-    # Set compatability libs
-    export LD_LIBRARY_PATH=${clibs}
+    # Set compatability libs. In the Debian mode /.archr/gl holds Arch R's
+    # GL, GBM and SDL2 for the driver in use: dropping it left SDL2 without
+    # libgbm.so.1 on libmali (KPlayer).
+    if [ "${ARCHR_COMPAT}" = debian ]; then
+        export LD_LIBRARY_PATH=${clibs}:/.archr/gl
+    else
+        export LD_LIBRARY_PATH=${clibs}
+    fi
 
     # Some ports want sdl_controllerconfig (to set SDL_GAMECONTROLLERCONFIG), so let's fill it in
     sdl_controllerconfig="$(< "${SDL_GAMECONTROLLERCONFIG_FILE}")"
