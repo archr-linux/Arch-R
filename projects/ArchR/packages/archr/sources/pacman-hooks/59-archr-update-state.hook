@@ -1,0 +1,19 @@
+# /var is a tmpfs, so the update archr-update records (update-id, version
+# in /var/lib/archr-update) was lost at every boot: Settings and the error
+# reports showed the image's version until the next online check, and a
+# console with no network never got it back. The state now lives on
+# /storage (tmpfiles.d/z_02_archr-fhs-bridges.conf links it at boot).
+# This moves the current boot's copy there and makes the link at once,
+# before archr-update records the update it is installing.
+# pacman reads hooks again at PostTransaction, so this one also runs in
+# the transaction that installs it.
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Package
+Target = archr
+
+[Action]
+Description = Keeping the update state on the card...
+When = PostTransaction
+Exec = /bin/sh -c 'd=/var/lib/archr-update; s=/storage/.cache/archr-update; mkdir -p "$s" || exit 0; if [ -d "$d" ] && [ ! -L "$d" ]; then cp -an "$d"/. "$s"/ 2>/dev/null; rm -rf "$d"; fi; [ -L "$d" ] || ln -s "$s" "$d"; true'
