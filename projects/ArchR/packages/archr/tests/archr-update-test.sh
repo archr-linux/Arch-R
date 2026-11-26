@@ -106,6 +106,20 @@ case "$1" in
       mv "${PACMAN_CACHE}/download-XyZ/$f.part" "${PACMAN_CACHE}/$f"
     done <"${FAKE}/offered"
     rmdir "${PACMAN_CACHE}/download-XyZ" ;;
+  -S)
+    # One named package of the upgrade (the kernel first): as -Su, only it.
+    echo "resolving dependencies..."
+    CACHE=$([ -n "${CONF}" ] && sed -n 's#^CacheDir = ##p' "${CONF}")
+    while read -r n v s; do
+      case " $* " in *" $n "*) ;; *) continue ;; esac
+      [ -n "${CACHE}" ] && [ ! -f "${CACHE}/$n-$v-aarch64.pkg.tar.zst" ] &&
+        { echo "error: failed retrieving file '$n-$v-aarch64.pkg.tar.zst' from file:///x : Couldn't open file"; exit 1; }
+      echo "upgrading $n..."
+      echo "$n" >>"${FAKE}/done-S"
+      sleep "${FAKE_STEP:-0.3}"
+    done <"${FAKE}/offered"
+    echo ":: Running post-transaction hooks..."
+    echo "(1/1) Syncing the kernel to the boot partition..." ;;
   -Su)
     echo ":: Starting full system upgrade..."
     echo "checking package integrity..."
@@ -128,6 +142,7 @@ case "$1" in
     while read -r n v s; do
       [ -n "${CACHE}" ] && [ ! -f "${CACHE}/$n-$v-aarch64.pkg.tar.zst" ] &&
         { echo "error: failed retrieving file '$n-$v-aarch64.pkg.tar.zst' from file:///x : Couldn't open file"; exit 1; }
+      grep -qx "$n" "${FAKE}/done-S" 2>/dev/null && continue
       echo "upgrading $n..."
       [ -n "${FAKE_INSTALL_FAIL:-}" ] && { echo "error: failed to commit transaction (conflicting files)"; exit 1; }
       sleep "${FAKE_STEP:-0.3}"
@@ -207,7 +222,7 @@ wait_for() {
   done
 }
 reset() {
-  rm -rf "${TMP}/cache"/* "${TMP}/state" "${TMP}/calls" "${TMP}/installed-ok" "${TMP}/inhibit" "${TMP}/failed-once" "${TMP}/drops"
+  rm -rf "${TMP}/cache"/* "${TMP}/state" "${TMP}/calls" "${TMP}/done-S" "${TMP}/installed-ok" "${TMP}/inhibit" "${TMP}/failed-once" "${TMP}/drops"
 }
 
 ### check --json
@@ -288,7 +303,7 @@ for line in sys.stdin:
     if not seen or seen[-1] != phase:
         seen.append(phase)
 print(" ".join(seen))')
-check "phases in order" "${PHASES}" "sync download install hooks done"
+check "phases in order" "${PHASES}" "sync download install hooks install hooks done"
 check "download grows to the total" "$(printf '%s\n' "${OUT}" | python3 -c '
 import json, sys
 d = [json.loads(l) for l in sys.stdin if "\"download\"" in l]
@@ -303,7 +318,8 @@ check "done reports the reboot and versions" "$(field reboot_reason <<<"${OUT}")
   "kernel 2.1.1 2.1.2 2"
 check "new version recorded" "$(cat "${TMP}/state/version")" 2.1.2
 check "download and install are separate" "$(grep -o 'pacman -S[a-zA-Z]*' "${TMP}/calls" | tr '\n' ' ')" \
-  "pacman -Sy pacman -Sup pacman -Suw pacman -Su "
+  "pacman -Sy pacman -Sup pacman -Suw pacman -S pacman -Su "
+check "the kernel goes first, alone, in its own transaction" "$(grep "^pacman -S " "${TMP}/calls" | cut -d" " -f2-4)" "-S --needed linux"
 check "the progress file holds the same lines" "$(cat "${TMP}/run/progress")" "${OUT}"
 check "install holds a sleep, shutdown and keys inhibitor" "$(cut -d' ' -f1-2 "${TMP}/inhibit")" \
   "--what=sleep:shutdown:handle-power-key:handle-suspend-key --mode=block"
@@ -357,12 +373,13 @@ check "unowned files in the way: kept aside" \
 check "unowned files in the way: logged" "$(grep -c 'no package owns it' "${TMP}/log/archr-update.log")" 2
 reset
 OUT=$(FAKE_CONFLICT_OWNED=1 run MOVED_DIR="${TMP}/moved2")
+# The kernel went first, alone: the failed long transaction leaves it changed.
 check "a file another package owns: not moved, named in the error" \
   "$(field reason <<<"${OUT}")|$(field line <<<"${OUT}")|$(field changed <<<"${OUT}")|$(grep -c 'pacman -Su ' "${TMP}/calls")|$([ -e "${TMP}/moved2" ] && echo moved || echo none)" \
-  "install|error: failed to commit transaction (conflicting files): util-linux: /usr/bin/flock exists in filesystem (owned by busybox)|false|1|none"
+  "install|error: failed to commit transaction (conflicting files): util-linux: /usr/bin/flock exists in filesystem (owned by busybox)|true|1|none"
 reset
 OUT=$(FAKE_FULL=1 run)
-check "install without room: space" "$(field reason <<<"${OUT}")|$(field changed <<<"${OUT}")" "space|false"
+check "install without room: space" "$(field reason <<<"${OUT}")|$(field changed <<<"${OUT}")" "space|true"
 reset
 OUT=$(FAKE_FREE_KB=10 run)
 check "no room to download: space before pacman" "$(field reason <<<"${OUT}") $(grep -c 'pacman -Suw' "${TMP}/calls")" "space 0"
@@ -502,11 +519,11 @@ for line in sys.stdin:
     if not seen or seen[-1] != phase:
         seen.append(phase)
 print(" ".join(seen))')
-check "update --from: phases" "${PHASES}" "extract sync install hooks done"
+check "update --from: phases" "${PHASES}" "extract sync install hooks install hooks done"
 check "update --from: extract reaches 100" "$(grep '"extract"' <<<"${OUT}" | field percent) $(grep '"extract"' <<<"${OUT}" | field total)" "100 ${SIZE}"
 check "update --from: done" "$(field count <<<"${OUT}") $(field reboot_reason <<<"${OUT}") $(field new_version <<<"${OUT}")" "2 kernel 20261113.4"
 check "update --from: no download, no curl" "$(grep -o '^pacman -S[a-zA-Z]*\|^curl' "${TMP}/calls" | tr '\n' ' ')" \
-  "pacman -Syy pacman -Sup pacman -Su "
+  "pacman -Syy pacman -Sup pacman -S pacman -Su "
 check "update --from: [archr] served from the work dir" "$(sed -n '/^\[archr\]/,$p' "${TMP}/conf-used" | grep -v '^#' | grep -v '^$')" \
   "[archr]
 Server = file://${TMP}/storage/.archr-update-offline"

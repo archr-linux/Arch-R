@@ -395,6 +395,18 @@ function port_runtimes() {
 function port_runtime_present() {
         [ -f "${PM_DIR}/libs/$1.squashfs" ] || [ -e "${PM_DIR}/libs/$1" ] || [ -d "${PM_DIR}/runtimes/$1" ]
 }
+# A runtime cut short (a download that stopped, a copy from the PC that did
+# not finish) cannot mount, and the port dies on it with no clear reason.
+# The squashfs superblock holds the filesystem's size (bytes_used, 8 bytes
+# at offset 40): a smaller file, or one that is no squashfs, is broken.
+function port_runtime_broken() {
+        local f="${PM_DIR}/libs/$1.squashfs" used size
+        [ -f "${f}" ] || return 1
+        [ "$(head -c 4 "${f}" 2>/dev/null)" = hsqs ] || return 0
+        used=$(od -An -t u8 -j 40 -N 8 "${f}" 2>/dev/null | tr -d ' ')
+        size=$(stat -c %s "${f}" 2>/dev/null)
+        [ -n "${used}" ] && [ -n "${size}" ] && [ "${size}" -lt "${used}" ]
+}
 # The port's name for the user: its port.json title, else the script's.
 function port_title() {
         local name
@@ -406,7 +418,13 @@ function port_runtime_ready() {
         local script=$1 dir runtime missing=()
         dir=$(port_dir "${script}")
         while IFS= read -r runtime; do
-                [ -n "${runtime}" ] && ! port_runtime_present "${runtime}" && missing+=("${runtime}")
+                [ -n "${runtime}" ] || continue
+                # A broken runtime goes, and is fetched again like a missing one.
+                if port_runtime_broken "${runtime}"; then
+                        log $0 "Port runtime ${runtime} is incomplete: removed to fetch it again"
+                        rm -f "${PM_DIR}/libs/${runtime}.squashfs" "${PM_DIR}/libs/${runtime}.squashfs.md5"
+                fi
+                port_runtime_present "${runtime}" || missing+=("${runtime}")
         done < <(port_runtimes "${script}" "${dir}")
         [ "${#missing[@]}" -gt 0 ] || return 0
         if ${AMIONLINE:-/usr/bin/amionline} >/dev/null 2>&1; then

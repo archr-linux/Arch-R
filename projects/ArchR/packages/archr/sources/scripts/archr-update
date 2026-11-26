@@ -155,6 +155,8 @@
 : "${MOVED_DIR:=/storage/.config/archr-update-moved}"
 # Extra pacman options: the offline path's temporary config; empty online.
 PACMAN_ARGS=()
+# The install transaction run_install runs: the whole upgrade, or one package.
+INSTALL_ARGS=(-Su)
 REPO="https://github.com/archr-linux/archr-repo/releases/download"
 MIN_BATTERY=30
 # Free space kept beyond the download; pacman's CheckSpace guards the install.
@@ -646,6 +648,7 @@ install_lines() {
         case "${line}" in
             "upgrading "*...|"installing "*...|"reinstalling "*...|"downgrading "*...)
                 CHANGED=true
+                TX_CHANGED=true
                 package="${line#* }"
                 package="${package%...}"
                 CURRENT=$((CURRENT + 1))
@@ -696,7 +699,10 @@ run_install() {
     # Past this point nothing stops pacman: not this script's signals, not
     # pacman's (ignored dispositions survive exec), not a closed reader.
     trap '' TERM HUP INT
-    (trap '' TERM HUP INT; LC_ALL=C exec pacman -Su --noconfirm --noprogressbar --color never "${PACMAN_ARGS[@]}") \
+    # Whether this transaction (the kernel's may have run before) changed
+    # anything: pacman's file conflicts stop it before it does.
+    TX_CHANGED=false
+    (trap '' TERM HUP INT; LC_ALL=C exec pacman "${INSTALL_ARGS[@]}" --noconfirm --noprogressbar --color never "${PACMAN_ARGS[@]}") \
         >"${WORK}/install" 2>&1 </dev/null &
     PID=$!
     # No sleep, power off or power/suspend key while pacman runs. A holder
@@ -710,7 +716,6 @@ run_install() {
         holder=$!
     fi
     SEEN=0
-    CURRENT=0
     while kill -0 "${PID}" 2>/dev/null; do
         install_lines
         sleep 0.5
@@ -728,7 +733,7 @@ run_install() {
         *"failed retrieving file"*)
             [ -n "${OFFLINE}" ] && fail offline-incomplete "${INCOMPLETE_MESSAGE}" "${line}" ;;
         *"conflicting files"*)
-            if [ "${CHANGED}" = false ] && [ -z "${MOVED_ONCE:-}" ] && move_unowned "${WORK}/install"; then
+            if [ "${TX_CHANGED}" = false ] && [ -z "${MOVED_ONCE:-}" ] && move_unowned "${WORK}/install"; then
                 MOVED_ONCE=1
                 run_install
                 return
@@ -738,6 +743,19 @@ run_install() {
             line="${line}${conflict:+: ${conflict}}" ;;
     esac
     fail install "Install failed." "${line}"
+}
+
+# Installs the upgrade listed in $1 (list_targets). The kernel goes first,
+# alone, in a short transaction: a console that fails during the long one
+# (often what the new kernel fixes) then boots the new kernel and the next
+# run finishes the rest. The linux package depends on nothing.
+install_upgrade() {
+    if [ "${COUNT}" -gt 1 ] && grep -q '^linux ' <<<"$1"; then
+        INSTALL_ARGS=(-S --needed linux)
+        run_install
+    fi
+    INSTALL_ARGS=(-Su)
+    run_install
 }
 
 cmd_update_progress() {
@@ -777,7 +795,7 @@ cmd_update_progress() {
     run_download
     low="$(battery_low)" &&
         fail battery "Battery at ${low}%; connect the charger (needs ${MIN_BATTERY}%)."
-    run_install
+    install_upgrade "${targets}"
     drop_cache
     record_new_version
     logf "update: done"
@@ -1024,7 +1042,7 @@ cmd_update_offline() {
         logf "update: ${COUNT} package(s) from ${tar}"
         low="$(battery_low)" &&
             fail battery "Battery at ${low}%; connect the charger (needs ${MIN_BATTERY}%)."
-        run_install
+        install_upgrade "${targets}"
     else
         logf "update: nothing to do from ${tar}"
     fi
@@ -1102,6 +1120,8 @@ fi
 
 MODE=plain
 CHANGED=false
+# Packages installed so far, across the transactions of one run.
+CURRENT=0
 FROM=""
 ARGV="$*"
 case "${1:-update} ${2:-}" in

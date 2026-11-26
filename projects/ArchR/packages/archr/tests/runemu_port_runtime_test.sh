@@ -30,7 +30,8 @@ check() {
 if bash -n "${RUNEMU}"; then echo "ok   bash -n"; else echo "FAIL bash -n"; FAILED=1; fi
 
 eval "$(sed -n '/^function port_dir() {/,/^}/p; /^function port_runtimes() {/,/^}/p;
-  /^function port_runtime_present() {/,/^}/p; /^function port_title() {/,/^}/p;
+  /^function port_runtime_present() {/,/^}/p; /^function port_runtime_broken() {/,/^}/p;
+  /^function port_title() {/,/^}/p;
   /^function port_runtime_ready() {/,/^}/p' "${RUNEMU}")"
 log() { :; }
 LANGUAGE_SETTING=""
@@ -49,9 +50,14 @@ cat >"${PM_DIR}/harbourmaster" <<EOF
 #!/bin/bash
 echo "\${@: -1}" >>"${TMP}/fetched"
 [ -e "${TMP}/unknown" ] && exit 255
-: >"libs/\${@: -1}"
+{ printf 'hsqs'; head -c 36 /dev/zero; printf '\\x60\\0\\0\\0\\0\\0\\0\\0'; head -c 48 /dev/zero; } >"libs/\${@: -1}"
 EOF
 chmod +x "${PM_DIR}/harbourmaster"
+# sqfs FILE USED SIZE: a squashfs superblock saying USED bytes, in a file of SIZE.
+sqfs() {
+  { printf 'hsqs'; head -c 36 /dev/zero; printf "$(printf '%016x' "$2" | sed -E 's/(..)(..)(..)(..)(..)(..)(..)(..)/\\x\8\\x\7\\x\6\\x\5\\x\4\\x\3\\x\2\\x\1/')"
+    head -c $(($3 - 48)) /dev/zero; } >"$1"
+}
 
 toast() {
   local f out=""
@@ -108,7 +114,7 @@ check "a runtime harbourmaster does not know: the port starts anyway" "$(ready "
   "0 [love_11.5.squashfs mono-5.0-aarch64.squashfs ] "
 rm -f "${TMP}/unknown"
 mkdir -p "${PM_DIR}/runtimes/love_11.5"
-: >"${PM_DIR}/libs/mono-5.0-aarch64.squashfs"
+sqfs "${PM_DIR}/libs/mono-5.0-aarch64.squashfs" 96 96
 ONLINE=0
 check "a runtime kept as a folder counts as there" "$(ready "Old Mono.sh")" "0 [] "
 
@@ -117,4 +123,18 @@ printf '#!/bin/bash\nruntime="java"\n./run.sh\n' >"${PORTS}/Plain.sh"
 check "no libs/*.squashfs in the script: nothing asked" "$(ready Plain.sh)" "0 [] "
 check "a port with no runtime at all" "$(printf '#!/bin/bash\n./game\n' >"${PORTS}/Game.sh"; ready Game.sh)" "0 [] "
 
+# A runtime cut short (MOMO's python_3.11, 20 of 33 MB): removed and fetched again.
+sqfs "${PM_DIR}/libs/love_11.5.squashfs" 4096 1024
+rm -rf "${PM_DIR}/runtimes/love_11.5"
+ONLINE=1
+check "a runtime cut short is fetched again" "$(ready "Old Mono.sh")" "0 [love_11.5.squashfs ] "
+check "and the new one is whole" "$(port_runtime_broken love_11.5 && echo broken || echo whole)" "whole"
+sqfs "${PM_DIR}/libs/love_11.5.squashfs" 4096 1024
+ONLINE=0
+check "offline: a runtime cut short stops the port, as a missing one" "$(ready "Old Mono.sh")" \
+  "1 [] error|errors|Old Mono needs love_11.5|Connect to the internet once to download it|"
+printf 'not a squashfs' >"${PM_DIR}/libs/frt_3.5.2.squashfs"
+check "a file that is no squashfs is broken" "$(port_runtime_broken frt_3.5.2 && echo broken)" "broken"
+sqfs "${PM_DIR}/libs/frt_3.5.2.squashfs" 4096 8192
+check "a padded whole one is not" "$(port_runtime_broken frt_3.5.2 || echo whole)" "whole"
 exit "${FAILED}"
