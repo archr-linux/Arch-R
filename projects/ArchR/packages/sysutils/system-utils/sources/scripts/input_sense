@@ -93,6 +93,10 @@ FUNCTION_VOLUME_DOWN_EVENT='*('${KEY_VOLUME_DOWN}'), value *'
 # The launcher's controller tester takes every button: while this flag holds
 # the PID of a live launcher no shortcut runs (a stale flag is ignored).
 : "${HOTKEYS_PAUSED_FLAG:=/run/archr/hotkeys-paused}"
+# The screenshot shortcut and its notice.
+: "${SCREENSHOT:=/usr/bin/archr-screenshot}"
+: "${NOTIFY:=/usr/bin/mako-notify}"
+SCREENSHOT_PID=""
 
 FUNCTION_POWER_RELEASED_EVENT='*(KEY_POWER), value 0'
 FUNCTION_POWER_PRESSED_EVENT='*(KEY_POWER), value 1'
@@ -870,12 +874,18 @@ watch_inputs | grep --line-buffered "EV_KEY\|EV_SW\|error reading" | while next_
         fi
       ;;
       (${FUNCTION_HOTKEY_SCREENSHOT_EVENT})
+        # In the background: a capture takes seconds on a slow CPU, and
+        # every other button (exit, power) waited behind it; a game that
+        # holds L1 and presses B queued minutes of them. A press while one
+        # is still being taken is dropped.
         if [ "${HOTKEY_A_PRESSED}" = true ] && ${HOTKEY_SCREENSHOT_ENABLED}; then
-          ${DEBUG} && log $0 "${FUNCTION_HOTKEY_SCREENSHOT_EVENT}: Screenshot"
-          /usr/bin/archr-screenshot
-          # Display notification if 'success' exit code
-          SCREENSHOT_SUCCESS=$?
-          [ "$SCREENSHOT_SUCCESS" -eq 0 ] && /usr/bin/mako-notify "Screenshot Saved" -no-ra
+          if [ -n "${SCREENSHOT_PID}" ] && kill -0 "${SCREENSHOT_PID}" 2>/dev/null; then
+            ${DEBUG} && log $0 "${FUNCTION_HOTKEY_SCREENSHOT_EVENT}: Screenshot still running, skipped"
+          else
+            ${DEBUG} && log $0 "${FUNCTION_HOTKEY_SCREENSHOT_EVENT}: Screenshot"
+            { "${SCREENSHOT}" && "${NOTIFY}" "Screenshot Saved" -no-ra; } &
+            SCREENSHOT_PID=$!
+          fi
         fi
       ;;
      (${FUNCTION_HOTKEY_MANGOHUD_EVENT})

@@ -217,4 +217,19 @@ events "${CHORD[@]}" "1.5 $(key BTN_MODE 0)"
 check "a stale flag pauses nothing" "$(report 3)" "--osd"
 rm -f "${TMP}/paused.flag"
 
+# L1 + B: the screenshot runs in the background (2 s here). Presses while
+# it is taken are dropped, and the power button is heard at once (it used
+# to wait behind every capture: minutes when a game holds L1).
+printf '#!/bin/sh\necho shot >>"%s/calls"\nsleep 2\n' "${TMP}" >"${TMP}/bin/shot"
+printf '#!/bin/sh\necho notify >>"%s/calls"\n' "${TMP}" >"${TMP}/bin/notify"
+chmod +x "${TMP}/bin/shot" "${TMP}/bin/notify"
+printf 'SCREENSHOT=%s\nNOTIFY=%s\n' "${TMP}/bin/shot" "${TMP}/bin/notify" >>"${TMP}/profile"
+shots() { run "$@" | tr ' ' '\n' | grep -x -e shot -e notify -e power | tr '\n' ' ' | sed 's/ $//'; }
+events "0.3 $(key BTN_TL 1)" "0.1 $(key BTN_EAST 1)" "0.1 $(key BTN_EAST 0)" \
+  "0.2 $(key BTN_EAST 1)" "0.1 $(key BTN_EAST 0)" "0.2 $(key BTN_EAST 1)" "0.1 ${POWER}"
+check "a capture under way: B dropped, power at once" "$(shots 1.5)" "shot power"
+events "0.3 $(key BTN_TL 1)" "0.1 $(key BTN_EAST 1)" "0.1 $(key BTN_EAST 0)" "2.3 $(key BTN_EAST 1)"
+check "after it, the next press captures again" "$(shots 5.5)" "shot notify shot notify"
+check "the shortcut can be turned off" "$(shots 3 "hotkey.screenshot.enabled=0")" ""
+
 exit ${FAILED}
