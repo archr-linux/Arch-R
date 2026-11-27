@@ -7,5 +7,10 @@
 # and the next register write ends in an SError and a kernel panic, mid game
 # (reports from two R35S/R36S, three panics on 2026-11-15/16). always_on
 # costs about 10-20 mA with the launcher idle, less in a game, where the GPU
-# is busy anyway. panfrost has no power_policy file and is left alone.
+# is busy anyway.
 ACTION=="add|bind", SUBSYSTEM=="platform", DRIVER=="mali", TEST=="power_policy", ATTR{power_policy}="always_on"
+# panfrost: the same domain, dropped by runtime PM 50 ms after the GPU idles.
+# A job timeout then resets the GPU with the domain refusing to come back and
+# reads a register with it off: SError and panic (Soysauce a80684785ae5 at
+# 88 C on 2026-11-27, panfrost_job_timedout -> readl). Runtime PM stays on.
+ACTION=="add|bind", SUBSYSTEM=="platform", DRIVER=="panfrost", TEST=="power/control", ATTR{power/control}="on"
