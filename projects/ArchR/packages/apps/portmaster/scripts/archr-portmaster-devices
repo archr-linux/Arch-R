@@ -1,0 +1,82 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026-present ArchR (https://github.com/archr-linux/Arch-R)
+"""Teach PortMaster's harbourmaster the AISLPC handhelds Arch R runs on.
+
+harbourmaster names the device from the devicetree model; an unknown one
+falls back to the first device of its table with the same screen size.
+For the RG43V PRO (1024x768) that is the TrimUI Brick: shown as
+"trimui-brick", with no analog sticks and another processor, which hides
+or misjudges ports that need the sticks. The RG52 MINI (1280x720) was
+taken for a TrimUI Smart Pro.
+
+This adds the three AISLPC models (devicetree models of the Arch R DTBs)
+to harbourmaster/hardware.py: the model patterns, their hardware and
+their names. PortMaster updates replace pylibs/, so portmaster_prepare
+runs this before every start; a file that already has them is left alone.
+
+    archr-portmaster-devices [hardware.py]
+"""
+import os
+import sys
+
+DEFAULT = "/storage/roms/ports/PortMaster/pylibs/harbourmaster/hardware.py"
+MARK = "# Arch R: AISLPC (archr-portmaster-devices)"
+
+# (anchor line, lines added right after it)
+ADDITIONS = (
+    ("DEVICES = {", (
+        f"    {MARK}",
+        '    "AISLPC RG43V PRO":          {"device": "rg43v-pro",          "manufacturer": "AISLPC", "cfw": ["ArchR"]},',
+        '    "AISLPC RG43V PRO 1024x600": {"device": "rg43v-pro-1024x600", "manufacturer": "AISLPC", "cfw": ["ArchR"]},',
+        '    "AISLPC RG52 MINI":          {"device": "rg52-mini",          "manufacturer": "AISLPC", "cfw": ["ArchR"]},',
+    )),
+    ("HW_INFO = {", (
+        f"    {MARK}",
+        '    "rg43v-pro":          {"resolution": (1024, 768), "analogsticks": 2, "cpu": "rk3562", "capabilities": ["power"], "ram": 1024},',
+        '    "rg43v-pro-1024x600": {"resolution": (1024, 600), "analogsticks": 2, "cpu": "rk3562", "capabilities": ["power"], "ram": 1024},',
+        '    "rg52-mini":          {"resolution": (1280, 720), "analogsticks": 2, "cpu": "rk3562", "capabilities": ["power"], "ram": 1024},',
+    )),
+    ("    pattern_to_device = (", (
+        f"        {MARK}",
+        "        ('aislpc rg43v pro 1024x600*', 'rg43v-pro-1024x600'),",
+        "        ('aislpc rg43v pro*', 'rg43v-pro'),",
+        "        ('aislpc rg52 mini*', 'rg52-mini'),",
+    )),
+)
+
+
+def patch(text):
+    """Return the patched text, or None when nothing changes."""
+    if MARK in text:
+        return None
+    lines = text.split("\n")
+    for anchor, added in ADDITIONS:
+        try:
+            at = lines.index(anchor)
+        except ValueError:
+            # Another PortMaster layout: leave the file as it is.
+            return None
+        lines[at + 1:at + 1] = list(added)
+    return "\n".join(lines)
+
+
+def main():
+    path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT
+    try:
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+    except OSError:
+        return 0
+    patched = patch(text)
+    if patched is None:
+        return 0
+    tmp = path + ".archr-tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(patched)
+    os.replace(tmp, path)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
