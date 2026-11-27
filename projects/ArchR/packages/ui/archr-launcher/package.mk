@@ -2,8 +2,8 @@
 # Copyright (C) 2026 ArchR (https://github.com/archr-linux/Arch-R)
 
 PKG_NAME="archr-launcher"
-PKG_VERSION="ab1e6d39f92b43a787f99edebda866e36720a39f"
-PKG_SHA256="418edbe6f54f7c4723cc13eb266c438845bf95fe5975ad29a0341c26ddd02946"
+PKG_VERSION="3c2e09ebfa85ecd92c0d5aa57f3f88523a621b27"
+PKG_SHA256="de7d3ce9c1f45181b8990f73a14dfad75a208b6146f9b09077569b9234b70dc1"
 PKG_ARCH="aarch64"
 # Bundled fonts retain their separate OFL licenses.
 PKG_LICENSE="GPL-2.0-or-later"
