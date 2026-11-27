@@ -864,6 +864,15 @@ case ${EMULATOR} in
       RUNTHIS=$(echo ${RUNTHIS} | sed "s|--config|${EXTRAOPTS} --config|")
     fi
 
+    ### EasyRPG closes through the frontend (its title's Exit, and a game
+    ### that cannot load): back to the launcher, not RetroArch's own menu.
+    ### Lent like the rest: archr-retroarch-unappend puts it back after.
+    case ${CORE} in
+      easyrpg)
+        echo 'load_dummy_on_core_shutdown = "false"' >>"${RETROARCH_APPEND_CONFIG}"
+      ;;
+    esac
+
     ### NPU upscale (npu-upscale, the RK3562's NPU; dArkOS's NPU UPSCALE):
     ### the frame shown x3, integer scale, square pixels, nearest, and
     ### enlarged on the NPU (PS1 and the 16-bit consoles: 960x720 at most).
