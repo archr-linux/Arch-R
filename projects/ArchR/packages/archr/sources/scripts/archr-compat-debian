@@ -173,6 +173,7 @@ enter() {
   mount -t tmpfs -o mode=0755 archr-host "${m}/.archr"
   host_tools "${m}/.archr"
   host_gl "${m}/.archr/gl"
+  host_profile "${m}"
   # Debian's ld.so finds its multiarch folders without a cache; ldconfig
   # adds the rest (pulseaudio's private libs) once, into the layer.
   [ -s "${m}/etc/ld.so.cache" ] || chroot "${m}" /usr/sbin/ldconfig 2>/dev/null
@@ -249,11 +250,47 @@ host_gl() {
   unset -f link
 }
 
+# /etc/profile: the runtime (a minimal Debian) has none, and scripts made on
+# dArkOS source it. This one does what Debian's does for them (the
+# profile.d scripts) and keeps /.archr/shims first in PATH, where Debian's
+# would drop it. Only when the image has no profile of its own (the mount
+# point left in the writable layer is empty, so the image decides); the
+# contents live on /.archr (tmpfs).
+host_profile() {
+  local m=$1
+  [ -e "${m%/merged}/lower/etc/profile" ] && return 0
+  cat >"${m}/.archr/profile" <<'EOF'
+# Arch R's dArkOS compatibility mode (archr-compat-debian).
+case ":${PATH}:" in
+  *:/.archr/shims:*) ;;
+  *) PATH=/.archr/shims:${PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin} ;;
+esac
+export PATH
+for i in /etc/profile.d/*.sh; do
+  [ -r "${i}" ] && . "${i}"
+done
+unset i
+EOF
+  : >"${m}/etc/profile" 2>/dev/null &&
+    mount -o bind,ro "${m}/.archr/profile" "${m}/etc/profile"
+}
+
+# The SDL pad mapping control.txt reads (/tmp/gamecontrollerdb.txt):
+# mapper.txt makes it with Arch R's tools, which the runtime lacks. runemu.sh
+# makes it before a port; here for any other way in (Tools, the shell).
+host_pad_mapping() {
+  local db=/tmp/gamecontrollerdb.txt mapper=/storage/.config/PortMaster/mapper.txt
+  [ -s "${db}" ] && return 0
+  [ -x "${mapper}" ] || return 0
+  "${mapper}" "${db}" /storage/roms/ports/PortMaster >/dev/null 2>&1 || :
+}
+
 cmd_run() {
   local img base
   [ "$1" = -- ] && shift
   [ $# -gt 0 ] || die "run: no command"
   img=$(image) || die "runtime not installed (archr-compat-debian install)"
+  host_pad_mapping
   base="/run/archr/compat-debian/$$"
   mkdir -p "${base}" || die "cannot create ${base}"
   # The mount point stays behind on /run (a tmpfs) and goes at the next run.
