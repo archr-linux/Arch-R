@@ -1,0 +1,192 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ArchR (https://github.com/archr-linux/Arch-R)
+"""archr-prepare: the screen before a game while it fetches or unpacks what
+it needs the first time (the Debian runtime, a PortMaster runtime, the RPG
+Maker files, a disc kept in an archive). The launcher is gone by then and
+the game not there yet: archr-osd draws the screen (Progresso-antes-do-jogo).
+
+  archr-prepare --title NAME --steps debian|runtime:mono-6.12 --step 1 \\
+                [--watch PATH --total BYTES | --bars] [--no-cancel] -- CMD...
+  archr-prepare --end
+
+Runs CMD in its own process group and, every half second, sends archr-osd
+the whole screen: the steps (those before --step done), the bytes so far
+(the size of PATH, a file or a folder, or the "X MB / Y MB" bars CMD
+prints, with --bars), the speed over the last seconds and whether B
+cancels. B (BTN_SOUTH, the launcher's B) stops CMD and exits 130. Otherwise
+it exits with CMD's status and leaves the screen up for the next step:
+--end takes it away."""
+import argparse
+import os
+import re
+import select
+import signal
+import socket
+import struct
+import subprocess
+import sys
+import time
+
+TICK = 0.5
+WINDOW = 4.0
+EV_KEY, BTN_SOUTH = 1, 304
+EVENT = struct.Struct("llHHi")
+BARS = re.compile(rb"([0-9.]+) ([KMG]?B) / ([0-9.]+) ([KMG]?B)")
+UNITS = {b"B": 1, b"KB": 1e3, b"MB": 1e6, b"GB": 1e9}
+
+
+def osd_path():
+    run = os.environ.get("XDG_RUNTIME_DIR") or "/var/run/0-runtime-dir"
+    return os.path.join(run, "archr-osd.sock")
+
+
+def send(text):
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as sock:
+            sock.sendto(text.encode(), osd_path())
+    except OSError:
+        pass  # No overlay: the wait goes on without its screen.
+
+
+def screen(args, done, total, speed):
+    title = " ".join(args.title.split())[:80]
+    return "\t".join(["prepare", title, args.steps, str(args.step), str(done),
+                      str(total), str(speed), "0" if args.no_cancel else "1"])
+
+
+def size(path):
+    try:
+        if os.path.isdir(path):
+            return sum(os.path.getsize(os.path.join(d, f))
+                       for d, _, files in os.walk(path) for f in files
+                       if os.path.isfile(os.path.join(d, f)))
+        return os.path.getsize(path)
+    except OSError:
+        return 0
+
+
+class Meter:
+    """Bytes per second over the last few seconds."""
+
+    def __init__(self):
+        self.samples = []
+
+    def read(self, done, now):
+        self.samples.append((now, done))
+        self.samples = [(t, d) for t, d in self.samples if now - t <= WINDOW]
+        first_t, first_d = self.samples[0]
+        if now - first_t < 1:
+            return 0
+        return max(0, int((done - first_d) / (now - first_t)))
+
+
+def pads():
+    """The input devices, read without taking them from anyone."""
+    found = []
+    for name in sorted(os.listdir("/dev/input")) if os.path.isdir("/dev/input") else []:
+        if name.startswith("event"):
+            try:
+                found.append(os.open(os.path.join("/dev/input", name), os.O_RDONLY | os.O_NONBLOCK))
+            except OSError:
+                pass
+    return found
+
+
+def pressed_b(fds):
+    for fd in fds:
+        while True:
+            try:
+                data = os.read(fd, EVENT.size * 16)
+            except OSError:
+                break
+            if not data:
+                break
+            for at in range(0, len(data) - EVENT.size + 1, EVENT.size):
+                _, _, kind, code, value = EVENT.unpack_from(data, at)
+                if kind == EV_KEY and code == BTN_SOUTH and value == 1:
+                    return True
+    return False
+
+
+def stop(child):
+    try:
+        os.killpg(child.pid, signal.SIGTERM)
+    except OSError:
+        return
+    for _ in range(30):
+        if child.poll() is not None:
+            return
+        time.sleep(0.1)
+    try:
+        os.killpg(child.pid, signal.SIGKILL)
+    except OSError:
+        pass
+    child.wait()
+
+
+def main():
+    parser = argparse.ArgumentParser(add_help=True)
+    parser.add_argument("--end", action="store_true")
+    parser.add_argument("--title", default="")
+    parser.add_argument("--steps", default="")
+    parser.add_argument("--step", type=int, default=0)
+    parser.add_argument("--watch")
+    parser.add_argument("--total", type=int, default=0)
+    parser.add_argument("--bars", action="store_true")
+    parser.add_argument("--no-cancel", action="store_true")
+    parser.add_argument("command", nargs=argparse.REMAINDER)
+    args = parser.parse_args()
+    if args.end:
+        send("prepare end")
+        return 0
+    command = args.command[1:] if args.command[:1] == ["--"] else args.command
+    if not command or not args.steps:
+        parser.error("--steps and a command after -- are needed")
+
+    child = subprocess.Popen(command, start_new_session=True,
+                             stdout=subprocess.PIPE if args.bars else None)
+    out = child.stdout.fileno() if args.bars else None
+    fds = [] if args.no_cancel else pads()
+    meter, done, total, buffered = Meter(), 0, args.total, b""
+    # The first screen after a second: a quick step (a disc already there,
+    # a small runtime) does not flash it.
+    last = time.monotonic() + 1.0 - TICK
+    try:
+        while child.poll() is None:
+            ready = select.select([out] if out is not None else [], [], [], TICK / 5)[0]
+            if ready:
+                chunk = os.read(out, 4096)
+                if chunk:
+                    sys.stdout.buffer.write(chunk)
+                    sys.stdout.flush()
+                    buffered = (buffered + chunk)[-512:]
+                    found = BARS.findall(buffered.replace(b"\r", b"\n"))
+                    if found:
+                        a, au, b, bu = found[-1]
+                        done = int(float(a) * UNITS.get(au, 1))
+                        total = int(float(b) * UNITS.get(bu, 1))
+            if fds and pressed_b(fds):
+                stop(child)
+                send("prepare end")
+                return 130
+            now = time.monotonic()
+            if now - last >= TICK:
+                last = now
+                if args.watch:
+                    done = size(args.watch)
+                send(screen(args, done, total, meter.read(done, now)))
+        if out is not None:
+            rest = os.read(out, 1 << 20)
+            sys.stdout.buffer.write(rest)
+        return child.returncode
+    except KeyboardInterrupt:
+        stop(child)
+        return 130
+    finally:
+        for fd in fds:
+            os.close(fd)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

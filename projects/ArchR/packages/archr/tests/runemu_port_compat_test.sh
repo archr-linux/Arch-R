@@ -72,6 +72,7 @@ AMIONLINE=false "${TOOL}" ensure; check "ensure: missing and offline" "$?" 2
 
 # --- runemu.sh --------------------------------------------------------------
 eval "$(sed -n '/^function port_dir() {/,/^}/p; /^function port_title() {/,/^}/p;
+  /^function prep_run() {/,/^}/p; /^function prep_end() {/,/^}/p;
   /^function port_compat_wanted() {/,/^}/p; /^function port_compat_toast() {/,/^}/p;
   /^function port_compat_ready() {/,/^}/p; /^function port_compat_learn() {/,/^}/p;
   /^COMPAT_SIGNS=/p' "${RUNEMU}")"
