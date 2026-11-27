@@ -1,0 +1,15 @@
+# archr-osd (volume, battery cards, the screen before a game) comes with
+# the launcher and is started once by sway's exec_always: an update left
+# the old one running until the next boot, so a new kind of screen (the
+# one before a game, 20261127.16) stayed black. When the launcher package
+# changes, the running overlay is stopped and sway starts the new one.
+# Nothing happens without a running overlay or sway (an image build).
+[Trigger]
+Operation = Upgrade
+Type = Package
+Target = archr-launcher
+
+[Action]
+Description = Restarting the Arch R overlay...
+When = PostTransaction
+Exec = /bin/sh -c 'pgrep -x archr-osd >/dev/null || exit 0; s=$(ls /var/run/0-runtime-dir/sway-ipc.*.sock 2>/dev/null | head -n 1); [ -S "$s" ] || exit 0; pkill -x archr-osd; sleep 0.5; SWAYSOCK="$s" swaymsg exec archr-osd >/dev/null 2>&1; true'
