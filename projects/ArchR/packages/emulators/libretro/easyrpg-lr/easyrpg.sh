@@ -2,66 +2,72 @@
 
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2021-present 351ELEC (https://github.com/351ELEC)
+# Copyright (C) 2025-present ArchR (https://github.com/archr-linux/Arch-R)
 
-. /etc/profile
+# The RPG Maker 2000 and 2003 run-time packages (RTP), which most games
+# need, downloaded once into the core's system folder
+# (rtp/2000, rtp/2003). Each one is taken into a temporary folder and
+# moved into place only when complete: a failed download leaves nothing,
+# and the next game tries again (an empty folder, as an older version of
+# this script left when the download failed, counts as missing).
 
-clear > /dev/console
+. "${EASYRPG_PROFILE:-/etc/profile}"
 
-DEST="/storage/roms/bios/rtp"
+DEST="${EASYRPG_RTP:-/storage/roms/bios/rtp}"
+# The publisher's own address, then its older mirror (dl.degica.com, the
+# address used before, no longer exists).
+URLS="${EASYRPG_RTP_URLS:-https://assets.rpgmakerweb.com https://dl.komodo.jp/rpgmakerweb/run-time-packages}"
+VIEWER="${EASYRPG_VIEWER:-text_viewer}"
 
-SHASUMS="ddd519b50a22a2a95beeb831d29f7d7d92ae6263f953491163b446b808b66863  rpg2003_rtp_installer.zip#ec82b92da65ca6fdb2d3df25dfbcd7f2bb716e4fe63a079e8e5e396e91fa5e29  rpg2000_rtp_installer.exe"
+declare -A SHA256=(
+  [rpg2000_rtp_installer.exe]=ec82b92da65ca6fdb2d3df25dfbcd7f2bb716e4fe63a079e8e5e396e91fa5e29
+  [rpg2003_rtp_installer.zip]=ddd519b50a22a2a95beeb831d29f7d7d92ae6263f953491163b446b808b66863
+)
 
-install_bios() {
-  BIOS="$1"
-  BIOSPATH="$2"
-  if [ -d "${INSTALLPATH}/${BIOSPATH}" ]
-  then
-    rm -rf "${INSTALLPATH}/${BIOSPATH}"
-  fi
-  mkdir -p "${INSTALLPATH}/${BIOSPATH}"
-  cd "${INSTALLPATH}/${BIOSPATH}"
-  curl -Lo "${BIOS}" "${PKG_URL}/${BIOS}"
-  BINSUM=$(sha256sum "${BIOS}" | awk '{print $1}')
-  SHASUM=$(echo $SHASUMS | tr '#' '\n' | awk '/'${BIOS}'/ {print $1}')
-  if [ ! "${SHASUM}" == "${BINSUM}" ]
-  then
-    echo "Checksum mismatch, please update the package."
-    exit 1
-  fi
-  if [[ "${BIOS}" =~ .zip$ ]]
-  then
-    /usr/bin/7z x "${BIOS}"
-    rm "${BIOS}"
-    BIOS="$(echo ${BIOS} | sed "s#.zip#.exe#")"
-  fi
-  /usr/bin/7z x "${BIOS}"
-  rm "${BIOS}"
-  cd ${SOURCEPATH}
+installed() {
+  [ -n "$(find "${DEST}/$1" -type f -print -quit 2>/dev/null)" ]
 }
 
-INSTALLPATH="/storage/roms/bios"
-SOURCEPATH="$(pwd)"
-PKG_NAME="rpgmaker"
-PKG_VERSION="1.0.0"
-PKG_URL="https://dl.degica.com/rpgmakerweb/run-time-packages"
-
-# Check if the easyrpg runtime files are already available
-[ "$(ls -A ${DEST})" ] && JDKINSTALLED="yes" || JDKINSTALLED="no"
-
-if [ ${JDKINSTALLED} == "no" ]; then
-  mkdir -p ${DEST}
-  echo -e "GET http://google.com HTTP/1.0\n\n" | nc google.com 80 > /dev/null 2>&1
-  if [ $? -ne 0 ]; then
-      text_viewer -e -w -t "No Internet!" -m "You need to be connected to the internet to download the easyrpg runtime files.";
-      exit 1
+# install FILE VERSION
+install_rtp() {
+  local file=$1 version=$2 tmp url ok=""
+  tmp=$(mktemp -d "${DEST}/.${version}.XXXXXX") || return 1
+  for url in ${URLS}; do
+    if curl -fsSL --connect-timeout 10 -o "${tmp}/${file}" "${url}/${file}" &&
+       [ "$(sha256sum "${tmp}/${file}" | cut -d' ' -f1)" = "${SHA256[${file}]}" ]; then
+      ok=1
+      break
+    fi
+  done
+  if [ -n "${ok}" ] && (
+       cd "${tmp}" || exit 1
+       if [[ "${file}" == *.zip ]]; then
+         7z x -y "${file}" >/dev/null || exit 1
+         rm -f "${file}"
+         file=${file%.zip}.exe
+       fi
+       7z x -y "${file}" >/dev/null || exit 1
+       rm -f "${file}"
+     ) && [ -n "$(find "${tmp}" -type f -print -quit)" ]; then
+    rm -rf "${DEST:?}/${version}"
+    mv "${tmp}" "${DEST}/${version}"
+    return 0
   fi
-  echo "Downloading easyrpg runtime files please be patient..." > /dev/console
+  rm -rf "${tmp}"
+  return 1
+}
 
-  install_bios rpg2000_rtp_installer.exe rtp/2000
-  install_bios rpg2003_rtp_installer.zip rtp/2003
+installed 2000 && installed 2003 && exit 0
 
-  echo "Done! loading core!" > /dev/console
+mkdir -p "${DEST}" || exit 1
+clear >/dev/console 2>&1
+echo "Downloading the RPG Maker run-time files, please be patient..." >/dev/console 2>&1
+failed=""
+installed 2000 || install_rtp rpg2000_rtp_installer.exe 2000 || failed=1
+installed 2003 || install_rtp rpg2003_rtp_installer.zip 2003 || failed=1
+clear >/dev/console 2>&1
+if [ -n "${failed}" ]; then
+  "${VIEWER}" -e -w -t "RPG Maker run-time files" -m "Could not download the RPG Maker run-time files. Connect to the internet and open the game again." 2>/dev/null
+  exit 1
 fi
-
-clear > /dev/console < /dev/null 2>&1
 exit 0
