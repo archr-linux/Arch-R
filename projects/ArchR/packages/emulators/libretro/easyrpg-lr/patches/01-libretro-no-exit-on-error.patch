@@ -1,0 +1,122 @@
+--- a/src/output.cpp
++++ b/src/output.cpp
+@@ -297,8 +297,14 @@
+ 
+ 	Player::exit_code = EXIT_FAILURE;
+ 
+-	// FIXME: No idea how to indicate error from core in libretro
++#ifdef USE_LIBRETRO
++	// Never exit() inside the frontend: unwind to retro_run or
++	// retro_load_game, which ask the frontend to shut down.
++	DisplayUi.reset();
++	throw LibretroFatalError{err};
++#else
+ 	exit(Player::exit_code);
++#endif
+ }
+ 
+ void Output::WarningStr(std::string const& warn) {
+--- a/src/output.h
++++ b/src/output.h
+@@ -169,6 +169,19 @@
+ 	 */
+ 	[[noreturn]] void ErrorStr(std::string const& err);
+ 
++#ifdef USE_LIBRETRO
++	/**
++	 * Thrown by ErrorStr in the libretro core instead of calling exit():
++	 * exit() inside the frontend ran the process' static destructors
++	 * (Mesa's among them) while the frontend's video thread was still
++	 * drawing, and the frontend crashed. retro_run and retro_load_game
++	 * catch it and close the core the way the title screen's Exit does.
++	 */
++	struct LibretroFatalError {
++		std::string message;
++	};
++#endif
++
+ 	/**
+ 	 * Prints a debug message to the console.
+ 	 *
+--- a/src/platform/libretro/ui.cpp
++++ b/src/platform/libretro/ui.cpp
+@@ -318,8 +318,28 @@
+ 	cb(RETRO_ENVIRONMENT_SET_VARIABLES, variables);
+ }
+ 
++// After a fatal error (Output::LibretroFatalError) the core shows the
++// error over a black screen for FATAL_FRAMES frames, then asks the
++// frontend to shut down. Asking during the very first frames left
++// RetroArch's threaded video waiting on its main thread for good.
++static retro_video_refresh_t fatal_video_cb = nullptr;
++static int fatal_frames = -1;
++static constexpr int FATAL_FRAMES = 180;
++static uint32_t fatal_black[SCREEN_TARGET_WIDTH * SCREEN_TARGET_HEIGHT];
++
++static void fatal_frame() {
++	if (LibretroUi::input_poll_cb) {
++		LibretroUi::input_poll_cb();
++	}
++	if (fatal_video_cb) {
++		fatal_video_cb(fatal_black, SCREEN_TARGET_WIDTH, SCREEN_TARGET_HEIGHT,
++			SCREEN_TARGET_WIDTH * sizeof(uint32_t));
++	}
++}
++
+ RETRO_API void retro_set_video_refresh(retro_video_refresh_t cb) {
+ 	LibretroUi::SetRetroVideoCallback(cb);
++	fatal_video_cb = cb;
+ }
+ 
+ RETRO_API void retro_set_audio_sample(retro_audio_sample_t cb) {
+@@ -341,6 +361,7 @@
+ static void init_easy_rpg() {
+ 	Player::exit_flag = false;
+ 	LibretroUi::player_exit_called = false;
++	fatal_frames = -1;
+ 	std::vector<std::string> args;
+ 
+ 	Player::Init(args);
+@@ -418,7 +439,27 @@
+  */
+ 
+ RETRO_API void retro_run() {
+-	Player::MainLoop();
++	if (fatal_frames >= 0) {
++		fatal_frame();
++		if (++fatal_frames == FATAL_FRAMES) {
++			LibretroUi::player_exit_called = true;
++			LibretroUi::environ_cb(RETRO_ENVIRONMENT_SHUTDOWN, nullptr);
++		}
++		return;
++	}
++
++	try {
++		Player::MainLoop();
++	} catch (const Output::LibretroFatalError& error) {
++		// Output::ErrorStr already logged it and dropped DisplayUi.
++		static std::string text;
++		text = "EasyRPG: " + error.message;
++		retro_message message = { text.c_str(), FATAL_FRAMES };
++		LibretroUi::environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &message);
++		fatal_frames = 0;
++		fatal_frame();
++		return;
++	}
+ 
+ 	if (!DisplayUi) {
+ 		// Player::Exit was called, send shutdown request to the frontend
+@@ -462,7 +503,12 @@
+ 
+ 	init_easy_rpg();
+ 
+-	Player::Run();
++	try {
++		Player::Run();
++	} catch (const Output::LibretroFatalError&) {
++		LibretroUi::player_exit_called = true;
++		return false;
++	}
+ 
+ 	return true;
+ }
