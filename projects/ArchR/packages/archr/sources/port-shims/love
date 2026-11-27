@@ -1,0 +1,20 @@
+#!/bin/sh
+# Ports made for dArkOS and ArkOS call LÖVE as `love` from the PATH, as
+# those systems have it installed ("love: command not found" here). Arch R
+# has PortMaster's LÖVE 11.5 runtime instead: runemu.sh puts this directory
+# first on a port's PATH, and `love` runs that runtime, fetched once with
+# harbourmaster when it is not there yet.
+pm=${ARCHR_PORTMASTER:-/roms/ports/PortMaster}
+dir="$pm/runtimes/love_11.5"
+bin="$dir/love.aarch64"
+if [ ! -f "$bin" ] && [ -x "$pm/harbourmaster" ]; then
+    echo "love: fetching PortMaster's LÖVE 11.5 runtime" >&2
+    (cd "$pm" && timeout 900 ./harbourmaster --quiet --no-check runtime_check love_11.5.squashfs) >&2
+fi
+if [ ! -f "$bin" ]; then
+    echo "love: PortMaster's LÖVE 11.5 runtime is missing (connect to the internet once)" >&2
+    exit 127
+fi
+# A copy from a PC (or a card that lost the bits) can leave it not executable.
+[ -x "$bin" ] || chmod +x "$bin" 2>/dev/null
+LD_LIBRARY_PATH="$dir/libs.aarch64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" exec "$bin" "$@"
