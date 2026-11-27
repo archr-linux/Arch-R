@@ -30,6 +30,7 @@ check() {
 if bash -n "${RUNEMU}"; then echo "ok   bash -n"; else echo "FAIL bash -n"; FAILED=1; fi
 
 eval "$(sed -n '/^function port_dir() {/,/^}/p; /^function port_runtimes() {/,/^}/p;
+  /^function prep_run() {/,/^}/p; /^function prep_end() {/,/^}/p;
   /^function port_runtime_present() {/,/^}/p; /^function port_runtime_broken() {/,/^}/p;
   /^function port_title() {/,/^}/p;
   /^function port_runtime_ready() {/,/^}/p' "${RUNEMU}")"

@@ -24,7 +24,8 @@ trap 'rm -rf "${TMP}"' EXIT
 FAILED=0
 if bash -n "${RUNEMU}"; then echo "ok   bash -n"; else echo "FAIL bash -n"; FAILED=1; fi
 
-eval "$(sed -n '/^disc_card() {/,/^}/p; /^disc_from_archive() {/,/^}/p' "${RUNEMU}")"
+eval "$(sed -n '/^disc_card() {/,/^}/p; /^disc_from_archive() {/,/^}/p;
+  /^function prep_run() {/,/^}/p; /^function prep_end() {/,/^}/p' "${RUNEMU}")"
 log() { :; }
 
 # check <name> <archive> <expected game file, relative to the cache, or ROM>

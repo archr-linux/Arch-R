@@ -430,6 +430,56 @@ function port_title() {
         [ -n "${name}" ] || name=$(basename "$1" .sh)
         echo "${name}"
 }
+# The screen before a game (archr-prepare, drawn by archr-osd) while a port
+# fetches what it needs the first time: PREP_STEPS lists the steps it will
+# take ("runtime:NAME", "debian", "disc"), each slow command runs through
+# prep_run with that step's place, and prep_end takes the screen away. B on
+# that screen stops the command: prep_run returns 130. Without the helper
+# the command just runs.
+PREPARE=${PREPARE:-/usr/bin/archr-prepare}
+PREP_STEPS=""
+PREP_TITLE=""
+PREP_SHOWN=0
+function prep_run() { # STEP [archr-prepare options] -- COMMAND...
+        local step=$1 n=0 word opts=() list=()
+        shift
+        while [ $# -gt 0 ] && [ "$1" != "--" ]; do opts+=("$1"); shift; done
+        shift
+        IFS='|' read -ra list <<<"${PREP_STEPS:-}"
+        for word in "${list[@]}"; do
+                [ "${word}" = "${step}" ] && break
+                n=$((n + 1))
+        done
+        if [ ! -x "${PREPARE:-/usr/bin/archr-prepare}" ] || [ "${n}" -ge "${#list[@]}" ]; then
+                "$@"
+                return
+        fi
+        PREP_SHOWN=1
+        XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/var/run/0-runtime-dir}" "${PREPARE:-/usr/bin/archr-prepare}" \
+                --title "${PREP_TITLE:-}" --steps "${PREP_STEPS}" --step "${n}" "${opts[@]}" -- "$@"
+}
+function prep_end() {
+        [ "${PREP_SHOWN:-0}" = 1 ] || return 0
+        PREP_SHOWN=0
+        XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/var/run/0-runtime-dir}" "${PREPARE:-/usr/bin/archr-prepare}" --end
+}
+# A port's steps: the runtimes to fetch, then Debian when it runs there and
+# is not downloaded yet.
+function port_prep_plan() {
+        local script=$1 dir runtime steps=()
+        dir=$(port_dir "${script}")
+        while IFS= read -r runtime; do
+                [ -n "${runtime}" ] || continue
+                if port_runtime_broken "${runtime}" || ! port_runtime_present "${runtime}"; then
+                        steps+=("runtime:${runtime}")
+                fi
+        done < <(port_runtimes "${script}" "${dir}")
+        if port_compat_wanted "${script}" && ! "${COMPAT}" status 2>/dev/null | grep -q '^installed: /'; then
+                steps+=(debian)
+        fi
+        PREP_STEPS=$(IFS='|'; echo "${steps[*]}")
+        PREP_TITLE=$(port_title "${script}" "${dir}")
+}
 function port_runtime_ready() {
         local script=$1 dir runtime missing=()
         dir=$(port_dir "${script}")
@@ -448,8 +498,14 @@ function port_runtime_ready() {
                 # the port still starts, and its script says what it lacks.
                 for runtime in "${missing[@]}"; do
                         log $0 "Port runtime ${runtime} missing: fetching it"
-                        (cd "${PM_DIR}" && timeout 900 ./harbourmaster --quiet --no-check runtime_check "${runtime}.squashfs") \
-                                >>${OUTPUT_LOG} 2>&1
+                        # Its download bars ("X MB / Y MB") feed the screen.
+                        prep_run "runtime:${runtime}" --bars -- sh -c \
+                                'cd "$1" && exec timeout 900 ./harbourmaster --quiet --no-check runtime_check "$2.squashfs" 2>&1' \
+                                sh "${PM_DIR}" "${runtime}" >>${OUTPUT_LOG} 2>&1
+                        if [ $? = 130 ]; then
+                                log $0 "Port runtime ${runtime}: download cancelled"
+                                return 1
+                        fi
                 done
                 return 0
         fi
@@ -502,14 +558,19 @@ function port_compat_toast() { # KIND CATEGORY NAME pt|es|ru|de|zh|en texts...
         esac
 }
 function port_compat_ready() {
-        local script=$1 name rc mb
+        local script=$1 name rc mb size file
         name=$(port_title "${script}" "$(port_dir "${script}")")
+        size=$(sed -n 's/^SIZE=//p' "${COMPAT_SHARE}/manifest" 2>/dev/null)
+        file=$(sed -n 's/^FILE=//p' "${COMPAT_SHARE}/manifest" 2>/dev/null)
         # Rounded up, as the launcher's page shows it.
-        mb=$(( ($(sed -n 's/^SIZE=//p' "${COMPAT_SHARE}/manifest" 2>/dev/null || echo 0) + 1048575) / 1048576 ))
-        "${COMPAT}" ensure >>${OUTPUT_LOG} 2>&1
+        mb=$(( (${size:-0} + 1048575) / 1048576 ))
+        # The tool writes <image>.part until it has the manifest's size.
+        prep_run debian --watch "${COMPAT_STATE}/${file}.part" --total "${size:-0}" -- \
+                "${COMPAT}" ensure >>${OUTPUT_LOG} 2>&1
         rc=$?
         case "${rc}" in
         0) return 0 ;;
+        130) log $0 "Compatibility runtime download cancelled: ${name} not started" ;;
         2) log $0 "Compatibility runtime missing and no network: ${name} not started"
            port_compat_toast error network \
                 "${name}" "Precisa baixar o Debian: conecte à internet (${mb} MB)" \
@@ -650,7 +711,7 @@ disc_card() {
 }
 
 disc_from_archive() {
-  local list inner ext source need free work disc pid rc
+  local list inner ext source need free work disc rc total
   case "${PLATFORM}" in dreamcast|atomiswave|naomi|naomi2|naomigd) ;; *) return 0 ;; esac
   case "${ROMNAME,,}" in *.zip|*.7z) ;; *) return 0 ;; esac
   list=$("${SEVENZIP}" l -slt -- "${ROMNAME}" 2>/dev/null) || return 0
@@ -681,14 +742,20 @@ disc_from_archive() {
     sleep 4
     exit 0
   fi
-  "${SEVENZIP}" x -y -o"${work}" -- "${ROMNAME}" >/dev/null 2>&1 &
-  pid=$!
-  while kill -0 "${pid}" 2>/dev/null; do
-    disc_card start
-    sleep 3
-  done
-  wait "${pid}"
+  # The screen before the game counts the bytes landing in the folder.
+  PREP_STEPS=disc
+  PREP_TITLE=${BASEROMNAME%.*}
+  total=$(sed -n 's/^Size = //p' <<<"${list}" | awk '{s += $1} END {printf "%d", s}')
+  prep_run disc --watch "${work}" --total "${total:-0}" -- \
+    "${SEVENZIP}" x -y -o"${work}" -- "${ROMNAME}" >/dev/null 2>&1
   rc=$?
+  prep_end
+  PREP_STEPS=""
+  if [ "${rc}" = 130 ]; then
+    log $0 "Disc in archive: extraction cancelled"
+    rm -rf "${DISC_CACHE}"
+    exit 0
+  fi
   # Most archives already name the disc after themselves (Hero.zip holding
   # Hero.chd): then it is in place, and mv onto itself would fail.
   if [ "${rc}" -ne 0 ] || [ ! -f "${work}/${inner}" ] ||
@@ -812,7 +879,9 @@ case ${EMULATOR} in
       easyrpg*)
         # easyrpg needs runtime files to be downloaded on the first run
         ${VERBOSE} && log $0 "Setup easyrpg requirements."
-        /usr/bin/easyrpg.sh
+        # B on the screen while the files come down: back to the launcher.
+        /usr/bin/easyrpg.sh "${BASEROMNAME%.*}"
+        [ $? = 130 ] && quit 0
       ;;
     esac
 
@@ -919,7 +988,8 @@ case ${EMULATOR} in
         fi
         chmod +x "${ROMNAME}"
         port_exec_bits "${ROMNAME}"
-        port_runtime_ready "${ROMNAME}" || quit 0
+        port_prep_plan "${ROMNAME}"
+        port_runtime_ready "${ROMNAME}" || { prep_end; quit 0; }
         # dArkOS tools live in /roms/tools (= /opt/system/Tools).
         if portmaster_installer "${ROMNAME}"; then
           rm -rf "${TOOLS_VIEW}"
@@ -928,11 +998,12 @@ case ${EMULATOR} in
         fi
         port_render_driver
         if port_compat_wanted "${ROMNAME}"; then
-          port_compat_ready "${ROMNAME}" || quit 0
+          port_compat_ready "${ROMNAME}" || { prep_end; quit 0; }
           PORT_COMPAT=1
           log $0 "Running ${ROMNAME##*/} in the dArkOS compatibility mode"
           RUNTHIS='${EMUPERF} ${COMPAT} run -- ${RUN_SHELL} "${ROMNAME}"'
         fi
+        prep_end
         sed -i "/^ACTIVE_GAME=/c\ACTIVE_GAME=\"${ROMNAME}\"" /storage/.config/PortMaster/mapper.txt
         sed -i "/^ACTIVE_PLATFORM=/c\ACTIVE_PLATFORM=\"${PLATFORM}\"" /storage/.config/PortMaster/mapper.txt
         # The Debian mode has none of the pad tools mapper.txt uses: the
