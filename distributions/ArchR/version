@@ -9,4 +9,4 @@
 # and the last release its updates reached (archr package, sources/releases):
 # "v<release> · <update>". Raise it before building the images of a release,
 # and add the release's update to sources/releases when it is published.
-  ARCHR_RELEASE="3.1.1"
+  ARCHR_RELEASE="3.1.2"
