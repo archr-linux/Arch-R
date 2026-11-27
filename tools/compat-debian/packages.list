@@ -6,6 +6,12 @@
 base-files base-passwd bash dash coreutils debianutils sed grep mawk libc-bin
 findutils diffutils procps psmisc util-linux tar gzip xz-utils bzip2 zstd
 unzip file jq less ncurses-bin dialog wget curl ca-certificates
+# Commands dArkOS port scripts call that the base lacks: mount/umount
+# (PortMaster runtimes), lsusb (device_info.txt), the mixer and players,
+# network checks, arithmetic and hex dumps, archives, the framebuffer size,
+# envsubst, lsof, rsync and the kmod tools.
+mount usbutils alsa-utils pulseaudio-utils iproute2 iputils-ping bc xxd
+bsdextrautils zip 7zip fbset gettext-base lsof rsync kmod
 # apt and dpkg: dArkOSen tools install what they need with apt-get.
 apt dpkg debian-archive-keyring gpgv init-system-helpers
 # Python, as dArkOSen ships it, and the modules its tools import.
