@@ -41,6 +41,11 @@ if [ ! -d "/storage/roms/ports/PortMaster" ]; then
     chmod +x /storage/roms/ports/PortMaster/PortMaster.sh
 fi
 
+# PortMaster knows the AISLPC handhelds only by screen size (the RG43V PRO
+# came out as "trimui-brick", with no analog sticks): name them. Again after
+# every PortMaster update, which replaces its pylibs.
+/usr/bin/archr-portmaster-devices >/dev/null 2>&1 || :
+
 # Ports source PortMaster's tasksetter (it pins a port to the fastest cores
 # and is a no-op on a single cluster); without it they print "tasksetter:
 # No such file or directory" on every start. Older builds deleted it: put it
