@@ -1,0 +1,26 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+Subject: [PATCH] egl: keep the libEGL whose eglGetProcAddress is kept
+
+get_egl_proc_address() finds eglGetProcAddress in the libEGL the program
+loaded and keeps the pointer for good, without holding that library.
+SDL2 closes libEGL when it recreates its renderer (ScummVM at start):
+the next call jumped into unmapped memory, an instruction abort as
+ScummVM started with the FPS overlay on (R36S, panfrost). Keep
+that libEGL loaded (RTLD_NODELETE) once its pointer is kept.
+
+---
+--- a/src/gl/inject_egl.cpp	2026-11-26 22:51:07.849700832 -0300
++++ b/src/gl/inject_egl.cpp	2026-11-26 22:51:07.863524980 -0300
+@@ -57,6 +57,12 @@
+             if (ret) continue;
+ 
+             eh_find_sym(&lib_egl, "eglGetProcAddress", (void **)&pfn_eglGetProcAddress);
++            /* The pointer is kept for good, but the program loaded libEGL
++             * and may unload it (SDL2 closes it when it recreates its
++             * renderer: ScummVM): the next call then jumps into unmapped
++             * memory. Keep that libEGL loaded from now on. */
++            if (pfn_eglGetProcAddress && lib_egl.name && *lib_egl.name)
++                dlopen(lib_egl.name, RTLD_NOW | RTLD_NOLOAD | RTLD_NODELETE);
+             eh_destroy_obj(&lib_egl);
+ 
+             if (pfn_eglGetProcAddress) break;
