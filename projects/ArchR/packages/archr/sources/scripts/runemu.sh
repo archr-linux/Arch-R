@@ -337,16 +337,32 @@ function port_programs() {
 # /roms/tools, except PortMaster, which is always Arch R's. A card from
 # dArkOS keeps its own PortMaster in /roms/tools, and every port's header
 # takes /opt/system/Tools/PortMaster first: its control.txt breaks here.
+# The view is made anew each time: whatever was written into it (it is a
+# folder in /run, a small tmpfs) was never meant to be there.
+TOOLS_VIEW=${TOOLS_VIEW:-/run/archr/tools}
+TOOLS_ROMS=${TOOLS_ROMS:-/storage/roms}
 function tools_view() {
-  local v=/run/archr/tools e
-  mkdir -p /storage/roms/tools "${v}" || return 0
-  find "${v}" -mindepth 1 -maxdepth 1 -type l -delete 2>/dev/null
-  for e in /storage/roms/tools/* /storage/roms/tools/.[!.]*; do
+  local v=${TOOLS_VIEW} e
+  rm -rf "${v}"
+  mkdir -p "${TOOLS_ROMS}/tools" "${v}" || return 0
+  for e in "${TOOLS_ROMS}"/tools/* "${TOOLS_ROMS}"/tools/.[!.]*; do
     [ -e "${e}" ] || continue
     [ "${e##*/}" = PortMaster ] && continue
     ln -s "${e}" "${v}/${e##*/}" 2>/dev/null
   done
-  ln -s /storage/roms/ports/PortMaster "${v}/PortMaster" 2>/dev/null
+  ln -s "${TOOLS_ROMS}/ports/PortMaster" "${v}/PortMaster" 2>/dev/null
+}
+
+# PortMaster's own installers (Install.PortMaster.sh, Install.Full.PortMaster.sh,
+# Makeself archives) install into /opt/system/Tools when it is a folder, and
+# into /roms/ports, where Arch R keeps PortMaster, when it is not. With the
+# view there the full one unpacked 660 MB into /run: it filled, and the
+# launcher session went down with it. They run without the view.
+function portmaster_installer() {
+  local head
+  head=$(head -n 60 "$1" 2>/dev/null | tr -d '\0')
+  grep -q '^# This script was generated using Makeself' <<<"${head}" &&
+    grep -qE '^label="PortMaster( Full)? Installer"$' <<<"${head}"
 }
 
 # libmali has OpenGL ES alone, yet SDL2 picks its desktop "opengl" renderer
@@ -896,7 +912,11 @@ case ${EMULATOR} in
         port_exec_bits "${ROMNAME}"
         port_runtime_ready "${ROMNAME}" || quit 0
         # dArkOS tools live in /roms/tools (= /opt/system/Tools).
-        grep -qE '/roms2?/tools|/opt/system/Tools' "${ROMNAME}" 2>/dev/null && tools_view
+        if portmaster_installer "${ROMNAME}"; then
+          rm -rf "${TOOLS_VIEW}"
+        elif grep -qE '/roms2?/tools|/opt/system/Tools' "${ROMNAME}" 2>/dev/null; then
+          tools_view
+        fi
         port_render_driver
         if port_compat_wanted "${ROMNAME}"; then
           port_compat_ready "${ROMNAME}" || quit 0
