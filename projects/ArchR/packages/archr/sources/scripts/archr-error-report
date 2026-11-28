@@ -466,7 +466,11 @@ port() {
     [ -f "${pm}/control.txt" ] || echo "control.txt: MISSING"
     # The device as PortMaster sees it: from the run's output, else its file.
     f=$(grep -aE '^(CFW_NAME|CFW_VERSION|DEVICE_NAME|DISPLAY_WIDTH|DISPLAY_HEIGHT|ANALOG_STICKS)=' <<<"${OUTPUT}")
-    [ -n "${f}" ] || f=$(cd "${pm}" 2>/dev/null && bash -c '. ./device_info.txt >/dev/null 2>&1
+    # device_info.txt asks SDL for the screen: outside the session SDL falls
+    # back to 1024x768, so ask it inside sway, as the port ran.
+    rt="${XDG_RUNTIME_DIR:-/var/run/0-runtime-dir}"
+    [ -n "${f}" ] || f=$(cd "${pm}" 2>/dev/null && XDG_RUNTIME_DIR="${rt}" \
+      WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-1}" bash -c '. ./device_info.txt >/dev/null 2>&1
       for v in CFW_NAME CFW_VERSION DEVICE_NAME DISPLAY_WIDTH DISPLAY_HEIGHT ANALOG_STICKS; do echo "$v=${!v}"; done')
     printf '%s\n' "${f}" | sort -u
     if [ -f "${json}" ]; then
