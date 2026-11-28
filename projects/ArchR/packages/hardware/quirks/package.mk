@@ -3,7 +3,7 @@
 
 PKG_NAME="quirks"
 PKG_VERSION="2.1"
-PKG_REV="8"
+PKG_REV="11"
 PKG_LICENSE="GPLv2"
 PKG_SITE=""
 PKG_URL=""
@@ -19,6 +19,8 @@ makeinstall_target() {
     cp -r ${PKG_DIR}/platforms/* ${INSTALL}/usr/lib/autostart/quirks/platforms
   fi
   chmod -R 0755 ${INSTALL}/usr/lib/autostart/quirks
+  mkdir -p ${INSTALL}/etc/pacman.d/hooks
+  cp ${PKG_DIR}/pacman-hooks/*.hook ${INSTALL}/etc/pacman.d/hooks
 }
 
 post_install() {

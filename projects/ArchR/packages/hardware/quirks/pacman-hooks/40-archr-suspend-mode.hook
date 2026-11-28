@@ -1,0 +1,14 @@
+# The sleep quirk (RK3326, RK3562) runs at boot; an update that changes it
+# runs it at once too, so a console set to a kernel sleep state (they hang
+# there) is back on the alternative sleep before the power button is pressed.
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Path
+Target = usr/lib/autostart/quirks/platforms/RK3326/030-suspend_mode
+Target = usr/lib/autostart/quirks/platforms/RK3562/030-suspend_mode
+
+[Action]
+Description = Applying the console's sleep mode...
+When = PostTransaction
+Exec = /bin/sh -c '. /etc/profile; q=/usr/lib/autostart/quirks/platforms/${HW_DEVICE}/030-suspend_mode; case "${HW_DEVICE}" in RK3326|RK3562) [ -x "$q" ] && "$q" || true ;; esac'

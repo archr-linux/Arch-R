@@ -4,16 +4,23 @@
 
 # Kernel suspend does not survive on px30 mainline (mem hangs on entry,
 # freeze never wakes, RTC alarm included; tested 2026-07-07 on the
-# Soysauce). Default the suspend mode to "off" so the power button
-# takes the archr-fake-suspend path (display off, audio muted,
-# powersave governors, input grabbed) instead of a hard lockup.
+# Soysauce, and seen again on R36S consoles in 2026-11: the power button
+# froze them in "PM: suspend entry (deep)" until a reset). So the power
+# button always takes the archr-fake-suspend path (display off, audio
+# muted, powersave governors, input grabbed):
+#  - the launcher reads 030-suspend-kernel and offers no kernel state;
+#  - a kernel state saved before (an older launcher offered them) goes
+#    back to "off", the same as an empty key.
 #
-# Runs in two roles: at boot it seeds the default once (covers pacman
-# upgrades whose storage still carries the old mem-first sleep.conf),
-# and the suspendmode script calls it when the user picks "default" in
-# the ES SUSPEND MODE menu. Explicit user choices are never overridden.
+# Runs in two roles: at boot, and from the suspendmode script when the
+# user picks "default".
 . /etc/profile
 
-if [ -z "$(get_setting system.suspendmode)" ]; then
+mkdir -p /storage/.config/profile.d
+cat <<CFG >/storage/.config/profile.d/030-suspend-kernel
+DEVICE_SUSPEND_KERNEL="false"
+CFG
+
+if [ "$(get_setting system.suspendmode)" != "off" ]; then
   /usr/bin/suspendmode off >/dev/null 2>&1
 fi
