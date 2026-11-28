@@ -1,0 +1,7 @@
+#!/bin/sh
+# Ports made for desktop systems show and hide the mouse pointer around the
+# game ("unclutter-remote -s" / "-h", from unclutter). Arch R draws no
+# pointer, so there is nothing to show or hide: runemu.sh puts this
+# directory first on a port's PATH and the call succeeds without doing
+# anything ("unclutter-remote: command not found" otherwise).
+exit 0
